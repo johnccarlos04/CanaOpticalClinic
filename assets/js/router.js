@@ -249,6 +249,13 @@ function navigate(page, params = {}) {
     if (window._syncContactMessages) window._syncContactMessages()
   }
 
+  // Waitlist (admin/staff) — was previously boot+poll only, could show
+  // up to ~30s-stale data on first visit; now syncs immediately on nav
+  // just like every other data-driven page.
+  if (page === 'waitlist') {
+    if (window._syncWaitlist) window._syncWaitlist()
+  }
+
   // Activity log (admin)
   if (page === 'activity-log') {
     if (window._syncActivityLog) window._syncActivityLog()
