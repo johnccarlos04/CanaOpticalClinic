@@ -606,10 +606,12 @@ function showForgotPassword() {
   document.getElementById('fp-s1-error').classList.remove('show')
   window._fpStep = 1
   window._fpEmail = ''
-  clearInterval(window._fpResendCooldownInterval)
-  window._fpResendCooldownLeft = 0
+  // Deliberately NOT resetting the resend cooldown here — it must survive a
+  // full "Back to Login → Forgot Password?" restart, otherwise this cooldown
+  // does nothing (someone could just reopen the flow to skip the wait).
   clearInterval(window._fpTimerInterval)
   window._fpTimeLeft = 300
+  fpSyncS1Cooldown()
 
   // Clear any password entered in a previous pass through this flow —
   // the step-4 inputs are never unmounted between visits, so without this
@@ -630,7 +632,41 @@ window._fpResetToken = ''
 window._fpTimerInterval = null
 window._fpTimeLeft = 300
 window._fpResendCooldownInterval = null
-window._fpResendCooldownLeft = 0
+
+// Guards against double-submission from any entry point — clicking the
+// button (disabled, normally blocks re-clicks), but ALSO pressing Enter
+// in a field or a native form submit, both of which call the handler
+// function directly and completely skip the button's disabled state.
+// Without this, two rapid Enters mid-request fire two overlapping calls.
+window._fpBusy = { s1: false, s3: false, s4: false, resend: false }
+
+// The 60s resend cooldown used to live only in a JS variable, which reset to
+// 0 on any page refresh — reloading the page (even mid-countdown) silently
+// cleared it and let someone request a new code immediately, bypassing the
+// wait entirely. It's now mirrored to localStorage as {email, end} so a
+// refresh can restore the true remaining time instead of forgetting it.
+//
+// It's scoped to the specific email address rather than global: the cooldown
+// exists to stop someone hammering ONE account's inbox/OTP endpoint, not to
+// stop a person from requesting a code for a different account right after.
+// So an active cooldown for a@x.com never blocks a fresh request for b@x.com.
+const FP_COOLDOWN_STORAGE_KEY = 'canaopticalclinic_fp_resend_cooldown'
+
+function fpGetCooldownRecord() {
+  try {
+    const rec = JSON.parse(localStorage.getItem(FP_COOLDOWN_STORAGE_KEY) || 'null')
+    return (rec && rec.email && rec.end) ? rec : null
+  } catch (_) { return null }
+}
+
+// Remaining seconds left in the cooldown, but only if it belongs to `email`.
+// A cooldown recorded for a different address returns 0 — it doesn't apply.
+function fpCooldownRemainingFor(email) {
+  const rec = fpGetCooldownRecord()
+  if (!rec || !email) return 0
+  if (rec.email !== email.trim().toLowerCase()) return 0
+  return Math.max(0, Math.ceil((rec.end - Date.now()) / 1000))
+}
 
 function fpGoToStep(step) {
   const prev  = window._fpStep
@@ -680,11 +716,22 @@ function fpUpdateDots(step) {
 }
 
 async function fpS1Submit() {
+  if (window._fpBusy.s1) return // already submitting — ignore re-entrant calls (e.g. double Enter)
   const emailEl = document.getElementById('fp-s1-email')
   const errEl   = document.getElementById('fp-s1-error')
   const btn     = document.getElementById('fp-s1-btn')
   emailEl.classList.remove('error'); errEl.classList.remove('show')
   if (!emailEl.value.trim()) { emailEl.classList.add('error'); errEl.classList.add('show'); emailEl.focus(); return }
+
+  // Client-side pre-check purely for snappy UI (no round trip needed to know
+  // we're still cooling down). The real, unbypassable enforcement happens
+  // server-side against the database in forgot-password.php. No red error
+  // banner here — the gray countdown row + disabled button already say
+  // "you're waiting", so just quietly do nothing (this mainly guards the
+  // Enter-key path, since that bypasses the disabled Submit button).
+  if (fpCooldownRemainingFor(emailEl.value.trim()) > 0) return
+
+  window._fpBusy.s1 = true
   window._fpEmail = emailEl.value.trim()
   btn.disabled = true; btn.innerHTML = '<div class="fp-spinner"></div> Sending…'
   try {
@@ -694,11 +741,20 @@ async function fpS1Submit() {
     })
     const data = await res.json()
     if (!data.success) {
+      // Cooldown rejection isn't a "real" error — sync the timer row to the
+      // server's authoritative remaining time and leave it at that, same as
+      // the quiet client-side path above. Only genuine failures (bad email,
+      // account not found, server error) get the red banner below.
+      if (data.cooldown && data.retryAfter) {
+        fpStartResendCooldown(window._fpEmail, data.retryAfter)
+        return
+      }
       emailEl.classList.add('error')
       errEl.textContent = data.message || 'Failed to send email. Please try again.'
       errEl.classList.add('show')
       return
     }
+    fpStartResendCooldown(window._fpEmail, data.cooldownSeconds || 60)
     document.getElementById('fp-s2-email').textContent = window._fpEmail
     document.getElementById('fp-s3-email').textContent = window._fpEmail
     document.querySelectorAll('#fp-otp-row .otp-input').forEach(i => { i.value = ''; i.classList.remove('error') })
@@ -707,17 +763,24 @@ async function fpS1Submit() {
     errEl.textContent = 'Network error. Please check your connection.'
     errEl.classList.add('show')
   } finally {
-    btn.disabled = false; btn.innerHTML = 'Submit'
+    // Don't force-enable here — if a cooldown just started (or is still
+    // running), it must stay disabled. fpSyncS1Cooldown() re-derives the
+    // correct disabled state instead of blindly clearing it.
+    window._fpBusy.s1 = false
+    btn.innerHTML = 'Submit'
+    fpSyncS1Cooldown()
   }
 }
 
 async function fpS3Submit() {
+  if (window._fpBusy.s3) return // already verifying — ignore re-entrant calls
   const inputs = document.querySelectorAll('#fp-otp-row .otp-input')
   const errEl  = document.getElementById('fp-s3-error')
   const btn    = document.getElementById('fp-s3-btn')
   const code   = [...inputs].map(i => i.value).join('')
   inputs.forEach(i => i.classList.remove('error')); errEl.classList.remove('show')
   if (code.length < 6) { inputs.forEach(i => { if (!i.value) i.classList.add('error') }); errEl.classList.add('show'); return }
+  window._fpBusy.s3 = true
   btn.disabled = true; btn.innerHTML = '<div class="fp-spinner"></div> Verifying…'
   try {
     const res  = await fetch('api/auth/verify-otp.php', {
@@ -726,6 +789,7 @@ async function fpS3Submit() {
     })
     const data = await res.json()
     if (!data.success) {
+      window._fpBusy.s3 = false
       btn.disabled = false; btn.innerHTML = 'Verify OTP'
       fpShowWrongOTP(!!data.locked, data.attemptsLeft ?? null, !!data.banned, data.message || null)
       fpGoToStep(3.5)
@@ -735,16 +799,19 @@ async function fpS3Submit() {
     clearInterval(window._fpTimerInterval)
     document.querySelectorAll('#fp-otp-row .otp-input').forEach(i => { i.value = ''; i.classList.remove('error') })
     document.getElementById('fp-s3-error').classList.remove('show')
+    window._fpBusy.s3 = false
     btn.disabled = false; btn.innerHTML = 'Verify OTP'
     fpGoToStep(4)
   } catch (_) {
     errEl.textContent = 'Network error. Please try again.'
     errEl.classList.add('show')
+    window._fpBusy.s3 = false
     btn.disabled = false; btn.innerHTML = 'Verify OTP'
   }
 }
 
 async function fpS4Submit() {
+  if (window._fpBusy.s4) return // already saving — ignore re-entrant calls (form's Enter-to-submit bypasses the disabled button)
   const pw1  = document.getElementById('fp-s4-pw1')
   const pw2  = document.getElementById('fp-s4-pw2')
   const err1 = document.getElementById('fp-s4-err1')
@@ -757,6 +824,7 @@ async function fpS4Submit() {
   if (!pw2.value) { pw2.classList.add('error'); err2.textContent = 'Please confirm your password.'; err2.classList.add('show'); valid = false }
   else if (pw1.value && pw2.value !== pw1.value) { pw2.classList.add('error'); err2.textContent = 'Passwords do not match.'; err2.classList.add('show'); valid = false }
   if (!valid) return
+  window._fpBusy.s4 = true
   btn.disabled = true; btn.innerHTML = '<div class="fp-spinner"></div> Saving…'
   try {
     const res  = await fetch('api/auth/reset-password.php', {
@@ -775,6 +843,7 @@ async function fpS4Submit() {
     err1.textContent = 'Network error. Please try again.'
     err1.classList.add('show')
   } finally {
+    window._fpBusy.s4 = false
     btn.disabled = false; btn.innerHTML = 'Reset Password'
   }
 }
@@ -820,12 +889,13 @@ function fpShowWrongOTP(locked, attemptsLeft, banned = false, serverMessage = nu
 function fpRestartFromLocked() {
   clearInterval(window._fpTimerInterval)
   clearInterval(window._fpResendCooldownInterval)
-  window._fpResendCooldownLeft = 0
+  try { localStorage.removeItem(FP_COOLDOWN_STORAGE_KEY) } catch (_) {}
   window._fpTimeLeft = 0
   document.querySelectorAll('#fp-otp-row .otp-input').forEach(i => { i.value = ''; i.classList.remove('error') })
   const resendBtn = document.querySelector('.fp-resend-link')
   if (resendBtn) { resendBtn.disabled = false; resendBtn.textContent = 'Resend Code' }
   fpGoToStep(1)
+  fpSyncS1Cooldown()
 }
 
 function fpRetryOTP() {
@@ -846,15 +916,21 @@ function fpRetryOTP() {
 }
 
 async function fpResendOTP() {
-  if (window._fpResendCooldownLeft > 0) return
+  if (window._fpBusy.resend) return // already resending — ignore re-entrant calls
+  if (fpCooldownRemainingFor(window._fpEmail) > 0) return
   const errEl = document.getElementById('fp-s3-error')
+  const resendBtn = document.querySelector('.fp-resend-link')
   errEl.classList.remove('show')
+  window._fpBusy.resend = true
+  const prevLabel = resendBtn ? resendBtn.textContent : 'Resend Code'
+  if (resendBtn) { resendBtn.disabled = true; resendBtn.textContent = 'Sending…' }
+  let data
   try {
     const res  = await fetch('api/auth/forgot-password.php', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ email: window._fpEmail }),
     })
-    const data = await res.json()
+    data = await res.json()
     if (!data.success) {
       if (data.banned) {
         clearInterval(window._fpTimerInterval)
@@ -862,20 +938,32 @@ async function fpResendOTP() {
         fpGoToStep(3.5)
         return
       }
+      // Server-enforced cooldown (its clock, not the client's) — sync the
+      // local cache/button state and stop there, same as the rest of the
+      // app: the "Resend in 0:XX" button label is enough, no need to also
+      // pop a red error banner for a state the button already communicates.
+      if (data.cooldown && data.retryAfter) {
+        fpStartResendCooldown(window._fpEmail, data.retryAfter)
+        return
+      }
       // Resend didn't actually go through (e.g. hit its own rate limit) —
       // don't pretend a new code was sent. Leave the existing countdown and
       // inputs alone and surface the real reason instead.
       errEl.textContent = data.message || 'Failed to resend code. Please try again.'
       errEl.classList.add('show')
+      if (resendBtn) { resendBtn.disabled = false; resendBtn.textContent = prevLabel }
       return
     }
   } catch (_) {
     errEl.textContent = 'Network error. Please try again.'
     errEl.classList.add('show')
+    if (resendBtn) { resendBtn.disabled = false; resendBtn.textContent = prevLabel }
     return
+  } finally {
+    window._fpBusy.resend = false
   }
   // Only reached once the resend is confirmed successful.
-  fpStartResendCooldown()
+  fpStartResendCooldown(window._fpEmail, data.cooldownSeconds || 60)
   document.querySelectorAll('#fp-otp-row .otp-input').forEach(i => { i.value = ''; i.classList.remove('error') })
   document.querySelectorAll('#fp-otp-row .otp-input')[0].focus()
   fpStartTimer()
@@ -913,27 +1001,72 @@ function fpStartTimer() {
   window._fpTimerInterval = setInterval(tick, 1000)
 }
 
-function fpStartResendCooldown() {
-  const btn = document.querySelector('.fp-resend-link')
-  if (!btn) return
+// Keeps step 1's Submit button + live countdown in sync with the cooldown
+// for whatever email is currently typed in the field — NOT a global switch,
+// so typing a different (non-cooling-down) email re-enables Submit right away.
+function fpSyncS1Cooldown() {
+  const btn     = document.getElementById('fp-s1-btn')
+  const row     = document.getElementById('fp-s1-cooldown-row')
+  const timer   = document.getElementById('fp-s1-cooldown-timer')
+  const emailEl = document.getElementById('fp-s1-email')
+  if (!btn || !row || !timer) return
+  const s = fpCooldownRemainingFor(emailEl ? emailEl.value.trim() : '')
+  if (s > 0) {
+    btn.disabled = true
+    row.style.display = 'block'
+    timer.textContent = '0:' + String(s).padStart(2, '0')
+  } else {
+    btn.disabled = false
+    row.style.display = 'none'
+  }
+}
+
+function fpStartResendCooldown(email, seconds) {
+  const secs = Number(seconds) > 0 ? Number(seconds) : 60
+  const rec  = { email: (email || window._fpEmail || '').trim().toLowerCase(), end: Date.now() + secs * 1000 }
+  try { localStorage.setItem(FP_COOLDOWN_STORAGE_KEY, JSON.stringify(rec)) } catch (_) { /* localStorage unavailable — cooldown still works for this tab session */ }
+  fpRunResendCooldownTicker()
+}
+
+// Shared ticker used both when a fresh cooldown starts and when an
+// in-progress one is restored after a refresh — keeps both paths in sync.
+// Reads the stored record fresh each tick (instead of a plain decrementing
+// counter) so it always reflects the correct email + correct remaining time.
+function fpRunResendCooldownTicker() {
   clearInterval(window._fpResendCooldownInterval)
-  window._fpResendCooldownLeft = 60
-  btn.disabled = true
   function tick() {
-    if (!btn.isConnected) { clearInterval(window._fpResendCooldownInterval); window._fpResendCooldownLeft = 0; return }
-    const s = window._fpResendCooldownLeft
-    btn.textContent = 'Resend in 0:' + String(s).padStart(2, '0')
-    if (s <= 0) {
-      clearInterval(window._fpResendCooldownInterval)
-      btn.disabled = false
-      btn.textContent = 'Resend Code'
-      return
+    const rec = fpGetCooldownRecord()
+    const remaining = rec ? Math.max(0, Math.ceil((rec.end - Date.now()) / 1000)) : 0
+
+    // Step 3's "Resend Code" button applies to the email of the flow
+    // currently open, not necessarily the one that started the cooldown.
+    const resendBtn = document.querySelector('.fp-resend-link')
+    if (resendBtn) {
+      const s = fpCooldownRemainingFor(window._fpEmail)
+      resendBtn.disabled = s > 0
+      resendBtn.textContent = s > 0 ? ('Resend in 0:' + String(s).padStart(2, '0')) : 'Resend Code'
     }
-    window._fpResendCooldownLeft--
+    fpSyncS1Cooldown()
+
+    if (remaining <= 0) {
+      clearInterval(window._fpResendCooldownInterval)
+      if (rec) { try { localStorage.removeItem(FP_COOLDOWN_STORAGE_KEY) } catch (_) {} }
+    }
   }
   tick()
   window._fpResendCooldownInterval = setInterval(tick, 1000)
 }
+
+// Runs as soon as this script loads (including after a hard refresh) so a
+// cooldown that was still counting down before the reload keeps counting
+// down instead of vanishing. The ticker itself reads the stored record and
+// its email, so this just needs to kick it off when a live record exists.
+function fpRestoreResendCooldown() {
+  const rec = fpGetCooldownRecord()
+  if (rec && rec.end > Date.now()) fpRunResendCooldownTicker()
+  else if (rec) { try { localStorage.removeItem(FP_COOLDOWN_STORAGE_KEY) } catch (_) {} }
+}
+fpRestoreResendCooldown()
 
 // ── Email Verification Screen ─────────────────────────────────────
 let _evEmail = ''

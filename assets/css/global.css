@@ -570,6 +570,7 @@ button { border-radius: unset; }
 .fp-timer svg { flex-shrink:0 }
 .fp-timer.expired { color:#DC2626;background:#fef2f2 }
 .fp-resend-row { text-align:center;font-size:0.78rem;color:#9ca3af;margin-bottom:14px }
+#fp-s1-cooldown-row { margin-top:10px;margin-bottom:0 }
 .fp-resend-link { background:none;border:none;color:#E8891C;cursor:pointer;font-size:0.78rem;font-family:'Poppins',sans-serif;font-weight:600;padding:0;transition:opacity .15s }
 .fp-resend-link:hover:not(:disabled) { opacity:.75 }
 .fp-resend-link:disabled { color:#9ca3af;cursor:not-allowed;opacity:1 }

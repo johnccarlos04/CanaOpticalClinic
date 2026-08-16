@@ -29,6 +29,10 @@ rateLimit('forgot-password:' . substr(md5($email), 0, 12), 5, 900); // 5 per IP+
 // different emails (each hit sends a real email via SMTP).
 rateLimit('forgot-password-ip', 30, 900); // 30 per IP per 15 min, across all emails
 
+// 60s resend cooldown — used further down, and reused for the success
+// response too so the client always follows the server's value.
+$resendCooldownSeconds = 60;
+
 try {
     $pdo = getDB();
 
@@ -62,11 +66,32 @@ try {
             'message' => 'Too many failed attempts. Please try again in 1 hour.']);
     }
 
-    // Carry total_attempts forward so the counter survives across resends
-    $prev = $pdo->prepare('SELECT total_attempts FROM password_resets WHERE email = ? ORDER BY id DESC LIMIT 1');
+    // Carry total_attempts forward so the counter survives across resends,
+    // and read created_at to enforce the 60s resend cooldown below. This
+    // reads straight from the same DB row the OTP itself lives in — the
+    // cooldown's "real storage" is this table, not anything client-side.
+    $prev = $pdo->prepare('SELECT total_attempts, created_at FROM password_resets WHERE email = ? ORDER BY id DESC LIMIT 1');
     $prev->execute([$email]);
     $prevRow      = $prev->fetch();
     $carriedTotal = $prevRow ? (int)$prevRow['total_attempts'] : 0;
+
+    // 60s resend cooldown, enforced server-side against the DB row's
+    // timestamp — not something the client can bypass by clearing
+    // localStorage, refreshing, or switching browsers/devices. Scoped to
+    // this email only, so a cooldown on one account never touches another.
+    if ($prevRow) {
+        $elapsed = time() - strtotime($prevRow['created_at']);
+        if ($elapsed < $resendCooldownSeconds) {
+            $retryAfter = $resendCooldownSeconds - $elapsed;
+            header('Retry-After: ' . $retryAfter);
+            jsonResponse([
+                'success'    => false,
+                'cooldown'   => true,
+                'retryAfter' => $retryAfter,
+                'message'    => "Please wait before requesting another code.",
+            ]);
+        }
+    }
 
     // Invalidate any previous unused OTPs for this email
     $pdo->prepare('UPDATE password_resets SET used = 1 WHERE email = ? AND used = 0')
@@ -85,7 +110,7 @@ try {
         "Your Cana Optical Clinic password reset code is: $otp\n\nThis code expires in 5 minutes. Do not share it with anyone."
     );
 
-    jsonResponse(['success' => true]);
+    jsonResponse(['success' => true, 'cooldownSeconds' => $resendCooldownSeconds]);
 
 } catch (\Exception $e) {
     jsonResponse(['success' => false, 'message' => 'Failed to send email. Please try again later.', '_debug' => $e->getMessage()]);

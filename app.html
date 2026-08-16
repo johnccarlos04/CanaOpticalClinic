@@ -275,8 +275,9 @@
       <div class="fp-group">
         <label class="fp-label">Email Address</label>
         <input type="email" id="fp-s1-email" class="fp-input" placeholder="Enter your registered email"
-               onkeydown="if(event.key==='Enter') fpS1Submit()">
+               oninput="fpSyncS1Cooldown()" onkeydown="if(event.key==='Enter') fpS1Submit()">
         <div class="fp-field-error" id="fp-s1-error">Please enter your email address.</div>
+        <div class="fp-resend-row" id="fp-s1-cooldown-row" style="display:none">You can request another code in <strong id="fp-s1-cooldown-timer">0:60</strong></div>
       </div>
       <div class="fp-btn-row">
         <button class="fp-back-link" onclick="showLogin()">
