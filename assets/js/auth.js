@@ -608,6 +608,8 @@ function showForgotPassword() {
   window._fpEmail = ''
   clearInterval(window._fpResendCooldownInterval)
   window._fpResendCooldownLeft = 0
+  clearInterval(window._fpTimerInterval)
+  window._fpTimeLeft = 300
 
   // Clear any password entered in a previous pass through this flow —
   // the step-4 inputs are never unmounted between visits, so without this
@@ -845,24 +847,36 @@ function fpRetryOTP() {
 
 async function fpResendOTP() {
   if (window._fpResendCooldownLeft > 0) return
-  fpStartResendCooldown()
-  document.getElementById('fp-otp-timer').classList.remove('expired')
-  document.getElementById('fp-otp-timer').innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="13" height="13"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg> Expires in <span id="fp-timer-display">5:00</span>'
-  document.querySelectorAll('#fp-otp-row .otp-input').forEach(i => { i.value = ''; i.classList.remove('error') })
-  document.getElementById('fp-s3-error').classList.remove('show')
+  const errEl = document.getElementById('fp-s3-error')
+  errEl.classList.remove('show')
   try {
     const res  = await fetch('api/auth/forgot-password.php', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ email: window._fpEmail }),
     })
     const data = await res.json()
-    if (!data.success && data.banned) {
-      clearInterval(window._fpTimerInterval)
-      fpShowWrongOTP(false, null, true)
-      fpGoToStep(3.5)
+    if (!data.success) {
+      if (data.banned) {
+        clearInterval(window._fpTimerInterval)
+        fpShowWrongOTP(false, null, true)
+        fpGoToStep(3.5)
+        return
+      }
+      // Resend didn't actually go through (e.g. hit its own rate limit) —
+      // don't pretend a new code was sent. Leave the existing countdown and
+      // inputs alone and surface the real reason instead.
+      errEl.textContent = data.message || 'Failed to resend code. Please try again.'
+      errEl.classList.add('show')
       return
     }
-  } catch (_) { /* fail silently — timer still restarts */ }
+  } catch (_) {
+    errEl.textContent = 'Network error. Please try again.'
+    errEl.classList.add('show')
+    return
+  }
+  // Only reached once the resend is confirmed successful.
+  fpStartResendCooldown()
+  document.querySelectorAll('#fp-otp-row .otp-input').forEach(i => { i.value = ''; i.classList.remove('error') })
   document.querySelectorAll('#fp-otp-row .otp-input')[0].focus()
   fpStartTimer()
 }
@@ -870,6 +884,18 @@ async function fpResendOTP() {
 function fpStartTimer() {
   clearInterval(window._fpTimerInterval)
   window._fpTimeLeft = 300
+
+  // Rebuild the timer markup every time this runs. A previous expiry (this
+  // email or an earlier one) replaces #fp-otp-timer's innerHTML with "Code
+  // expired", which destroys the #fp-timer-display span tick() depends on —
+  // without restoring it here, the next attempt's countdown silently never
+  // starts and the screen is stuck showing the old "Code expired" state.
+  const timerEl = document.getElementById('fp-otp-timer')
+  if (timerEl) {
+    timerEl.classList.remove('expired')
+    timerEl.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="13" height="13"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg> Expires in <span id="fp-timer-display">5:00</span>'
+  }
+
   function tick() {
     const display = document.getElementById('fp-timer-display')
     const timerEl = document.getElementById('fp-otp-timer')
