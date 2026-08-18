@@ -47,6 +47,7 @@ const FIELD_MAP = [
     'lunchBreak'               => 'lunch_break',
     'reminderTime'             => 'reminder_time',
     'confirmDeadlineTime'      => 'confirm_deadline_time',
+    'waitlistOfferHours'       => 'waitlist_offer_hours',
 ];
 
 function rowToResponse(array $r): array {
@@ -83,6 +84,7 @@ function rowToResponse(array $r): array {
         'clinicDays'               => $r['clinic_days'] ? explode(',', $r['clinic_days']) : [],
         'reminderTime'             => $r['reminder_time']        ?: '12:00 PM',
         'confirmDeadlineTime'      => $r['confirm_deadline_time'] ?: '9:00 PM',
+        'waitlistOfferHours'       => isset($r['waitlist_offer_hours']) && (int)$r['waitlist_offer_hours'] > 0 ? (int)$r['waitlist_offer_hours'] : 3,
     ];
 }
 

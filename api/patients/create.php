@@ -9,6 +9,7 @@
 // ================================================================
 
 require_once '../../config/db.php';
+require_once '../../config/smtp.php';
 require_once '../helpers.php';
 
 requireMethod('POST');
@@ -112,6 +113,22 @@ try {
     }
 
     $pdo->commit();
+
+    // Welcome email — non-critical, never blocks the response. Includes
+    // the temp password (generated above) so the patient actually has a
+    // way to learn it beyond the one-time QR modal shown to whoever
+    // registered them at the front desk.
+    if ($uid && $email) {
+        try {
+            $fullName = "$first $last";
+            sendEmail(
+                $email, $fullName,
+                'Welcome to Cana Optical Clinic',
+                welcomeEmailBody($fullName, 'patient', $email, $tempPw),
+                "Welcome, $fullName!\n\nYour patient account at Cana Optical Clinic has been created.\n\nLogin email: $email\nTemporary password: $tempPw\n\nPlease sign in and change this password as soon as possible."
+            );
+        } catch (\Throwable $e) { /* non-critical */ }
+    }
 
     $patientObj = [
         'id'             => $pid,

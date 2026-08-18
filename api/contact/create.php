@@ -20,8 +20,8 @@ $email   = trim($b['email']   ?? '');
 $service = trim($b['service'] ?? '');
 $message = trim($b['message'] ?? '');
 
-if (!$name || !$email || !$message) {
-    jsonResponse(['success' => false, 'message' => 'Name, email and message are required.']);
+if (!$name || !$email || !$service || !$message) {
+    jsonResponse(['success' => false, 'message' => 'Name, email, inquiry type and message are required.']);
 }
 
 if (!filter_var($email, FILTER_VALIDATE_EMAIL)) {

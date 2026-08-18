@@ -69,12 +69,17 @@
     var logoutHref    = base + 'api/auth/logout.php'
     var indexHref     = base + 'index.html'
 
-    // Admin, staff, and doctors don't need booking buttons — hide them all
+    // Admin, staff, and doctors don't need booking buttons — hide them all.
+    // Whole CTA sections (not just their button) are hidden for the two that
+    // lead with booking-specific copy — "Ready to take care of your vision?"
+    // (services.html) and "Ready to meet your doctor? Book an appointment…"
+    // (doctors.html) — otherwise that text is left dangling with no button.
     if (role === 'admin' || role === 'staff' || role === 'doctor') {
       var toHide = [
         'a.nav-book',                      // desktop navbar "Book Now"
         'li.nav-link-book',                // mobile nav "Book Now" item
-        'a.cta-btn',                       // page CTA "Book an Appointment"
+        '.services-cta',                   // Services page's whole CTA block
+        '.doctors-cta',                    // Doctors page's whole CTA block
         'a.footer-booknow',                // footer quick link
         'a.btn-solid[href*="app.html"]',   // hero "Book Appointment" button
       ]

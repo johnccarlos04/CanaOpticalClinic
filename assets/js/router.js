@@ -33,11 +33,9 @@ const SIDEBAR_CONFIG = {
         { key: 'appointments', filter: 'no-show',     label: 'No-show',     color: '#6D28D9' }
       ]
     },
-    { key: 'create-appointment',   label: 'New Appointment',  icon: 'plus-circle' },
     { key: 'waitlist',             label: 'Waitlist',         icon: 'clock', badgeKey: '_waitlistCount' },
     { key: 'patient-list',         label: 'Patient Records',  icon: 'file-text' },
-    { key: 'contact-messages',     label: 'Contact Messages', icon: 'mail', badgeKey: '_contactUnreadCount' },
-    { key: 'exam-records',         label: 'Optical Examination', icon: 'eye' },
+    { key: 'exam-records',         label: 'Examination Records', icon: 'eye' },
     { key: 'schedule',             label: 'Doctor Schedule',  icon: 'clock' },
     { key: 'admin-reports',        label: 'Reports',          icon: 'bar-chart' },
     { section: 'System' },
@@ -51,7 +49,6 @@ const SIDEBAR_CONFIG = {
       ]
     },
     { key: 'activity-log',         label: 'Activity Log',     icon: 'activity' },
-    { key: 'notifications',        label: 'Notifications',    icon: 'bell', badgeKey: '_unreadCount' },
     { key: 'admin-settings',       label: 'Settings',         icon: 'settings',
       children: [
         { key: 'admin-settings', filter: 'profile',      label: 'My Profile' },
@@ -79,13 +76,12 @@ const SIDEBAR_CONFIG = {
         { key: 'appointments', filter: 'no-show',     label: 'No-show',     color: '#6D28D9' }
       ]
     },
-    { key: 'create-appointment',   label: 'New Appointment',  icon: 'plus-circle' },
     { key: 'waitlist',             label: 'Waitlist',         icon: 'clock', badgeKey: '_waitlistCount' },
     { key: 'patient-list',         label: 'Patient Records',  icon: 'file-text' },
-    { key: 'contact-messages',     label: 'Contact Messages', icon: 'mail', badgeKey: '_contactUnreadCount' },
+    { key: 'exam-records',         label: 'Examination Records', icon: 'eye' },
     { key: 'schedule',             label: 'Doctor Schedule',  icon: 'clock' },
+    { key: 'admin-reports',        label: 'Reports',          icon: 'bar-chart' },
     { section: 'Account' },
-    { key: 'notifications',        label: 'Notifications',    icon: 'bell', badgeKey: '_unreadCount' },
     { key: 'staff-settings',       label: 'Settings',         icon: 'settings' }
   ],
   doctor: [
@@ -109,14 +105,12 @@ const SIDEBAR_CONFIG = {
     { key: 'patient-list',         label: 'Patient Records',  icon: 'file-text' },
     { key: 'doctor-schedule',      label: 'My Schedule',      icon: 'clock' },
     { section: 'Account' },
-    { key: 'notifications',        label: 'Notifications',    icon: 'bell', badgeKey: '_unreadCount' },
     { key: 'doctor-settings',      label: 'Settings',         icon: 'settings' }
   ],
   patient: [
     { section: 'Overview' },
     { key: 'patient-dashboard',    label: 'Dashboard',        icon: 'home' },
     { section: 'Services' },
-    { key: 'patient-request-appt', label: 'Request Appointment', icon: 'plus-circle' },
     { key: 'patient-appts',        label: 'My Appointments',  icon: 'calendar',
       children: [
         { key: 'patient-appts', filter: 'all',        label: 'All Appointments' },
@@ -138,9 +132,17 @@ const SIDEBAR_CONFIG = {
       ]
     },
     { section: 'Account' },
-    { key: 'patient-notifications', label: 'Notifications',   icon: 'bell', badgeKey: '_unreadCount' },
     { key: 'patient-settings',     label: 'Settings',         icon: 'settings' }
   ]
+}
+
+// Role → dashboard page key. Used for both the initial post-login
+// navigation (bootShell) and the topbar breadcrumb's role-segment link.
+const ROLE_DASHBOARD = {
+  admin:   'admin-dashboard',
+  staff:   'staff-dashboard',
+  doctor:  'doctor-dashboard',
+  patient: 'patient-dashboard'
 }
 
 // Breadcrumb labels
@@ -261,7 +263,7 @@ function navigate(page, params = {}) {
     if (window._syncActivityLog) window._syncActivityLog()
   }
 
-  // Exam records (doctor/admin — part of patients data)
+  // Exam records (doctor/admin/staff — part of patients data)
   if (page === 'exam-records') {
     if (window._syncPatients) window._syncPatients()
   }
@@ -353,14 +355,8 @@ function bootShell(role, user) {
   applySidebarBucket(true)
 
   // Navigate to default page for role
-  const defaults = {
-    admin:   'admin-dashboard',
-    staff:   'staff-dashboard',
-    doctor:  'doctor-dashboard',
-    patient: 'patient-dashboard'
-  }
   state.filter = 'all'
-  navigate(defaults[role] || 'admin-dashboard')
+  navigate(ROLE_DASHBOARD[role] || 'admin-dashboard')
 }
 
 // ── Sidebar ─────────────────────────────────────────────────────
@@ -487,21 +483,29 @@ function highlightSidebarActive() {
 function renderTopbar() {
   const { role, page, params } = state
   const label = PAGE_LABELS[page] || page || 'Dashboard'
-  const roleLbl = { admin: 'Administrator', staff: 'Staff', doctor: 'Doctor', patient: 'Patient' }[role] || ''
 
-  // Find sub-label from sidebar config when a filter is active
+  // Find sub-label (+ the filter its parent nav item should reset to when the
+  // middle crumb segment is clicked) from sidebar config when a filter is active
   const config = SIDEBAR_CONFIG[role] || []
   let subLabel = null
+  let midFilter
   if (state.filter && state.filter !== 'all') {
     // Check top-level items with a filter first (e.g. Request Appointment)
     const topItem = config.find(item => item.key === page && !item.children && item.filter === state.filter)
     if (topItem) {
       subLabel = topItem.label
+      midFilter = topItem.filter
     } else {
       const parentItem = config.find(item => item.key === page && item.children)
       if (parentItem) {
         const child = parentItem.children.find(c => c.filter === state.filter)
-        if (child) subLabel = child.label
+        if (child) {
+          subLabel = child.label
+          // Reset to the section's "all" landing view if it has one; otherwise
+          // navigate plain and let the page's own default-filter logic apply
+          // (e.g. admin-settings defaults to 'profile' — see navigate()).
+          if (parentItem.children.some(c => c.filter === 'all')) midFilter = 'all'
+        }
       }
     }
   }
@@ -511,9 +515,20 @@ function renderTopbar() {
   const crumbEl = document.getElementById('topbar-crumb')
   const rightEl = document.getElementById('topbar-right')
 
-  if (crumbEl) crumbEl.innerHTML = subLabel
-    ? `<span>${roleLbl}</span>${chevron}<span>${label}</span>${chevron}<strong>${subLabel}</strong>`
-    : `<span>${roleLbl}</span>${chevron}<strong>${label}${params.patientName ? ` — ${params.patientName}` : ''}</strong>`
+  if (crumbEl) {
+    // No role segment here — it's already shown in the sidebar profile
+    // block, and the sidebar's own Dashboard link already gives one-click
+    // access to it from anywhere, so a role crumb on every page was purely
+    // redundant. The crumb now starts directly at the current section.
+    if (subLabel) {
+      const midOnclick = midFilter !== undefined
+        ? `window.navigate('${page}',{filter:'${midFilter}'})`
+        : `window.navigate('${page}')`
+      crumbEl.innerHTML = `<span class="topbar-crumb-link" onclick="${midOnclick}">${label}</span>${chevron}<strong>${subLabel}</strong>`
+    } else {
+      crumbEl.innerHTML = `<strong>${label}${params.patientName ? ` — ${params.patientName}` : ''}</strong>`
+    }
+  }
 
   if (rightEl) {
     const notifRole = state.role
@@ -521,12 +536,27 @@ function renderTopbar() {
     const badgeVis  = unread > 0 ? '' : 'display:none'
     const badgeTxt  = unread > 9 ? '9+' : String(unread)
 
+    // Contact Messages: admin/staff only, direct link (no dropdown) —
+    // relocated here from the sidebar to sit beside the notification bell.
+    const contactUnread = window._contactUnreadCount || 0
+    const contactBadgeVis = contactUnread > 0 ? '' : 'display:none'
+    const contactBadgeTxt = contactUnread > 9 ? '9+' : String(contactUnread)
+    const contactHtml = (role === 'admin' || role === 'staff') ? `
+      <div class="topbar-notify-wrap" id="topbar-contact-wrap">
+        <div class="topbar-notify" id="topbar-contact-btn" onclick="window.navigate('contact-messages')" title="Contact Messages">
+          ${window.icon('mail', 'icon')}
+          <span class="notify-badge" id="topbar-contact-badge" style="${contactBadgeVis}">${contactBadgeTxt}</span>
+        </div>
+      </div>` : ''
+
     rightEl.innerHTML = `
+      ${contactHtml}
+
       <!-- Notification Bell -->
       <div class="topbar-notify-wrap" id="topbar-notify-wrap">
         <div class="topbar-notify" id="topbar-bell-btn" onclick="window.toggleNotifyDropdown(event)" title="Notifications">
           ${window.icon('bell', 'icon')}
-          <span class="notify-badge" style="${badgeVis}">${badgeTxt}</span>
+          <span class="notify-badge" id="topbar-bell-badge" style="${badgeVis}">${badgeTxt}</span>
         </div>
         <div class="notify-dropdown" id="notify-dropdown">
           <div class="notify-dropdown-head">
@@ -663,7 +693,11 @@ function _buildNotifDropdownHtml() {
 window._buildNotifDropdownHtml = _buildNotifDropdownHtml
 
 function _updateNotifUI() {
-  const badge = document.querySelector('.notify-badge')
+  // Scoped to its own id — the contact-messages topbar icon has a separate
+  // badge (#topbar-contact-badge, updated by _updateContactUI) that must
+  // never be touched from here, or the two features' unread counts bleed
+  // into each other.
+  const badge = document.getElementById('topbar-bell-badge')
   const count = window._unreadCount || 0
   if (badge) {
     badge.textContent = count > 9 ? '9+' : String(count)
@@ -673,6 +707,21 @@ function _updateNotifUI() {
   if (list) list.innerHTML = _buildNotifDropdownHtml()
 }
 window._updateNotifUI = _updateNotifUI
+
+// Real-time repaint for the contact-messages topbar badge — independent of
+// _updateNotifUI above. Called after every contact-message mutation (read,
+// unread, mark-all, delete) and by the background poll, so the badge stays
+// accurate without needing a full page navigation, and without ever
+// touching the notification bell's own count.
+function _updateContactUI() {
+  const badge = document.getElementById('topbar-contact-badge')
+  const count = window._contactUnreadCount || 0
+  if (badge) {
+    badge.textContent = count > 9 ? '9+' : String(count)
+    badge.style.display = count > 0 ? '' : 'none'
+  }
+}
+window._updateContactUI = _updateContactUI
 
 // Mark single notif as read from topbar dropdown, then navigate
 function _markNotifDropdown(id) {
@@ -706,6 +755,21 @@ function toggleSidebarParent(key) {
   const arrow   = document.getElementById('arrow-dd-' + key)
   const parent  = submenu && submenu.previousElementSibling
   if (!submenu) return
+
+  const sidebar = document.getElementById('sidebar')
+  // A collapsed icon-rail sidebar can't show a submenu in place (its
+  // max-height is forced to 0 while collapsed) — expand the sidebar first
+  // so the click actually leads somewhere instead of being a dead end.
+  if (sidebar && sidebar.classList.contains('collapsed') && window.innerWidth > 767) {
+    state.sidebarCollapsed = false
+    sidebar.classList.remove('collapsed')
+    document.getElementById('main-area')?.classList.remove('collapsed')
+    submenu.classList.add('open')
+    if (arrow)  arrow.classList.add('open')
+    if (parent) parent.classList.add('nav-parent-open')
+    return
+  }
+
   const open = !submenu.classList.contains('open')
   submenu.classList.toggle('open', open)
   if (arrow)  arrow.classList.toggle('open', open)
@@ -809,22 +873,3 @@ window.applySidebarBucket = applySidebarBucket
 
 window.addEventListener('resize', () => applySidebarBucket(false))
 
-// ── Dropdown open/close ─────────────────────────────────────────
-function toggleDropdown(id) {
-  const menu  = document.getElementById(id)
-  const arrow = document.getElementById('arrow-' + id)
-  if (!menu) return
-  const sidebar = document.getElementById('sidebar')
-  // A collapsed icon-rail sidebar can't show a submenu in place — expand
-  // it first so the click actually leads somewhere instead of being a dead end.
-  if (sidebar && sidebar.classList.contains('collapsed') && window.innerWidth > 767) {
-    state.sidebarCollapsed = false
-    sidebar.classList.remove('collapsed')
-    document.getElementById('main-area')?.classList.remove('collapsed')
-    menu.classList.add('open')
-    if (arrow) arrow.classList.add('open')
-    return
-  }
-  menu.classList.toggle('open')
-  if (arrow) arrow.classList.toggle('open')
-}

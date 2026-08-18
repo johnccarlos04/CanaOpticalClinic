@@ -8,6 +8,7 @@
 // ================================================================
 
 require_once '../../config/db.php';
+require_once '../../config/smtp.php';
 require_once '../helpers.php';
 
 requireMethod('POST');
@@ -102,6 +103,19 @@ try {
     }
 
     $pdo->commit();
+
+    // Welcome email — non-critical, never blocks the response. Includes
+    // the password the admin set, since that's the account's real
+    // (non-generated) password and this is its only in-app record of it.
+    try {
+        $fullName = ($role === 'Doctor' ? 'Dr. ' : '') . "$first $last";
+        sendEmail(
+            $email, $fullName,
+            'Welcome to Cana Optical Clinic',
+            welcomeEmailBody($fullName, strtolower($role), $email, $pass),
+            "Welcome, $fullName!\n\nYour $role account at Cana Optical Clinic has been created.\n\nLogin email: $email\nTemporary password: $pass\n\nPlease sign in and change this password as soon as possible."
+        );
+    } catch (\Throwable $e) { /* non-critical */ }
 
     $userObj = [
         'id'         => $newId,

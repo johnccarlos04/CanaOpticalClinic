@@ -46,6 +46,26 @@ try {
         jsonResponse(['success' => false, 'message' => 'Doctor not found.'], 404);
     }
 
+    // Blocking a date that already has approved appointments would silently
+    // strand those patients — the doctor becomes "unavailable" underneath
+    // visits they already committed to, with nothing warning either the
+    // patient or the staff who eventually notices. Require those be
+    // cancelled/rescheduled first instead of letting the block succeed
+    // unchecked. Scoped to 'approved' only (not 'pending') — nothing was
+    // promised to the patient yet for a still-pending request.
+    $apptChk = $pdo->prepare(
+        "SELECT COUNT(*) FROM appointments WHERE doctor_id = ? AND date = ? AND status = 'approved'"
+    );
+    $apptChk->execute([$doctorId, $date]);
+    $apptCount = (int)$apptChk->fetchColumn();
+    if ($apptCount > 0) {
+        $plural = $apptCount === 1 ? '' : 's';
+        $pron   = $apptCount === 1 ? 'it' : 'them';
+        jsonResponse(['success' => false, 'message' =>
+            "This date already has {$apptCount} approved appointment{$plural}. Cancel or reschedule {$pron} before blocking this date."
+        ]);
+    }
+
     $s = $pdo->prepare(
         'INSERT INTO blocked_dates (doctor_id, date, reason, created_by) VALUES (?, ?, ?, ?)
          ON DUPLICATE KEY UPDATE reason = VALUES(reason)'

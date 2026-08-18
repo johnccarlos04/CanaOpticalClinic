@@ -442,6 +442,7 @@ CREATE TABLE IF NOT EXISTS `clinic_settings` (
   `appointment_policy_content`    MEDIUMTEXT        NULL     DEFAULT NULL,
   `reminder_time`                 VARCHAR(20)  NOT NULL DEFAULT '12:00 PM', -- day-before reminder send time
   `confirm_deadline_time`         VARCHAR(20)  NOT NULL DEFAULT '9:00 PM',  -- same-day confirm-or-auto-cancel deadline
+  `waitlist_offer_hours`          TINYINT UNSIGNED NOT NULL DEFAULT 3,      -- how long a freed slot stays claimable, and the lead-time cutoff below which a "waiting" entry is removed as no longer fulfillable
   PRIMARY KEY (`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
@@ -561,5 +562,6 @@ CREATE TABLE IF NOT EXISTS `about_gallery` (
 --    ALTER TABLE `clinic_settings` ADD COLUMN IF NOT EXISTS `video_url` VARCHAR(500) NULL DEFAULT NULL AFTER `map_embed_url`;
 --    ALTER TABLE `clinic_settings` ADD COLUMN IF NOT EXISTS `reminder_time` VARCHAR(20) NOT NULL DEFAULT '12:00 PM' AFTER `appointment_policy_content`;
 --    ALTER TABLE `clinic_settings` ADD COLUMN IF NOT EXISTS `confirm_deadline_time` VARCHAR(20) NOT NULL DEFAULT '9:00 PM' AFTER `reminder_time`;
+--    ALTER TABLE `clinic_settings` ADD COLUMN IF NOT EXISTS `waitlist_offer_hours` TINYINT UNSIGNED NOT NULL DEFAULT 3 AFTER `confirm_deadline_time`;
 
 SET FOREIGN_KEY_CHECKS = 1;

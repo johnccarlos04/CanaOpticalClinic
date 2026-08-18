@@ -10,6 +10,7 @@
 // ================================================================
 
 require_once '../../config/db.php';
+require_once '../../config/smtp.php';
 require_once '../helpers.php';
 
 requireMethod('POST');
@@ -133,6 +134,19 @@ try {
         'Welcome to Cana Optical Clinic',
         'Your patient account has been activated. You can now book appointments and view your records online.'
     );
+
+    // Welcome email — non-critical, never blocks the response (same
+    // reasoning as api/contact/create.php's clinic-notification email).
+    // No temp password here — self-registration means they already chose
+    // their own password.
+    try {
+        sendEmail(
+            $email, "$first $last",
+            'Welcome to Cana Optical Clinic',
+            welcomeEmailBody("$first $last", 'patient', $email),
+            "Welcome, $first $last!\n\nYour patient account at Cana Optical Clinic has been created successfully. You can now sign in anytime using $email and the password you chose."
+        );
+    } catch (\Throwable $e) { /* non-critical */ }
 
     // Activity log
     try {

@@ -4,6 +4,11 @@
 //  Shared utilities for all API endpoints.
 // ================================================================
 
+// __DIR__-relative (not a plain relative path) so this resolves correctly
+// no matter which script required helpers.php in the first place — needed
+// by _emailPatientNotice() below (sendEmail()/systemEmailBody()).
+require_once __DIR__ . '/../config/smtp.php';
+
 // The clinic operates in the Philippines — without this, PHP falls back to
 // UTC (the default on Railway's containers), so timestamps shown in the app
 // end up 8 hours behind the actual local time.
@@ -342,6 +347,29 @@ function checkApptConflict(PDO $pdo, string $doctorId, string $date, string $tim
     return null;
 }
 
+// Doctors who could plausibly see a patient on a given date — active,
+// scheduled to work that weekday, and not individually blocked that date.
+// Used for the "any available optometrist" booking path (no specific
+// doctor chosen yet) to decide which time slots are even worth showing,
+// and again server-side at submission to verify at least one of them is
+// actually free before accepting a doctor-less request.
+function eligibleDoctorsForDate(PDO $pdo, string $date): array {
+    $dow = date('D', strtotime($date)); // 'Mon','Tue',… — matches doctor_days' ENUM
+    $stmt = $pdo->prepare(
+        "SELECT d.id, d.first_name, d.middle_name, d.last_name
+           FROM doctors d
+           JOIN doctor_days dd ON dd.doctor_id = d.id AND dd.day_of_week = ?
+          WHERE d.status = 'active'
+            AND NOT EXISTS (SELECT 1 FROM blocked_dates bd WHERE bd.doctor_id = d.id AND bd.date = ?)
+          ORDER BY d.sort_order, d.id"
+    );
+    $stmt->execute([$dow, $date]);
+    return array_map(fn($r) => [
+        'id'   => $r['id'],
+        'name' => 'Dr. ' . trim($r['first_name'] . _mi($r['middle_name']) . ' ' . $r['last_name']),
+    ], $stmt->fetchAll());
+}
+
 // ── Build the frontend-compatible user object ─────────────────────
 // Maps snake_case DB columns to camelCase keys expected by pages.js.
 function buildUserObject(string $role, array $p, string $email, array $days = [], ?int $usersId = null): array {
@@ -474,17 +502,22 @@ function settingTimeTo24h(string $t): string {
     return $ts !== false ? date('H:i:s', $ts) : '00:00:00';
 }
 
-// How long a waitlist offer stays claimable — a flat number, deliberately
-// not scaled by how far out the appointment is. A longer window for distant
-// appointments sounds more lenient, but it also means every other patient
-// behind the first one in the FIFO queue has to wait out that same long
-// window before the offer can cascade down to them if it's ignored — with
-// several people in line, that compounds fast. A single short window bounds
-// that worst case regardless of queue length or appointment distance. Also
-// doubles as the minimum runway a slot needs before it's even offered (see
+// How long a waitlist offer stays claimable — admin-configurable (Clinic
+// Settings → Scheduling Rules, default 3), deliberately not scaled by how
+// far out the appointment is. A longer window for distant appointments
+// sounds more lenient, but it also means every other patient behind the
+// first one in the FIFO queue has to wait out that same long window before
+// the offer can cascade down to them if it's ignored — with several people
+// in line, that compounds fast. A single short window bounds that worst
+// case regardless of queue length or appointment distance. Also doubles as
+// the minimum runway a slot needs before it's even offered (see
 // waitlistHasEnoughLeadTime below) — there's no point offering a window
 // longer than what could ever fit before the appointment happens.
-const WAITLIST_OFFER_HOURS = 3;
+function waitlistOfferHoursSetting(PDO $pdo): int {
+    $v = $pdo->query('SELECT waitlist_offer_hours FROM clinic_settings WHERE id = 1 LIMIT 1')->fetchColumn();
+    $v = (int)$v;
+    return $v > 0 ? $v : 3;
+}
 
 // True if a doctor+date+time slot has enough runway left to bother offering
 // it via the waitlist. This is purely an hours-based feasibility check —
@@ -499,20 +532,22 @@ const WAITLIST_OFFER_HOURS = 3;
 function waitlistHasEnoughLeadTime(PDO $pdo, string $date, string $time): bool {
     $apptAt = strtotime("$date $time");
     if ($apptAt === false) return false;
-    return ($apptAt - time()) / 3600 >= WAITLIST_OFFER_HOURS;
+    return ($apptAt - time()) / 3600 >= waitlistOfferHoursSetting($pdo);
 }
 
 // Claim-window length for a specific doctor+date+time slot — a flat
-// WAITLIST_OFFER_HOURS, only ever called after waitlistHasEnoughLeadTime()
-// has confirmed that much runway actually exists. The cap here is just a
-// safety net for the sliver of time right at that boundary (e.g. exactly
-// 3.0 hours left rounding down a touch due to fractional seconds).
-function waitlistOfferHours(string $date, string $time): int {
-    $apptAt = strtotime("$date $time");
-    if ($apptAt === false) return WAITLIST_OFFER_HOURS;
+// waitlistOfferHoursSetting(), only ever called after
+// waitlistHasEnoughLeadTime() has confirmed that much runway actually
+// exists. The cap here is just a safety net for the sliver of time right
+// at that boundary (e.g. exactly 3.0 hours left rounding down a touch due
+// to fractional seconds).
+function waitlistOfferHours(PDO $pdo, string $date, string $time): int {
+    $maxHours = waitlistOfferHoursSetting($pdo);
+    $apptAt   = strtotime("$date $time");
+    if ($apptAt === false) return $maxHours;
 
     $hoursUntil = ($apptAt - time()) / 3600;
-    return max(1, min(WAITLIST_OFFER_HOURS, (int)floor($hoursUntil)));
+    return max(1, min($maxHours, (int)floor($hoursUntil)));
 }
 
 // Builds the next A00N id and inserts the appointment row. Shared by
@@ -607,7 +642,7 @@ function offerNextWaitlistSlot(PDO $pdo, string $doctorId, string $date, string 
     $row = $stmt->fetch();
     if (!$row) return;
 
-    $expiresAt = date('Y-m-d H:i:s', time() + waitlistOfferHours($date, $time) * 3600);
+    $expiresAt = date('Y-m-d H:i:s', time() + waitlistOfferHours($pdo, $date, $time) * 3600);
     $pdo->prepare(
         "UPDATE appointment_waitlist SET status = 'offered', offered_at = NOW(), offer_expires_at = ?
          WHERE id = ? AND status = 'waiting'"
@@ -619,10 +654,48 @@ function offerNextWaitlistSlot(PDO $pdo, string $doctorId, string $date, string 
     if ($userId) {
         $fmtDate      = date('M j, Y', strtotime($date));
         $expiresLabel = date('g:i A', strtotime($expiresAt));
-        createNotification($pdo, (int)$userId, 'waitlist_offer', 'A Waitlisted Slot Is Open',
-            "The slot with {$row['doctor_name']} on {$fmtDate} at {$time} you were waitlisted for is now available. "
-          . "Claim it by {$expiresLabel} or it will be offered to the next patient in line."
-        );
+        $noticeMsg = "The slot with {$row['doctor_name']} on {$fmtDate} at {$time} you were waitlisted for is now available. "
+          . "Claim it by {$expiresLabel} or it will be offered to the next patient in line.";
+        // This is the single most time-critical notice in the whole waitlist
+        // system — a live countdown claim window, same urgency as the
+        // appointment reminder cron. In-app only meant a patient who wasn't
+        // actively logged in right then would simply never find out in time.
+        createNotification($pdo, (int)$userId, 'waitlist_offer', 'A Waitlisted Slot Is Open', $noticeMsg);
+        _emailPatientNotice($pdo, (int)$userId, 'A Waitlisted Slot Is Open', $noticeMsg);
+    }
+}
+
+// Removes any still-'waiting' waitlist entries for a doctor+date+time slot
+// that just became locked in for good — the patient confirmed attendance
+// (api/appointments/confirm.php), or the visit already happened
+// (api/appointments/update.php marking it 'completed'). Either way that
+// slot is no longer a realistic prospect, so leaving anyone queued on it
+// just delays them from picking something actually available. Notifies
+// each one removed, in-app and by email — same reasoning as
+// offerNextWaitlistSlot() above, this isn't something to leave someone to
+// discover only by happening to check the app.
+function clearWaitlistForLockedSlot(PDO $pdo, string $doctorId, string $date, string $time, string $reasonMsg): void {
+    $waiters = $pdo->prepare(
+        "SELECT patient_id FROM appointment_waitlist
+         WHERE doctor_id = ? AND date = ? AND time = ? AND status = 'waiting'"
+    );
+    $waiters->execute([$doctorId, $date, $time]);
+    $waiting = $waiters->fetchAll();
+    if (!$waiting) return;
+
+    $pdo->prepare(
+        "UPDATE appointment_waitlist SET status = 'cancelled'
+         WHERE doctor_id = ? AND date = ? AND time = ? AND status = 'waiting'"
+    )->execute([$doctorId, $date, $time]);
+
+    foreach ($waiting as $w) {
+        $ps = $pdo->prepare('SELECT user_id FROM patients WHERE id = ? LIMIT 1');
+        $ps->execute([$w['patient_id']]);
+        $userId = $ps->fetchColumn();
+        if ($userId) {
+            createNotification($pdo, (int)$userId, 'waitlist_removed', 'Removed From Waitlist', $reasonMsg);
+            _emailPatientNotice($pdo, (int)$userId, 'Removed From Waitlist', $reasonMsg);
+        }
     }
 }
 
@@ -647,6 +720,27 @@ function notifyAdminStaff(PDO $pdo, string $type, string $title, string $body): 
     } catch (PDOException) {
         // Non-critical — silent fail
     }
+}
+
+// Companion to createNotification() — sends the same notice by email too,
+// so a patient not actively logged in when it fires still finds out
+// (appointment reminders/cancellations, waitlist removal, etc). Shared
+// here rather than duplicated per call site (originally lived only in
+// api/cron/appointment_reminders.php). Its own try/catch so one failed
+// delivery never interrupts whatever loop is calling it in a batch.
+function _emailPatientNotice(PDO $pdo, int $userId, string $subject, string $message): void {
+    try {
+        $s = $pdo->prepare(
+            'SELECT u.email, p.first_name, p.last_name
+               FROM users u JOIN patients p ON p.user_id = u.id
+              WHERE u.id = ? LIMIT 1'
+        );
+        $s->execute([$userId]);
+        $row = $s->fetch();
+        if (!$row || empty($row['email'])) return;
+        $name = trim($row['first_name'] . ' ' . $row['last_name']) ?: 'there';
+        sendEmail($row['email'], $name, $subject, systemEmailBody($name, $subject, $message), "$subject\n\n$message");
+    } catch (\Throwable $e) { /* non-critical */ }
 }
 
 // ── Fetch profile row + build user object for a given user_id ────

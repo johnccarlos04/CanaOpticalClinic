@@ -11,7 +11,7 @@
     _styled = true
     var s = document.createElement('style')
     s.textContent =
-      '.th-sortable{cursor:pointer;user-select:none;white-space:nowrap}' +
+      '.th-sortable{cursor:pointer;user-select:none;white-space:nowrap;transition:color .15s}' +
       '.th-sortable:hover{color:#E8760A}' +
       // Arrow is always orange — full opacity when active, dimmed when idle
       '.th-sortable .sort-icon{display:inline-flex;margin-left:4px;color:#E8760A;opacity:.35;vertical-align:-2px;transition:transform .2s ease,opacity .15s ease}' +

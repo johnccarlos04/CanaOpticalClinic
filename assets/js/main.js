@@ -107,7 +107,6 @@ window.state                 = state
 window.navigate              = navigate
 window.renderPage            = renderPage
 window.toggleSidebar         = toggleSidebar
-window.toggleDropdown        = toggleDropdown
 window.bootShell             = bootShell
 window.logout                = logout
 window.handleLogin           = handleLogin
@@ -159,37 +158,61 @@ window.closeModal = closeModal
 window.showModal  = showModal
 
 // ════════════════════════════════════════════════════════════════
-//  DOB DATE PICKER — replaces native <input type="date"> for every
-//  date-of-birth field (registration + Add/Edit Patient + New User).
-//  Native date-input rendering (icon, internal text colour, fallback UI)
-//  is too inconsistent across Android OEM/WebView versions and iOS Safari
-//  — this renders identically everywhere since nothing is left to the OS.
-//  A same-id hidden <input> keeps holding the plain "YYYY-MM-DD" value, so
-//  every existing gv(id)/.value read across the app keeps working
-//  unchanged; only the visible control is different.
+//  DATE PICKER — replaces native <input type="date"> everywhere in the
+//  app (registration, Add/Edit Patient, New User, Block Date, Reports'
+//  date range, Activity Log filters, exam dates, etc). Native date-input
+//  rendering (icon, internal text colour, fallback UI, and — critically —
+//  whether it even shows a calendar popup or just spinners) is too
+//  inconsistent across Android OEM/WebView versions and iOS Safari; this
+//  renders identically everywhere since nothing is left to the OS. Same
+//  technique as the other custom fields above: a same-id hidden <input>
+//  keeps holding the plain "YYYY-MM-DD" value, so every existing
+//  gv(id)/.value read across the app keeps working unchanged.
 // ════════════════════════════════════════════════════════════════
-function dobFieldHtml(id, opts = {}) {
-  const { value = '', cls = 'form-input', placeholder = 'Select date of birth', max = '', min = '' } = opts
+function dateFieldHtml(id, opts = {}) {
+  const { value = '', cls = 'form-input', placeholder = 'mm/dd/yyyy', max = '', min = '', defaultYearsAgo = 0, onchange = '', style = '' } = opts
   const label = value ? _dobFormat(value) : placeholder
+  // style/onchange were accepted in opts but silently dropped — every call
+  // site passing a custom width/font-size (Reports date range, Activity
+  // Log filters) or an onchange (both of those, for live-filtering) was
+  // rendering with none of it applied, just the plain .form-input default.
+  const onchangeAttr = onchange ? ` onchange="${esc(onchange)}"` : ''
+  const styleAttr = style ? ` style="${esc(style)}"` : ''
   return `
-  <div class="dob-picker" id="${id}-wrap" data-max="${max}" data-min="${min}">
-    <input type="hidden" id="${id}" value="${value || ''}">
-    <button type="button" id="${id}-trigger" class="${cls} dob-picker-trigger" onclick="window.toggleDobPicker('${id}')">
+  <div class="dob-picker" id="${id}-wrap" data-max="${max}" data-min="${min}" data-default-years-ago="${defaultYearsAgo}" data-placeholder="${esc(placeholder)}">
+    <input type="hidden" id="${id}" value="${value || ''}"${onchangeAttr}>
+    <button type="button" id="${id}-trigger" class="${cls} dob-picker-trigger"${styleAttr} onclick="window.toggleDobPicker('${id}')">
       <span class="dob-picker-text${value ? '' : ' placeholder'}" id="${id}-text">${label}</span>
       ${icon('calendar', 'icon-sm')}
     </button>
   </div>`
+}
+window.dateFieldHtml = dateFieldHtml
+
+// Date-of-birth fields are just a date picker that, when empty, opens ~25
+// years back instead of the current month — so a new field isn't stuck
+// 20-30 year-clicks away from a plausible adult birth year. Placeholder
+// stays the shared "mm/dd/yyyy" (not "Select date of birth") so every date
+// field in the app reads the same way, empty or filled. Thin wrapper kept
+// so existing call sites don't need to change.
+function dobFieldHtml(id, opts = {}) {
+  return dateFieldHtml(id, { defaultYearsAgo: 25, ...opts })
 }
 window.dobFieldHtml = dobFieldHtml
 
 function _dobFormat(iso) {
   if (!iso) return ''
   const dt = new Date(iso + 'T00:00:00')
-  return isNaN(dt) ? iso : dt.toLocaleDateString('en-PH', { year: 'numeric', month: 'short', day: 'numeric' })
+  if (isNaN(dt)) return iso
+  const mm = String(dt.getMonth() + 1).padStart(2, '0')
+  const dd = String(dt.getDate()).padStart(2, '0')
+  return `${mm}/${dd}/${dt.getFullYear()}`
 }
 
 let _dobOpenId = null
 let _dobState  = {}
+let _dobSubOpen = null  // 'month' | 'year' | null — which mini dropdown in the calendar head (if any) is open
+let _dobSubHighlight = -1  // keyboard cursor row within whichever mini dropdown is open
 
 function toggleDobPicker(id) {
   if (_dobOpenId === id) { closeDobPicker(); return }
@@ -204,25 +227,45 @@ function openDobPicker(id) {
   if (!wrap || !trigger || !hidden) return
 
   closeDobPicker() // only one open at a time
+  if (window.closeTimePicker) window.closeTimePicker()
 
   const maxIso = wrap.dataset.max || ''
   const minIso = wrap.dataset.min || ''
+  const defaultYearsAgo = parseInt(wrap.dataset.defaultYearsAgo || '0', 10)
   const today  = new Date()
   const seedIso = hidden.value || ''
   let y, m
   if (seedIso) {
     const [sy, sm] = seedIso.split('-').map(Number)
     y = sy; m = sm - 1
+  } else if (defaultYearsAgo) {
+    // No value yet, and this field wants a non-zero offset (e.g. DOB fields
+    // default ~25 years back) — start there instead of the current month,
+    // so the user isn't stuck spinning the year selector 20-30 times to
+    // reach a usable range.
+    y = today.getFullYear() - defaultYearsAgo
+    m = today.getMonth()
+  } else if (maxIso && new Date(maxIso + 'T00:00:00') < today) {
+    // No offset configured, but the field's upper bound is in the past
+    // (e.g. registration's DOB field, capped at "18 years ago" — built as
+    // static HTML rather than via dobFieldHtml(), so it has no
+    // data-default-years-ago). Today's month would land on a page where
+    // every day — and the year itself — is out of range and disabled, so
+    // anchor to the most recent selectable date instead.
+    const maxDate = new Date(maxIso + 'T00:00:00')
+    y = maxDate.getFullYear(); m = maxDate.getMonth()
   } else {
-    // No value yet — start on a plausible adult birth year rather than the
-    // current month, so the user isn't stuck spinning the year selector
-    // back 20-30 times before reaching a usable range.
-    y = today.getFullYear() - 25
+    // Generic date field with no value yet — today's month is the sensible
+    // default (Block Date, a report range, an exam date, etc. are all
+    // near-today actions, unlike a birthdate).
+    y = today.getFullYear()
     m = today.getMonth()
   }
 
-  _dobOpenId = id
-  _dobState  = { year: y, month: m, maxIso, minIso }
+  _dobOpenId       = id
+  _dobState        = { year: y, month: m, maxIso, minIso }
+  _dobSubOpen      = null
+  _dobSubHighlight = -1
   trigger.classList.add('open')
 
   let pop = document.getElementById('dob-popover-root')
@@ -236,26 +279,89 @@ function openDobPicker(id) {
   _dobRenderPanel()
   _dobPositionPopover(trigger)
 
-  // Close on outside click / Escape / scroll — a popover left pinned to a
-  // coordinate the trigger has since scrolled away from (e.g. inside a
-  // scrollable modal body) would otherwise look broken/detached.
+  // Close on outside click / Escape / page scroll — a popover left pinned to
+  // a coordinate the trigger has since scrolled away from (e.g. inside a
+  // scrollable modal body) would otherwise look broken/detached. Scrolling
+  // *inside* the popover itself (the calendar's own month/year mini
+  // dropdowns) must NOT close it — same reasoning, and same pop.contains()
+  // guard, as the custom select's _custScrollGuard.
   setTimeout(() => {
     document.addEventListener('mousedown', _dobOutsideClick, true)
-    document.addEventListener('keydown', _dobEscClose, true)
-    window.addEventListener('scroll', closeDobPicker, true)
+    document.addEventListener('keydown', _dobKeyNav, true)
+    window.addEventListener('scroll', _dobScrollGuard, true)
     window.addEventListener('resize', closeDobPicker, true)
   }, 0)
 }
 window.openDobPicker = openDobPicker
 
+function _dobScrollGuard(e) {
+  const pop = document.getElementById('dob-popover-root')
+  if (pop && pop.contains(e.target)) return // scrolling the calendar's own content — stay open
+  closeDobPicker()
+}
+
 function _dobOutsideClick(e) {
   const pop = document.getElementById('dob-popover-root')
   if (!pop || !_dobOpenId) return
-  if (pop.contains(e.target)) return
+  if (pop.contains(e.target)) {
+    // Inside the calendar popover: a click that isn't on the open month/year
+    // mini dropdown (e.g. on a day cell or blank space in the head) should
+    // still close that mini dropdown so it doesn't linger open, without
+    // closing the whole calendar.
+    if (_dobSubOpen && !(e.target.closest && e.target.closest('.dob-mini-select'))) {
+      _dobSubOpen = null
+      _dobSubHighlight = -1
+      _dobRenderPanel()
+    }
+    return
+  }
   if (e.target.closest && e.target.closest('#' + _dobOpenId + '-trigger')) return
   closeDobPicker()
 }
-function _dobEscClose(e) { if (e.key === 'Escape') closeDobPicker() }
+// Keyboard handling for the whole calendar popover. When a month/year mini
+// dropdown is open, arrow keys move its highlighted row, Enter/Space picks
+// it, and Escape closes just that dropdown (not the whole calendar) — same
+// "closest layer first" behavior a native nested popup would have. With no
+// mini dropdown open, Escape closes the calendar itself.
+function _dobKeyNav(e) {
+  if (_dobSubOpen) {
+    const isMonth = _dobSubOpen === 'month'
+    const { maxIso, minIso } = _dobState
+    const maxDate = maxIso ? new Date(maxIso + 'T00:00:00') : new Date()
+    const yearMax = maxDate.getFullYear()
+    const minDate = minIso ? new Date(minIso + 'T00:00:00') : null
+    const yearMin = minDate ? minDate.getFullYear() : yearMax - 100
+    const count = isMonth ? 12 : Math.max(1, yearMax - yearMin + 1)
+
+    if (e.key === 'Escape') { e.preventDefault(); _dobSubOpen = null; _dobSubHighlight = -1; _dobRenderPanel(); return }
+    if (e.key === 'ArrowDown') { e.preventDefault(); _dobSubHighlight = Math.min(count - 1, _dobSubHighlight + 1); _dobSubMoveHighlight(_dobSubHighlight); return }
+    if (e.key === 'ArrowUp')   { e.preventDefault(); _dobSubHighlight = Math.max(0, _dobSubHighlight - 1); _dobSubMoveHighlight(_dobSubHighlight); return }
+    if (e.key === 'Home')      { e.preventDefault(); _dobSubHighlight = 0; _dobSubMoveHighlight(_dobSubHighlight); return }
+    if (e.key === 'End')       { e.preventDefault(); _dobSubHighlight = count - 1; _dobSubMoveHighlight(_dobSubHighlight); return }
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault()
+      if (isMonth) dobPickerSetMonth(_dobSubHighlight)
+      else dobPickerSetYear(yearMax - _dobSubHighlight)
+      return
+    }
+    return // swallow other keys while a mini dropdown is open
+  }
+  if (e.key === 'Escape') closeDobPicker()
+}
+
+// Moves the keyboard cursor by toggling classes on the rows already in the
+// DOM, instead of _dobRenderPanel()'s full innerHTML rebuild — same fix and
+// same reasoning as the main custom select's _custMoveHighlight().
+function _dobSubMoveHighlight(index) {
+  const pop = document.getElementById('dob-popover-root')
+  if (!pop) return
+  const list = pop.querySelector('.dob-mini-popover')
+  if (!list) return
+  const items = list.querySelectorAll('.dob-mini-item')
+  items.forEach((el, i) => el.classList.toggle('highlighted', i === index))
+  const hi = items[index]
+  if (hi) hi.scrollIntoView({ block: 'nearest' })
+}
 
 function closeDobPicker() {
   const pop = document.getElementById('dob-popover-root')
@@ -264,10 +370,12 @@ function closeDobPicker() {
     const trigger = document.getElementById(_dobOpenId + '-trigger')
     if (trigger) trigger.classList.remove('open')
   }
-  _dobOpenId = null
+  _dobOpenId       = null
+  _dobSubOpen      = null
+  _dobSubHighlight = -1
   document.removeEventListener('mousedown', _dobOutsideClick, true)
-  document.removeEventListener('keydown', _dobEscClose, true)
-  window.removeEventListener('scroll', closeDobPicker, true)
+  document.removeEventListener('keydown', _dobKeyNav, true)
+  window.removeEventListener('scroll', _dobScrollGuard, true)
   window.removeEventListener('resize', closeDobPicker, true)
 }
 window.closeDobPicker = closeDobPicker
@@ -318,23 +426,73 @@ function _dobRenderPanel() {
     cells += `<div class="${cls.join(' ')}" ${disabled ? '' : `onclick="window.dobPickerSelectDay('${iso}')"`}>${d}</div>`
   }
 
+  // Month/year selectors are our own popover-style dropdowns, not native
+  // <select> elements — a native select's open option list is rendered by
+  // the OS/browser and can't be restyled, so it would look inconsistent
+  // sitting inside our custom calendar. Each renders its option list inline
+  // (not via openCustSelect()) because that component enforces "only one
+  // popover open at a time" against the DOB picker itself — nesting one
+  // inside the other would immediately close the calendar it lives in.
+  const monthOpen = _dobSubOpen === 'month'
+  const yearOpen  = _dobSubOpen === 'year'
   pop.innerHTML = `
     <div class="dob-picker-head">
-      <select class="dob-picker-select" onchange="window.dobPickerSetMonth(this.value)">
-        ${monthNames.map((mn, i) => `<option value="${i}"${i === month ? ' selected' : ''}>${mn}</option>`).join('')}
-      </select>
-      <select class="dob-picker-select" onchange="window.dobPickerSetYear(this.value)">
-        ${years.map(y => `<option value="${y}"${y === year ? ' selected' : ''}>${y}</option>`).join('')}
-      </select>
+      <div class="dob-mini-select">
+        <button type="button" class="dob-picker-select${monthOpen ? ' open' : ''}" onclick="window.dobPickerToggleSub('month')" onkeydown="window.dobPickerSubTriggerKey(event,'month')">${monthNames[month]}</button>
+        ${monthOpen ? `<div class="dob-mini-popover" role="listbox">${monthNames.map((mn, i) => `<div class="dob-mini-item${i === month ? ' selected' : ''}${i === _dobSubHighlight ? ' highlighted' : ''}" role="option" aria-selected="${i === month}" onclick="window.dobPickerSetMonth(${i})">${mn}</div>`).join('')}</div>` : ''}
+      </div>
+      <div class="dob-mini-select">
+        <button type="button" class="dob-picker-select${yearOpen ? ' open' : ''}" onclick="window.dobPickerToggleSub('year')" onkeydown="window.dobPickerSubTriggerKey(event,'year')">${year}</button>
+        ${yearOpen ? `<div class="dob-mini-popover" role="listbox">${years.map((y, i) => `<div class="dob-mini-item${y === year ? ' selected' : ''}${i === _dobSubHighlight ? ' highlighted' : ''}" role="option" aria-selected="${y === year}" onclick="window.dobPickerSetYear(${y})">${y}</div>`).join('')}</div>` : ''}
+      </div>
     </div>
     <div class="dob-picker-grid">
       ${['Su','Mo','Tu','We','Th','Fr','Sa'].map(d => `<div class="dob-picker-hdr">${d}</div>`).join('')}
       ${cells}
     </div>`
+
+  if (_dobSubOpen) {
+    // Follow the keyboard cursor first (it moves independently of the
+    // picked value), falling back to the selected row when nothing has
+    // been highlighted yet (e.g. right after opening via mouse click).
+    const hi = pop.querySelector('.dob-mini-item.highlighted') || pop.querySelector('.dob-mini-popover .selected')
+    if (hi) hi.scrollIntoView({ block: 'nearest' })
+  }
 }
+
+// Opens/closes the month or year mini dropdown in the calendar head —
+// mutually exclusive with each other (opening one closes the other) but
+// independent of the outer calendar popover, which stays open throughout.
+function dobPickerToggleSub(which) {
+  if (_dobSubOpen === which) { _dobSubOpen = null; _dobSubHighlight = -1; _dobRenderPanel(); return }
+  _dobSubOpen = which
+  // Seed the keyboard cursor at the currently-shown month/year so arrow
+  // keys continue from there instead of jumping to the top of the list.
+  if (which === 'month') {
+    _dobSubHighlight = _dobState.month
+  } else {
+    const { maxIso } = _dobState
+    const yearMax = (maxIso ? new Date(maxIso + 'T00:00:00') : new Date()).getFullYear()
+    _dobSubHighlight = yearMax - _dobState.year
+  }
+  _dobRenderPanel()
+}
+window.dobPickerToggleSub = dobPickerToggleSub
+
+// Arrow-down/up on a closed mini-dropdown trigger opens it and starts
+// keyboard navigation, same as the main custom select's trigger key.
+function dobPickerSubTriggerKey(e, which) {
+  if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+    e.preventDefault()
+    if (_dobSubOpen !== which) dobPickerToggleSub(which)
+  }
+}
+window.dobPickerSubTriggerKey = dobPickerSubTriggerKey
 
 function dobPickerSetMonth(m) {
   _dobState.month = Number(m)
+  _dobSubOpen = null
+  _dobSubHighlight = -1
   _dobRenderPanel()
   const trigger = document.getElementById(_dobOpenId + '-trigger')
   if (trigger) _dobPositionPopover(trigger)
@@ -343,6 +501,8 @@ window.dobPickerSetMonth = dobPickerSetMonth
 
 function dobPickerSetYear(y) {
   _dobState.year = Number(y)
+  _dobSubOpen = null
+  _dobSubHighlight = -1
   _dobRenderPanel()
   const trigger = document.getElementById(_dobOpenId + '-trigger')
   if (trigger) _dobPositionPopover(trigger)
@@ -365,14 +525,30 @@ window.dobPickerSelectDay = dobPickerSelectDay
 // Clears a DOB field back to empty/placeholder — used wherever a form
 // reset previously just did `el.value = ''` on the old native input.
 function resetDobField(id) {
-  const hidden  = document.getElementById(id)
+  setDateFieldValue(id, '')
   const trigger = document.getElementById(id + '-trigger')
-  const text    = document.getElementById(id + '-text')
-  if (hidden) hidden.value = ''
-  if (text)   { text.textContent = 'Select date of birth'; text.classList.add('placeholder') }
   if (trigger) trigger.classList.remove('error')
 }
 window.resetDobField = resetDobField
+
+// Programmatically set a date field's value from outside the picker (e.g.
+// resetting a Reports date range, or any code that used to do
+// `el.value = iso` on the old native <input type="date">). Setting the
+// hidden input's .value directly does NOT update the visible label span —
+// this does both, and fires the same 'change' event the calendar does.
+function setDateFieldValue(id, iso) {
+  const wrap    = document.getElementById(id + '-wrap')
+  const hidden  = document.getElementById(id)
+  const text    = document.getElementById(id + '-text')
+  if (!hidden) return
+  hidden.value = iso || ''
+  hidden.dispatchEvent(new Event('change', { bubbles: true }))
+  if (text) {
+    if (iso) { text.textContent = _dobFormat(iso); text.classList.remove('placeholder') }
+    else     { text.textContent = wrap?.dataset.placeholder || 'mm/dd/yyyy'; text.classList.add('placeholder') }
+  }
+}
+window.setDateFieldValue = setDateFieldValue
 
 // Updates a DOB field's allowed max date after the fact — e.g. the 18+
 // cutoff on the registration page, recomputed every time that form opens.
@@ -381,6 +557,318 @@ function setDobFieldMax(id, maxIso) {
   if (wrap) wrap.dataset.max = maxIso || ''
 }
 window.setDobFieldMax = setDobFieldMax
+
+// ════════════════════════════════════════════════════════════════
+//  CUSTOM SELECT — replaces native <select> everywhere in the app. A
+//  native <select> with many options (e.g. a 30-48 slot time list)
+//  renders as the OS's own listbox, which can swallow nearly the whole
+//  viewport height on open, and even short lists look visually
+//  inconsistent with the rest of the UI. This renders a compact,
+//  capped-height, scrollable popover instead, matching the DOB picker's
+//  visual language. Same technique: a same-id hidden <input> keeps
+//  holding the raw value, so every existing gv(id)/.value read across
+//  the app keeps working unchanged — and any onchange="..." the old
+//  <select> had moves onto that hidden input verbatim, firing exactly
+//  the same way when a real 'change' event is dispatched on it.
+// ════════════════════════════════════════════════════════════════
+function selectFieldHtml(id, opts = {}) {
+  const { value = '', options = [], placeholder = 'Select…', cls = 'form-input', onchange = '', style = '', minWidth = 160 } = opts
+  // Normalize to [{value,label}] — a plain string option is its own value+label.
+  const norm = options.map(o => (o && typeof o === 'object')
+    ? { value: String(o.value), label: String(o.label) }
+    : { value: String(o), label: String(o) })
+  const current = norm.find(o => o.value === String(value))
+  const label   = current ? current.label : placeholder
+  const onchangeAttr = onchange ? ` onchange="${esc(onchange)}"` : ''
+  const styleAttr = style ? ` style="${esc(style)}"` : ''
+  return `
+  <div class="cust-select" id="${id}-wrap" data-options='${JSON.stringify(norm).replace(/'/g, '&#39;')}' data-placeholder="${esc(placeholder)}" data-min-width="${minWidth}">
+    <input type="hidden" id="${id}" value="${esc(value ?? '')}"${onchangeAttr}>
+    <button type="button" id="${id}-trigger" class="${cls} cust-select-trigger"${styleAttr}
+            role="combobox" aria-haspopup="listbox" aria-expanded="false" aria-controls="cust-select-popover-root"
+            onclick="window.toggleCustSelect('${id}')" onkeydown="window.custSelectTriggerKey(event,'${id}')">
+      <span class="cust-select-text${current ? '' : ' placeholder'}" id="${id}-text">${esc(label)}</span>
+      ${icon('chevron-down', 'icon-sm')}
+    </button>
+  </div>`
+}
+window.selectFieldHtml = selectFieldHtml
+
+// Time-of-day fields (Consultation Settings' clinic hours, break times,
+// reminder/deadline times) are just a custom select whose options happen
+// to be "h:mm AM/PM" strings — thin wrapper kept so existing call sites
+// (and the "Select time" default placeholder) don't need to change.
+function timeFieldHtml(id, opts = {}) {
+  return selectFieldHtml(id, { placeholder: 'Select time', ...opts })
+}
+window.timeFieldHtml = timeFieldHtml
+
+let _custOpenId = null
+let _custHighlight = -1  // index of the keyboard-highlighted row, independent of the picked value
+let _custTypeahead  = ''
+let _custTypeaheadT = null
+
+function toggleCustSelect(id) {
+  if (_custOpenId === id) { closeCustSelect(); return }
+  openCustSelect(id)
+}
+window.toggleCustSelect = toggleCustSelect
+
+// Arrow-down/up on the *closed* trigger opens the popover and starts
+// keyboard navigation — the same expectation a native <select> sets up.
+// Enter/Space already work for free: a <button> fires its onclick on
+// either key natively, no extra wiring needed for those two.
+function custSelectTriggerKey(e, id) {
+  if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+    e.preventDefault()
+    if (_custOpenId !== id) openCustSelect(id)
+  }
+}
+window.custSelectTriggerKey = custSelectTriggerKey
+
+function openCustSelect(id) {
+  const wrap    = document.getElementById(id + '-wrap')
+  const trigger = document.getElementById(id + '-trigger')
+  const hidden  = document.getElementById(id)
+  if (!wrap || !trigger || !hidden) return
+
+  closeCustSelect() // only one open at a time
+  if (window.closeDobPicker) window.closeDobPicker()
+
+  let options = []
+  try { options = JSON.parse(wrap.dataset.options || '[]') } catch (_) {}
+
+  _custOpenId    = id
+  _custHighlight = Math.max(0, options.findIndex(o => o.value === hidden.value))
+  trigger.classList.add('open')
+  trigger.setAttribute('aria-expanded', 'true')
+
+  let pop = document.getElementById('cust-select-popover-root')
+  if (!pop) {
+    pop = document.createElement('div')
+    pop.id = 'cust-select-popover-root'
+    pop.className = 'cust-select-popover'
+    pop.setAttribute('role', 'listbox')
+    document.body.appendChild(pop)
+  }
+  pop.style.display = 'block'
+  _custRenderPanel()
+  _custPositionPopover(trigger)
+
+  // Close on outside click / Escape / page scroll — same reasoning as the
+  // DOB picker: a popover left pinned to a stale coordinate (e.g. the
+  // trigger scrolled away inside a modal body) would otherwise look
+  // detached. Scrolling *inside* the popover's own option list must NOT
+  // close it — 'scroll' events don't bubble, but a capture-phase listener
+  // on window still sees them on the way down to their target, so without
+  // the pop.contains(e.target) guard, scrolling the list itself would
+  // trigger this and close the popover before you could read it.
+  setTimeout(() => {
+    document.addEventListener('mousedown', _custOutsideClick, true)
+    document.addEventListener('keydown', _custKeyNav, true)
+    window.addEventListener('scroll', _custScrollGuard, true)
+    window.addEventListener('resize', closeCustSelect, true)
+  }, 0)
+}
+window.openCustSelect = openCustSelect
+
+function _custOutsideClick(e) {
+  const pop = document.getElementById('cust-select-popover-root')
+  if (!pop || !_custOpenId) return
+  if (pop.contains(e.target)) return
+  if (e.target.closest && e.target.closest('#' + _custOpenId + '-trigger')) return
+  closeCustSelect()
+}
+
+// Full keyboard navigation for the open popover — arrow keys move the
+// highlighted row, Enter picks it, Escape closes, Home/End jump to the
+// ends, and typing a letter jumps to the next option starting with it
+// (debounced into a short buffer so typing multiple letters in a row
+// narrows the match, same as a native <select>'s type-ahead).
+function _custKeyNav(e) {
+  if (!_custOpenId) return
+  const wrap = document.getElementById(_custOpenId + '-wrap')
+  if (!wrap) return
+  let options = []
+  try { options = JSON.parse(wrap.dataset.options || '[]') } catch (_) {}
+  if (!options.length) { if (e.key === 'Escape') closeCustSelect(); return }
+
+  if (e.key === 'Escape') { e.preventDefault(); closeCustSelect(); return }
+  if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); custSelectPick(_custHighlight); return }
+  if (e.key === 'ArrowDown') { e.preventDefault(); _custHighlight = Math.min(options.length - 1, _custHighlight + 1); _custMoveHighlight(_custHighlight); return }
+  if (e.key === 'ArrowUp')   { e.preventDefault(); _custHighlight = Math.max(0, _custHighlight - 1); _custMoveHighlight(_custHighlight); return }
+  if (e.key === 'Home')      { e.preventDefault(); _custHighlight = 0; _custMoveHighlight(_custHighlight); return }
+  if (e.key === 'End')       { e.preventDefault(); _custHighlight = options.length - 1; _custMoveHighlight(_custHighlight); return }
+
+  if (e.key.length === 1 && /\S/.test(e.key)) {
+    e.preventDefault()
+    clearTimeout(_custTypeaheadT)
+    _custTypeahead += e.key.toLowerCase()
+    _custTypeaheadT = setTimeout(() => { _custTypeahead = '' }, 600)
+    const match = options.findIndex(o => o.label.toLowerCase().startsWith(_custTypeahead))
+    if (match !== -1) { _custHighlight = match; _custMoveHighlight(_custHighlight) }
+  }
+}
+
+// Moves the keyboard cursor by toggling classes on the rows already in the
+// DOM, instead of _custRenderPanel()'s full innerHTML rebuild. A full
+// rebuild recreates the popover's own DOM node on every arrow-key press,
+// which retriggers its CSS entrance animation each time — visually the
+// whole list looked like it was "reopening" on every keystroke instead of
+// the highlight just moving. The animation should only play once, on the
+// initial open (still a full render via openCustSelect/custSelectPick).
+function _custMoveHighlight(index) {
+  const pop = document.getElementById('cust-select-popover-root')
+  if (!pop) return
+  const items = pop.querySelectorAll('.cust-select-item')
+  items.forEach((el, i) => el.classList.toggle('highlighted', i === index))
+  const trigger = document.getElementById(_custOpenId + '-trigger')
+  if (trigger) trigger.setAttribute('aria-activedescendant', 'cust-opt-' + index)
+  const hi = items[index]
+  if (hi) hi.scrollIntoView({ block: 'nearest' })
+}
+
+function _custScrollGuard(e) {
+  const pop = document.getElementById('cust-select-popover-root')
+  if (pop && pop.contains(e.target)) return // scrolling the option list itself — stay open
+  closeCustSelect()
+}
+
+function closeCustSelect() {
+  const pop = document.getElementById('cust-select-popover-root')
+  if (pop) pop.style.display = 'none'
+  if (_custOpenId) {
+    const trigger = document.getElementById(_custOpenId + '-trigger')
+    if (trigger) { trigger.classList.remove('open'); trigger.setAttribute('aria-expanded', 'false') }
+  }
+  _custOpenId    = null
+  _custHighlight = -1
+  document.removeEventListener('mousedown', _custOutsideClick, true)
+  document.removeEventListener('keydown', _custKeyNav, true)
+  window.removeEventListener('scroll', _custScrollGuard, true)
+  window.removeEventListener('resize', closeCustSelect, true)
+}
+window.closeCustSelect = closeCustSelect
+// Old name kept as an alias — a handful of call sites (and this session's
+// own earlier work) still reference the time-specific names directly.
+window.toggleTimePicker = toggleCustSelect
+window.closeTimePicker  = closeCustSelect
+
+function _custPositionPopover(trigger) {
+  const pop = document.getElementById('cust-select-popover-root')
+  if (!pop) return
+  const rect = trigger.getBoundingClientRect()
+  // Per-field floor (selectFieldHtml's minWidth option, default 160) — most
+  // selects want that so short option lists ("All Roles" etc.) still read
+  // comfortably, but a couple-digits-wide field like pagination's rows-per-
+  // page shouldn't be forced into a popover 2-3x its own trigger's width.
+  const wrap    = trigger.closest('.cust-select')
+  const minW    = wrap ? parseInt(wrap.dataset.minWidth, 10) || 160 : 160
+  const popW = Math.max(rect.width, minW)
+  const popH = pop.offsetHeight || 260
+  let left = rect.left
+  let top  = rect.bottom + 6
+  if (left + popW > window.innerWidth - 12) left = Math.max(12, window.innerWidth - popW - 12)
+  if (top + popH > window.innerHeight - 12) top  = Math.max(12, rect.top - popH - 6)
+  pop.style.left  = left + 'px'
+  pop.style.top   = top + 'px'
+  pop.style.width = popW + 'px'
+}
+
+function _custRenderPanel() {
+  const pop    = document.getElementById('cust-select-popover-root')
+  const wrap   = document.getElementById(_custOpenId + '-wrap')
+  const hidden = document.getElementById(_custOpenId)
+  if (!pop || !wrap || !hidden) return
+
+  let options = []
+  try { options = JSON.parse(wrap.dataset.options || '[]') } catch (_) {}
+  const selected = hidden.value
+  if (_custHighlight < 0 || _custHighlight >= options.length) _custHighlight = 0
+
+  // Selected by index (not by re-embedding the raw value in the onclick
+  // string) — sidesteps any quote/escaping issues for values that aren't
+  // simple tokens (patient names, free-text labels, etc). role="option" +
+  // aria-selected mirror a native <select>'s listbox semantics for screen
+  // readers; .highlighted (the keyboard cursor) is a separate visual ring
+  // from .selected (the picked value) so both can be true on one row.
+  //
+  // Deliberately NOT wired to onmouseenter: mouse hover only ever gets
+  // plain CSS :hover feedback (no JS, no re-render). Hovering the mouse
+  // was previously also moving the keyboard cursor and re-rendering this
+  // whole list on every row it passed over — which meant mouse-wheel
+  // scrolling (rows sliding under a stationary cursor fire mouseenter
+  // continuously) tore down and rebuilt the scrollable container mid-
+  // scroll, snapping scrollTop back to 0 every time. Keyboard nav still
+  // drives _custHighlight + auto-scroll below; the mouse no longer does.
+  pop.innerHTML = `
+    <div class="cust-select-list" role="presentation">
+      ${options.map((o, i) => `<div class="cust-select-item${o.value === selected ? ' selected' : ''}${i === _custHighlight ? ' highlighted' : ''}"
+             id="cust-opt-${i}" role="option" aria-selected="${o.value === selected}"
+             onclick="window.custSelectPick(${i})">${esc(o.label)}</div>`).join('')}
+    </div>`
+
+  const trigger = document.getElementById(_custOpenId + '-trigger')
+  if (trigger) trigger.setAttribute('aria-activedescendant', 'cust-opt-' + _custHighlight)
+
+  const hi = pop.querySelector('.cust-select-item.highlighted')
+  if (hi) hi.scrollIntoView({ block: 'nearest' })
+}
+
+function custSelectPick(index) {
+  const id = _custOpenId
+  if (!id) return
+  const wrap = document.getElementById(id + '-wrap')
+  if (!wrap) return
+  let options = []
+  try { options = JSON.parse(wrap.dataset.options || '[]') } catch (_) {}
+  const opt = options[index]
+  if (!opt) return
+
+  const hidden  = document.getElementById(id)
+  const text    = document.getElementById(id + '-text')
+  if (hidden) { hidden.value = opt.value; hidden.dispatchEvent(new Event('change', { bubbles: true })) }
+  if (text)   { text.textContent = opt.label; text.classList.remove('placeholder') }
+  closeCustSelect()
+}
+window.custSelectPick = custSelectPick
+// Old name kept as an alias for the same reason as toggleTimePicker above.
+window.timePickerSelect = value => {
+  const wrap = document.getElementById(_custOpenId + '-wrap')
+  if (!wrap) return
+  let options = []
+  try { options = JSON.parse(wrap.dataset.options || '[]') } catch (_) {}
+  custSelectPick(options.findIndex(o => o.value === value))
+}
+
+// Programmatically set a custom-select field's value from outside the
+// popover (e.g. an "Add" modal seeding defaults, or code that used to do
+// `el.value = x` on the old native <select>). Setting the hidden input's
+// .value directly does NOT update the visible label span — this does both,
+// and fires the same 'change' event custSelectPick() does.
+function setSelectFieldValue(id, value) {
+  const wrap   = document.getElementById(id + '-wrap')
+  const hidden = document.getElementById(id)
+  const text   = document.getElementById(id + '-text')
+  if (!hidden) return
+  let options = []
+  try { options = JSON.parse(wrap?.dataset.options || '[]') } catch (_) {}
+  const opt = options.find(o => o.value === String(value))
+  hidden.value = opt ? opt.value : String(value ?? '')
+  hidden.dispatchEvent(new Event('change', { bubbles: true }))
+  if (text) {
+    if (opt) { text.textContent = opt.label; text.classList.remove('placeholder') }
+    else     { text.textContent = wrap?.dataset.placeholder || 'Select…'; text.classList.add('placeholder') }
+  }
+}
+window.setSelectFieldValue = setSelectFieldValue
+
+// Clears a custom-select field back to its placeholder — mirrors
+// resetDobField() above, for code that used to do `el.value = ''`.
+function resetSelectField(id) {
+  setSelectFieldValue(id, '')
+}
+window.resetSelectField = resetSelectField
 
 // ════════════════════════════════════════════════════════════════
 //  TOAST
@@ -1191,13 +1679,14 @@ function rescheduleAppt(id) {
           transition:background-color .15s, color .15s; }
         .amc-day:hover:not(.amc-past):not(.amc-empty):not(.amc-far) { background:#FFF0DC; }
         .amc-day.amc-avail { background:#ECFDF5; color:#065F46; font-weight:600; }
+        .amc-day.amc-unavailable { background:#F3F4F6; color:#9CA3AF; }
         .amc-day.amc-today { outline:2px solid #E8760A; font-weight:700; }
         .amc-day.amc-selected { background:#E8760A !important; color:#fff !important; font-weight:700; }
         .amc-day.amc-past { opacity:.35; cursor:default; }
         .amc-day.amc-far { opacity:.3; cursor:default; background:#f9fafb; }
         .amc-day.amc-empty { cursor:default; }
         .amc-day.amc-holiday { background:#FFF1F2; color:#f43f5e; cursor:default; font-weight:600; }
-        .amc-holiday-lbl { position:absolute; left:2px; right:2px; top:calc(50% + 8px); font-size:.6rem; line-height:1.15; text-align:center; overflow:hidden; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; font-weight:600; padding:0 1px; }
+        .amc-holiday-lbl { position:absolute; left:2px; right:2px; top:calc(50% + 8px); font-size:.7rem; line-height:1.15; text-align:center; overflow:hidden; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; font-weight:600; padding:0 1px; }
         .amc-day.amc-blocked { background:#FEE2E2; color:#B91C1C; cursor:default; font-weight:700; text-decoration:line-through; text-decoration-color:rgba(185,28,28,0.5); }
         /* Same responsive shrink as the booking wizard's calendar (pages.js)
            — without this, a holiday name (e.g. "Ninoy Aquino Day") wraps
@@ -1479,13 +1968,14 @@ function requestReschedule(id) {
           transition:background-color .15s, color .15s; }
         .amc-day:hover:not(.amc-past):not(.amc-empty):not(.amc-far) { background:#FFF0DC; }
         .amc-day.amc-avail { background:#ECFDF5; color:#065F46; font-weight:600; }
+        .amc-day.amc-unavailable { background:#F3F4F6; color:#9CA3AF; }
         .amc-day.amc-today { outline:2px solid #E8760A; font-weight:700; }
         .amc-day.amc-selected { background:#E8760A !important; color:#fff !important; font-weight:700; }
         .amc-day.amc-past { opacity:.35; cursor:default; }
         .amc-day.amc-far { opacity:.3; cursor:default; background:#f9fafb; }
         .amc-day.amc-empty { cursor:default; }
         .amc-day.amc-holiday { background:#FFF1F2; color:#f43f5e; cursor:default; font-weight:600; }
-        .amc-holiday-lbl { position:absolute; left:2px; right:2px; top:calc(50% + 8px); font-size:.6rem; line-height:1.15; text-align:center; overflow:hidden; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; font-weight:600; padding:0 1px; }
+        .amc-holiday-lbl { position:absolute; left:2px; right:2px; top:calc(50% + 8px); font-size:.7rem; line-height:1.15; text-align:center; overflow:hidden; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; font-weight:600; padding:0 1px; }
         .amc-day.amc-blocked { background:#FEE2E2; color:#B91C1C; cursor:default; font-weight:700; text-decoration:line-through; text-decoration-color:rgba(185,28,28,0.5); }
         /* Same responsive shrink as the booking wizard's calendar (pages.js)
            — without this, a holiday name (e.g. "Ninoy Aquino Day") wraps
@@ -1604,7 +2094,9 @@ function viewAppt(id) {
   const patientCanCancel = !isPatient || !isActive || (window.apptCancellable ? window.apptCancellable(a) : true)
   const actionBtns = (isAdmin || isDoctor) ? `
     ${a.status === 'pending' && isAdmin ? `
-      <button class="btn-success" onclick="window.approveAppt('${a.id}');window.closeModal()">Approve</button>
+      ${a.doctorId
+        ? `<button class="btn-success" onclick="window.approveAppt('${a.id}');window.closeModal()">Approve</button>`
+        : `<button class="btn-success" disabled style="opacity:.45;cursor:not-allowed" title="Assign an optometrist before approving">Approve</button>`}
       <button class="btn-danger"  onclick="window.confirmCancelAppt('${a.id}')">Cancel</button>
       <button class="btn-disapprove" onclick="window.confirmDisapproveAppt('${a.id}')">Disapprove</button>` : ''}
     ${a.status === 'approved' && isAdmin ? `
@@ -1641,7 +2133,8 @@ function viewAppt(id) {
         <div style="background:#F9FAFB;border-radius:6px;padding:10px">
           <div style="font-size:.68rem;color:#9CA3AF;margin-bottom:2px;text-transform:uppercase;letter-spacing:.04em">Doctor</div>
           <div style="font-size:.84rem;font-weight:600;display:flex;align-items:center;gap:6px;flex-wrap:wrap">
-            ${a.doctorName}
+            ${a.doctorName || '<span style="font-style:italic;color:#9CA3AF;font-weight:400">Not yet assigned</span>'}
+            ${!a.doctorId && isAdmin ? `<button class="btn-ghost" style="font-size:.68rem;padding:2px 8px" onclick="window.closeModal();window.openAssignDoctorModal('${a.id}')">Assign</button>` : ''}
           </div>
         </div>
         <div style="background:#F9FAFB;border-radius:6px;padding:10px">
@@ -1657,21 +2150,21 @@ function viewAppt(id) {
           <div style="font-size:.84rem;font-weight:600">${a.time}</div>
         </div>
       </div>
-      ${a.notes ? `<div style="background:#F9FAFB;border-radius:6px;padding:10px;margin-bottom:14px">
+      ${a.notes ? `<div style="background:#F9FAFB;border-radius:6px;padding:10px;margin-bottom:14px;min-width:0">
         <div style="font-size:.68rem;color:#9CA3AF;margin-bottom:4px;text-transform:uppercase;letter-spacing:.04em">Notes</div>
-        <div style="font-size:.84rem">${a.notes}</div>
+        <div style="font-size:.84rem;overflow-wrap:anywhere;word-break:break-word">${a.notes}</div>
       </div>` : ''}
-      ${a.cancellationReason ? `<div style="background:#FEF2F2;border:1px solid #FECACA;border-radius:8px;padding:12px;margin-bottom:14px">
+      ${a.cancellationReason ? `<div style="background:#FEF2F2;border:1px solid #FECACA;border-radius:8px;padding:12px;margin-bottom:14px;min-width:0">
         <div style="font-size:.72rem;font-weight:700;color:#991B1B;text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px">Cancellation Reason</div>
-        <div style="font-size:.84rem;color:#374151">${a.cancellationReason}</div>
+        <div style="font-size:.84rem;color:#374151;overflow-wrap:anywhere;word-break:break-word">${a.cancellationReason}</div>
       </div>` : ''}
-      ${a.disapprovalReason ? `<div style="background:#FEF2F2;border:1px solid #FECACA;border-radius:8px;padding:12px;margin-bottom:14px">
+      ${a.disapprovalReason ? `<div style="background:#FEF2F2;border:1px solid #FECACA;border-radius:8px;padding:12px;margin-bottom:14px;min-width:0">
         <div style="font-size:.72rem;font-weight:700;color:#991B1B;text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px">Disapproval Reason</div>
-        <div style="font-size:.84rem;color:#374151">${a.disapprovalReason}</div>
+        <div style="font-size:.84rem;color:#374151;overflow-wrap:anywhere;word-break:break-word">${a.disapprovalReason}</div>
       </div>` : ''}
-      ${a.rescheduleNote ? `<div style="background:#F0FDF4;border:1px solid #BBF7D0;border-radius:8px;padding:12px;margin-bottom:14px">
+      ${a.rescheduleNote ? `<div style="background:#F0FDF4;border:1px solid #BBF7D0;border-radius:8px;padding:12px;margin-bottom:14px;min-width:0">
         <div style="font-size:.72rem;font-weight:700;color:#166534;text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px">Reschedule Note</div>
-        <div style="font-size:.84rem;color:#374151">${a.rescheduleNote}</div>
+        <div style="font-size:.84rem;color:#374151;overflow-wrap:anywhere;word-break:break-word">${a.rescheduleNote}</div>
       </div>` : ''}
       ${isPatient && isActive && !patientCanCancel ? `<div style="display:flex;gap:8px;align-items:flex-start;background:#FFFBEB;border:1px solid #FDE68A;border-radius:8px;padding:12px;margin-bottom:14px">
         <span style="flex-shrink:0;display:flex;margin-top:2px">${icon('alert-circle','icon-sm')}</span>
@@ -2019,7 +2512,7 @@ function confirmCancelAppt(id) {
       </div>
       <div style="background:#F9FAFB;border-radius:8px;padding:10px 12px;margin-bottom:14px;font-size:.84rem">
         <div style="font-weight:600;color:#1a1a1a">${a.type}</div>
-        <div style="color:#6B7280;margin-top:2px">${fmtD(a.date)} at ${a.time} · ${a.doctorName}</div>
+        <div style="color:#6B7280;margin-top:2px">${fmtD(a.date)} at ${a.time} · ${a.doctorName || 'Doctor not yet assigned'}</div>
         ${!isPatient ? `<div style="color:#6B7280;margin-top:1px">Patient: <strong>${a.patientName}</strong></div>` : ''}
       </div>
       <div class="form-group" style="margin-bottom:0">
@@ -2217,7 +2710,7 @@ function confirmDisapproveAppt(id) {
       </div>
       <div style="background:#F9FAFB;border-radius:8px;padding:10px 12px;margin-bottom:14px;font-size:.84rem">
         <div style="font-weight:600;color:#1a1a1a">${a.type}</div>
-        <div style="color:#6B7280;margin-top:2px">${fmtD(a.date)} at ${a.time} · ${a.doctorName}</div>
+        <div style="color:#6B7280;margin-top:2px">${fmtD(a.date)} at ${a.time} · ${a.doctorName || 'Doctor not yet assigned'}</div>
         <div style="color:#6B7280;margin-top:1px">Patient: <strong>${a.patientName}</strong></div>
       </div>
       <div class="form-group" style="margin-bottom:0">
@@ -2255,7 +2748,7 @@ const _wiz = {
   doctorName: '',
   doctorSpec: '',
   time: '',
-  type: 'Eye Examination',
+  type: '',
   notes: '',
   calYear: 0,
   calMonth: 0,
@@ -2266,7 +2759,13 @@ const _wiz = {
   mode: 'patient',
   patientId: '',
   patientName: '',
-  initialStatus: 'pending'
+  initialStatus: 'pending',
+  // "Any available optometrist" — patient chose not to pick a specific
+  // doctor (see wizChooseDoctorPref()). Skips the Doctor step entirely;
+  // the clinic assigns an actual doctor after reviewing the request
+  // (appointments/update.php action=assign_doctor). Always false in
+  // staff mode — staff/admin always pick a doctor directly.
+  anyDoctor: false
 }
 
 // ════════════════════════════════════════════════════════════════
@@ -2399,11 +2898,14 @@ function wizShowStep(idx, dir) {
 
 // ── Navigate forward / backward ───────────────────────────────────
 function wizGo(dir) {
-  const nextStep = _wiz.step + dir
+  let nextStep = _wiz.step + dir
+  // "Any available optometrist" — the Doctor step (index 1) never renders,
+  // so skip over it in both directions.
+  if (_wiz.anyDoctor && nextStep === 1) nextStep += dir
   if (nextStep < 0 || nextStep > 4) return
   // Collect current step data before moving
   if (_wiz.step === 3) {
-    _wiz.type  = document.getElementById('appt-type')?.value || 'Eye Examination'
+    _wiz.type  = document.getElementById('appt-type')?.value || ''
     _wiz.notes = document.getElementById('appt-notes')?.value || ''
   }
   // Going back from doctor step — clear selected doctor and prefill filter so calendar resets
@@ -2431,6 +2933,10 @@ window.wizGo = wizGo
 
 // Jump directly to a step (from review "Edit" links)
 function wizJump(targetStep) {
+  // The Doctor step doesn't exist in "any doctor" mode — nothing links to
+  // it (see rev-doctor-edit's visibility in wizPopulateReview()), but guard
+  // here too in case something else ever tries.
+  if (_wiz.anyDoctor && targetStep === 1) return
   const dir = targetStep < _wiz.step ? -1 : 1
   _wiz.step = targetStep
   wizShowStep(targetStep, dir)
@@ -2446,8 +2952,29 @@ function amcInit() {
   window._patCalPrefill = null  // consume once
 
   Object.assign(_wiz, { step:0, selectedDate:'', selectedDateLabel:'', selectedDateShort:'',
-    doctorId:'', doctorName:'', doctorSpec:'', _prefillDays:[], time:'', type:'Eye Examination', notes:'',
-    calYear: now.getFullYear(), calMonth: now.getMonth() })
+    doctorId:'', doctorName:'', doctorSpec:'', _prefillDays:[], time:'', type:'', notes:'',
+    calYear: now.getFullYear(), calMonth: now.getMonth(), anyDoctor: false })
+
+  // Relabel the stepper's Doctor dot back to default in case a previous
+  // visit to this page left it saying "Any Doctor" (see wizChooseDoctorPref()).
+  const stepLbl = document.querySelector('#wiz-si-1 .wiz-step-label')
+  if (stepLbl) stepLbl.textContent = 'Doctor'
+
+  const prefEl = document.getElementById('wiz-pref')
+  const mainEl = document.getElementById('wiz-main')
+  if (prefill) {
+    // Doctor already chosen via Doctor Availability — skip the preference
+    // gate entirely and land straight on the wizard. The "Back" button on
+    // Step 0 (see wizBackToPref()) stays available regardless, in case the
+    // patient changes their mind about that specific doctor once they're
+    // actually looking at dates — it clears the pre-fill and reopens the
+    // preference gate from scratch.
+    if (prefEl) prefEl.style.display = 'none'
+    if (mainEl) mainEl.style.display = ''
+  } else {
+    if (prefEl) prefEl.style.display = ''
+    if (mainEl) mainEl.style.display = 'none'
+  }
 
   // Apply pre-fill from Doctor Availability page
   if (prefill) {
@@ -2498,10 +3025,9 @@ window.amcInit = amcInit
 function wizInitStaff(patientId, patientName) {
   const now = new Date()
   Object.assign(_wiz, { step:0, selectedDate:'', selectedDateLabel:'', selectedDateShort:'',
-    doctorId:'', doctorName:'', doctorSpec:'', _prefillDays:[], time:'',
-    type: (CLINIC_SERVICES.find(s => s.status === 'active') || {}).name || 'Eye Examination',
+    doctorId:'', doctorName:'', doctorSpec:'', _prefillDays:[], time:'', type:'',
     notes:'', calYear: now.getFullYear(), calMonth: now.getMonth(),
-    mode: 'staff', patientId, patientName, initialStatus: 'pending' })
+    mode: 'staff', patientId, patientName, initialStatus: 'pending', anyDoctor: false })
 
   const set = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = val }
   set('wiz-patient-lbl0', patientName)
@@ -2527,6 +3053,52 @@ function amcRenderPrefillBanner() {
   }
 }
 window.amcRenderPrefillBanner = amcRenderPrefillBanner
+
+// Preference gate (patient-only, pages.js's #wiz-pref) — answers "does this
+// patient want to pick their own doctor, or let the clinic assign one?"
+// before the wizard proper even shows. See wizGo()'s Doctor-step skip logic.
+function wizChooseDoctorPref(any) {
+  _wiz.anyDoctor = !!any
+  const prefEl = document.getElementById('wiz-pref')
+  const mainEl = document.getElementById('wiz-main')
+  if (prefEl) prefEl.style.display = 'none'
+  if (mainEl) mainEl.style.display = ''
+  // The Doctor step is skipped but its stepper dot still shows — relabel it
+  // so it doesn't claim a doctor is being picked when one isn't.
+  const stepLbl = document.querySelector('#wiz-si-1 .wiz-step-label')
+  if (stepLbl) stepLbl.textContent = any ? 'Any Doctor' : 'Doctor'
+  // Reflect the choice in the summary sidebar immediately — otherwise
+  // "Any available optometrist" leaves Doctor reading "Not selected yet"
+  // for the rest of the flow even though there's nothing left to select.
+  const sd = document.getElementById('sum-doctor')
+  if (sd) {
+    if (any) { sd.textContent = 'Any available doctor'; sd.classList.remove('empty') }
+    else     { sd.textContent = 'Not selected yet'; sd.classList.add('empty') }
+  }
+  wizShowStep(0, 1)
+  amcRender()
+}
+window.wizChooseDoctorPref = wizChooseDoctorPref
+
+function wizBackToPref() {
+  // Clear any doctor pre-fill (e.g. arrived here via "Book Appointment" on
+  // Doctor Availability) — the point of backing out to this gate is to let
+  // the patient actually reconsider, not land back on Step 0 with that same
+  // doctor silently still selected underneath. Whichever option they pick
+  // next (a specific doctor via Step 1, or "any available") now starts clean.
+  _wiz.doctorId = ''; _wiz.doctorName = ''; _wiz.doctorSpec = ''; _wiz._prefillDays = []
+  _wiz.anyDoctor = false
+  amcRenderPrefillBanner()
+  amcRender()
+  const sd = document.getElementById('sum-doctor')
+  if (sd) { sd.textContent = 'Not selected yet'; sd.classList.add('empty') }
+
+  const prefEl = document.getElementById('wiz-pref')
+  const mainEl = document.getElementById('wiz-main')
+  if (prefEl) prefEl.style.display = ''
+  if (mainEl) mainEl.style.display = 'none'
+}
+window.wizBackToPref = wizBackToPref
 
 function amcGoMonth(dir) {
   const now = new Date()
@@ -2680,11 +3252,19 @@ function amcRender() {
     // of always having to rebuild the whole grid, which would otherwise wipe
     // out the underlying amc-today/amc-avail class a cell needs to fall back
     // to once amc-selected is removed.
+    // No amc-blocked/"Doctor Unavailable" distinction here — this calendar
+    // is shown before a doctor is even chosen in the common flow (Step 1),
+    // so blockedMap above only ever populates on the secondary prefilled-
+    // doctor path (arriving via Doctor Availability's Book Appointment).
+    // A red cell with no explanation in the legend the other 99% of the
+    // time was worse than just always falling back to plain "Unavailable" —
+    // isBlocked still correctly keeps the date non-clickable via isDisabled
+    // below either way, this only changes how it's colored/labeled.
     let cls = 'amc-day'
     if (isToday)                                     cls += ' amc-today'
-    else if (isBlocked && !isPast)                   cls += ' amc-blocked'
     else if (isHoliday && !isPast)                   cls += ' amc-holiday'
     else if (docAvail && !isDisabled && !isFar)      cls += ' amc-avail'
+    else                                              cls += ' amc-unavailable'
     if (isSel) cls += ' amc-selected'
     if (isDisabled || isSun || (hasPrefill && !docAvail)) cls += ' amc-past'
     if (isFar)                                            cls += ' amc-far'
@@ -2748,7 +3328,11 @@ function amcSelectDate(dateStr, dayAbb) {
   // Update summary
   const sd = document.getElementById('sum-date')
   if (sd) { sd.textContent = _wiz.selectedDateLabel; sd.classList.remove('empty') }
-  if (!hasPrefillDoctor) {
+  // "Any available optometrist" already has its own permanent summary label
+  // (see wizChooseDoctorPref()) — there's no per-date doctor selection to
+  // reset here, so leave it alone instead of stomping it back to "Not
+  // selected yet".
+  if (!hasPrefillDoctor && !_wiz.anyDoctor) {
     const sdoc = document.getElementById('sum-doctor')
     if (sdoc) { sdoc.textContent = 'Not selected yet'; sdoc.classList.add('empty') }
   }
@@ -2910,6 +3494,8 @@ function _slotConflicts(slotTime, slotDur) {
 }
 
 async function wizBuildTimeSlots() {
+  if (_wiz.anyDoctor) return wizBuildTimeSlotsAnyDoctor()
+
   const el = document.getElementById('appt-time-slots')
   if (el) el.innerHTML = '<div style="color:#9CA3AF;font-size:.82rem;padding:8px 0">Loading available slots…</div>'
 
@@ -3008,6 +3594,166 @@ async function wizBuildTimeSlots() {
   if (lbl3) lbl3.textContent = _wiz.selectedDateShort
   const btn = document.getElementById('wiz-next-2')
   if (btn) btn.disabled = !_wiz.time
+  _wizSetFullLegend()
+}
+
+// A "full" slot means the exact same thing in both modes now — waitlist-
+// able, not truly unbookable — single-doctor (nobody free but the one
+// doctor) and any-doctor (nobody eligible free, see
+// wizBuildTimeSlotsAnyDoctor()) alike. Reset here rather than baked
+// statically into pages.js since the same wizard DOM can flip between modes
+// via wizBackToPref(), which could otherwise leave a stale legend behind.
+function _wizSetFullLegend() {
+  const txt    = document.getElementById('tsl-full-txt')
+  const swatch = document.getElementById('tsl-full-swatch')
+  if (txt)    txt.textContent = 'Fully booked (waitlist available)'
+  if (swatch) swatch.style.cssText = 'background:#FFF7ED;border:1.5px solid #FDBA74'
+}
+
+// ── Step 3 (any-doctor mode): time slots unioned across every doctor who
+// could plausibly work this date ─────────────────────────────────────
+// A slot is bookable if ANY eligible doctor is free at it — the clinic
+// assigns the actual doctor afterward (see appointments/update.php's
+// assign_doctor action). Unlike single-doctor mode, a slot with no free
+// doctor is disabled outright rather than offered as a waitlist pick —
+// the waitlist system is keyed to one specific doctor+date+time, which
+// doesn't exist yet for an unassigned request.
+async function wizBuildTimeSlotsAnyDoctor() {
+  const el = document.getElementById('appt-time-slots')
+  if (el) el.innerHTML = '<div style="color:#9CA3AF;font-size:.82rem;padding:8px 0">Loading available slots…</div>'
+
+  const requestedDate = _wiz.selectedDate
+  const dt       = new Date(_wiz.selectedDate + 'T00:00:00')
+  const dayShort = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'][dt.getDay()]
+
+  // Same eligibility rule as wizBuildDoctorCards()'s single-doctor path —
+  // scheduled to work this weekday, not individually blocked this date.
+  const eligibleDocs = doctors.filter(d => {
+    if (!(d.days || []).includes(dayShort)) return false
+    return !(d.blockedDates || []).some(b => b.date === _wiz.selectedDate)
+  })
+
+  if (!eligibleDocs.length) {
+    if (el) el.innerHTML = `<div style="padding:24px;text-align:center;font-size:.82rem;color:#9CA3AF">No doctors are available on this day. Please go back and select a different date.</div>`
+    return
+  }
+
+  const maxPerDay = consultationSettings.maxApptsPerDoctorPerDay || 12
+  let apptCounts = {}
+  try {
+    const r = await fetch(`api/appointments/daily-counts.php?date=${encodeURIComponent(_wiz.selectedDate)}`)
+    const d = await r.json()
+    if (d.success) apptCounts = d.counts || {}
+  } catch (_) { /* fail open — treat as 0 booked rather than block booking entirely */ }
+  if (!document.getElementById('appt-time-slots') || _wiz.selectedDate !== requestedDate) return
+
+  const freeDocs = eligibleDocs.filter(d => (apptCounts[d.id] || 0) < maxPerDay)
+  if (!freeDocs.length) {
+    if (el) el.innerHTML = `<div style="padding:24px;text-align:center;font-size:.82rem;color:#9CA3AF">All doctors are fully booked on this date. Please choose a different date.</div>`
+    return
+  }
+
+  let byDoctor = {}
+  let defaultDuration = _durationMinutes(consultationSettings.defaultDuration)
+  try {
+    const ids = freeDocs.map(d => d.id).join(',')
+    const r = await fetch(`api/appointments/taken.php?doctorIds=${encodeURIComponent(ids)}&date=${encodeURIComponent(_wiz.selectedDate)}`)
+    const d = await r.json()
+    byDoctor = d.byDoctor || {}
+    defaultDuration = d.defaultDuration || defaultDuration
+  } catch (_) { /* fail open — treat as nobody booked yet */ }
+  if (!document.getElementById('appt-time-slots') || _wiz.selectedDate !== requestedDate) return
+
+  const stepMin = _durationMinutes(consultationSettings.defaultDuration)
+  const _toMin = t => {
+    const [time, period] = t.split(' ')
+    let [h, m] = time.split(':').map(Number)
+    if (period === 'PM' && h !== 12) h += 12
+    if (period === 'AM' && h === 12) h = 0
+    return h * 60 + m
+  }
+  let morning, afternoon
+  if (consultationSettings.lunchBreak) {
+    morning   = _buildSessionSlots(consultationSettings.morningStart,   consultationSettings.morningEnd,   stepMin)
+    afternoon = _buildSessionSlots(consultationSettings.afternoonStart, consultationSettings.afternoonEnd, stepMin)
+  } else {
+    const allSlots = _buildSessionSlots(consultationSettings.morningStart, consultationSettings.afternoonEnd, stepMin)
+    morning   = allSlots.filter(t => _toMin(t) < 720)
+    afternoon = allSlots.filter(t => _toMin(t) >= 720)
+  }
+
+  const today   = localDateStr()
+  const isToday = _wiz.selectedDate === today
+  const nowMin  = isToday ? new Date().getHours() * 60 + new Date().getMinutes() : -1
+  const parseSlotMin = _toMin
+
+  const newSlotDur = CLINIC_SERVICES.find(s => s.name === _wiz.type)?.duration || defaultDuration
+  const slotHasFreeDoctor = t => {
+    const slotMins = _clockToMinutes(t)
+    if (slotMins == null) return false
+    return freeDocs.some(d => {
+      const taken = byDoctor[d.id] || []
+      return !taken.some(bt => {
+        const btMins = _clockToMinutes(bt.time)
+        const btDur  = bt.duration || defaultDuration
+        if (btMins == null) return false
+        return slotMins < btMins + btDur && slotMins + newSlotDur > btMins
+      })
+    })
+  }
+
+  // A "full" slot (nobody eligible is free at it) is still selectable —
+  // same as the single-doctor path (_slotConflicts/wizBuildTimeSlots): the
+  // patient can pick it and, if they submit, create.php offers them the
+  // waitlist for it (tied to whichever under-cap doctor is picked server-
+  // side — see create.php's anyDoctor branch). Only truly past times are
+  // unselectable.
+  const slotBtn = t => {
+    const isPast = isToday && parseSlotMin(t) <= nowMin
+    const isFull = !isPast && !slotHasFreeDoctor(t)
+    const isSel  = t === _wiz.time && !isPast
+    let cls = 'time-slot'
+    if (isPast) cls += ' taken'
+    else {
+      if (isFull) cls += ' full'
+      if (isSel)  cls += ' selected'
+    }
+    const tip      = isPast ? 'This time slot has already passed.'
+                   : isFull ? 'No doctor is free at this time. You can still select it to join the waitlist.'
+                   : ''
+    const disabled = isPast ? `disabled title="${tip}"` : (tip ? `title="${tip}"` : '')
+    return `<button class="${cls}" ${disabled} onclick="window.wizSelectTime('${t}',this)">${t}</button>`
+  }
+
+  if (el) el.innerHTML = `
+    <div style="margin-bottom:14px">
+      <div style="font-size:.7rem;text-transform:uppercase;letter-spacing:.06em;color:#9CA3AF;font-weight:700;margin-bottom:8px">${afternoon.length ? 'Morning' : 'Available Times'}</div>
+      <div style="display:flex;flex-wrap:wrap;gap:8px">${morning.map(slotBtn).join('')}</div>
+    </div>
+    ${afternoon.length ? `
+    <div>
+      <div style="font-size:.7rem;text-transform:uppercase;letter-spacing:.06em;color:#9CA3AF;font-weight:700;margin-bottom:8px">Afternoon</div>
+      <div style="display:flex;flex-wrap:wrap;gap:8px">${afternoon.map(slotBtn).join('')}</div>
+    </div>` : ''}`
+
+  // Only clear a stale selection once it's actually past — same as the
+  // single-doctor path, a "full" pick stays selected since submitting it
+  // is exactly how the patient opts into the waitlist for it.
+  if (_wiz.time && isToday && parseSlotMin(_wiz.time) <= nowMin) {
+    _wiz.time = null
+    const inp = document.getElementById('appt-time')
+    if (inp) inp.value = ''
+    const st = document.getElementById('sum-time')
+    if (st) { st.textContent = '—'; st.classList.add('empty') }
+  }
+
+  const lbl2 = document.getElementById('wiz-doc-lbl3')
+  const lbl3 = document.getElementById('wiz-date-lbl3')
+  if (lbl2) lbl2.textContent = 'any available doctor'
+  if (lbl3) lbl3.textContent = _wiz.selectedDateShort
+  const btn = document.getElementById('wiz-next-2')
+  if (btn) btn.disabled = !_wiz.time
+  _wizSetFullLegend()
 }
 
 function wizSelectTime(time, btnEl) {
@@ -3036,7 +3782,9 @@ function selectApptType(type, btn) {
   if (inp) inp.value = type
   const dur = CLINIC_SERVICES.find(s => s.name === type)?.duration
   const st = document.getElementById('sum-type')
-  if (st) st.textContent = type + (dur ? ` (~${dur} min)` : '')
+  if (st) { st.textContent = type + (dur ? ` (~${dur} min)` : ''); st.classList.remove('empty') }
+  const btnNext = document.getElementById('wiz-next-3')
+  if (btnNext) btnNext.disabled = false
 }
 window.selectApptType = selectApptType
 
@@ -3046,7 +3794,11 @@ function wizPopulateReview() {
   _wiz.notes = document.getElementById('appt-notes')?.value || ''
   const set = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = val }
   set('rev-date',   _wiz.selectedDateLabel)
-  set('rev-doctor', _wiz.doctorName + (_wiz.doctorSpec ? ' — ' + _wiz.doctorSpec : ''))
+  set('rev-doctor', _wiz.anyDoctor
+    ? 'Any available optometrist (assigned by clinic staff)'
+    : _wiz.doctorName + (_wiz.doctorSpec ? ' — ' + _wiz.doctorSpec : ''))
+  const revDocEdit = document.getElementById('rev-doctor-edit')
+  if (revDocEdit) revDocEdit.style.display = _wiz.anyDoctor ? 'none' : ''
   set('rev-time',   _wiz.time)
   const revDur = CLINIC_SERVICES.find(s => s.name === _wiz.type)?.duration
   set('rev-type',   _wiz.type + (revDur ? ` (~${revDur} min)` : ''))
@@ -3068,6 +3820,26 @@ function wizPopulateReview() {
   if (hintEl) hintEl.style.display = ''
   syncApptSubmitState()
 }
+
+// Live-updates the Booking Summary sidebar's Notes row as the patient/staff
+// types on Step 4 — matches how Date/Doctor/Time/Type already update the
+// moment they're picked, instead of Notes only ever showing up once the
+// Review step is reached.
+function syncSumNotes() {
+  const val = document.getElementById('appt-notes')?.value || ''
+  const el = document.getElementById('sum-notes')
+  if (!el) return
+  if (val) {
+    el.textContent = val
+    el.classList.remove('empty')
+    el.style.fontStyle = 'normal'
+  } else {
+    el.textContent = 'No notes added'
+    el.classList.add('empty')
+    el.style.fontStyle = 'italic'
+  }
+}
+window.syncSumNotes = syncSumNotes
 
 // Gate the final submit button — patient mode requires the policy checkbox
 // (called on its onchange and whenever the review step is repopulated);
@@ -3180,7 +3952,7 @@ window.acceptApptTerms = acceptApptTerms
 
 // ── Submit ────────────────────────────────────────────────────────
 async function requestAppointment() {
-  if (!_wiz.selectedDate || !_wiz.doctorId || !_wiz.time) {
+  if (!_wiz.selectedDate || (!_wiz.anyDoctor && !_wiz.doctorId) || !_wiz.time || !_wiz.type) {
     toast('Please complete all required fields.', 'error'); return
   }
   if (!document.getElementById('appt-terms-agree')?.checked) {
@@ -3190,6 +3962,7 @@ async function requestAppointment() {
   if (btn) { btn.disabled = true; btn.innerHTML = icon('clock','icon-sm') + ' Submitting…' }
 
   const user = state.user
+  const docLabel = _wiz.anyDoctor ? 'Any available optometrist' : _wiz.doctorName
   try {
     const r = await fetch('api/appointments/create.php', {
       method:  'POST',
@@ -3197,8 +3970,9 @@ async function requestAppointment() {
       body:    JSON.stringify({
         patientId:   user.id,
         patientName: user.name,
-        doctorId:    _wiz.doctorId,
-        doctorName:  _wiz.doctorName,
+        doctorId:    _wiz.anyDoctor ? '' : _wiz.doctorId,
+        doctorName:  _wiz.anyDoctor ? '' : _wiz.doctorName,
+        anyDoctor:   _wiz.anyDoctor,
         date:        _wiz.selectedDate,
         time:        _wiz.time,
         type:        _wiz.type,
@@ -3217,12 +3991,13 @@ async function requestAppointment() {
     const newId = d.id
     addAppointment({
       id: newId, patientId: user.id, patientName: user.name,
-      doctorId: _wiz.doctorId, doctorName: _wiz.doctorName,
+      doctorId: _wiz.anyDoctor ? null : _wiz.doctorId,
+      doctorName: _wiz.anyDoctor ? null : _wiz.doctorName,
       date: _wiz.selectedDate, time: _wiz.time, type: _wiz.type,
       status: 'pending', notes: _wiz.notes
     })
     addActivityLog({ id:'L'+Date.now(), user: user.name, role: 'Patient',
-      action: `Requested appointment ${newId} with ${_wiz.doctorName}`,
+      action: `Requested appointment ${newId}` + (_wiz.anyDoctor ? ' (any available doctor)' : ` with ${_wiz.doctorName}`),
       timestamp: nowTimestamp(), type:'appointment' })
 
     const dt = new Date(_wiz.selectedDate + 'T00:00:00')
@@ -3236,7 +4011,7 @@ async function requestAppointment() {
         <div style="font-size:1.1rem;font-weight:700;color:#1C1C1C;margin-bottom:8px">Your Appointment Request Has Been Submitted</div>
         <div style="font-size:.85rem;color:#6B7280;margin-bottom:16px">Your request for:</div>
         <div style="background:#FFF7ED;border-radius:10px;padding:14px 20px;margin-bottom:16px;text-align:left">
-          <div style="font-size:.85rem;font-weight:600;color:#1C1C1C">${_wiz.doctorName}</div>
+          <div style="font-size:.85rem;font-weight:600;color:#1C1C1C">${docLabel}</div>
           <div style="font-size:.82rem;color:#6B7280;margin-top:4px">${dateShort} at ${_wiz.time}</div>
           <div style="font-size:.82rem;color:#6B7280">${_wiz.type}</div>
         </div>
@@ -3260,7 +4035,7 @@ window.requestAppointment = requestAppointment
 // offers to waitlist the chosen patient, same as the patient-side flow —
 // promptJoinWaitlist() branches on d.patientId to know which case it's in.
 async function submitStaffAppointment() {
-  if (!_wiz.patientId || !_wiz.selectedDate || !_wiz.doctorId || !_wiz.time) {
+  if (!_wiz.patientId || !_wiz.selectedDate || !_wiz.doctorId || !_wiz.time || !_wiz.type) {
     toast('Please complete all required fields.', 'error'); return
   }
   const btn = document.getElementById('appt-submit-btn')
@@ -3396,6 +4171,115 @@ async function joinWaitlist(doctorId, doctorName, date, time, type, patientId, p
 }
 window.joinWaitlist = joinWaitlist
 
+// ── Admin/staff: assign a doctor to an "any available optometrist" ──
+// request (appointments/update.php action=assign_doctor). Only doctors
+// scheduled to work that weekday, not individually blocked that date, and
+// not already booked at that exact time are offered — same eligibility
+// rule as the patient-side any-doctor booking path (wizBuildTimeSlotsAnyDoctor).
+async function openAssignDoctorModal(apptId) {
+  const a = appointments.find(x => x.id === apptId)
+  if (!a) return
+  const dt = new Date(a.date + 'T00:00:00')
+  const dayShort = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'][dt.getDay()]
+  const eligibleDocs = doctors.filter(d => {
+    if (d.status !== 'active') return false
+    if (!(d.days || []).includes(dayShort)) return false
+    return !(d.blockedDates || []).some(b => b.date === a.date)
+  })
+
+  const fmtApptDate = new Date(a.date + 'T00:00:00').toLocaleDateString('en-PH',{month:'long',day:'numeric',year:'numeric'})
+  showModal(`
+    <div class="modal-header">
+      <div class="modal-title">${icon('users','icon-sm')} Assign an Optometrist</div>
+      <button class="modal-close" onclick="window.closeModal()">&times;</button>
+    </div>
+    <div class="modal-body">
+      <div style="display:flex;align-items:flex-start;gap:10px;padding:10px 12px;background:#FFFBF5;border:1px solid #FFE4C0;border-radius:8px;font-size:.82rem;color:#92400E">
+        <span style="flex-shrink:0;display:flex;margin-top:2px">${icon('info','icon-sm')}</span>
+        <span>For <strong>${a.patientName}</strong> &bull; ${fmtApptDate} at ${a.time}. Only optometrists actually free at that time are shown.</span>
+      </div>
+      <!-- padding (not just margin) around the scrollable list — without it,
+           the top row's hover lift+shadow (.pick-person-row:hover) gets
+           clipped flush against this container's own edge instead of
+           having room to spread outward. -->
+      <div id="assign-doc-list" style="display:flex;flex-direction:column;gap:8px;max-height:340px;overflow-y:auto;margin-top:10px;padding:6px 4px">
+        <div style="color:#9CA3AF;font-size:.82rem">Checking availability…</div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn-secondary" onclick="window.closeModal()">Cancel</button>
+    </div>`)
+
+  const list = document.getElementById('assign-doc-list')
+  if (!eligibleDocs.length) {
+    if (list) list.innerHTML = `<div style="font-size:.82rem;color:#9CA3AF;text-align:center;padding:12px 0">No optometrists are scheduled to work on this date.</div>`
+    return
+  }
+
+  let byDoctor = {}
+  try {
+    const ids = eligibleDocs.map(d => d.id).join(',')
+    const r = await fetch(`api/appointments/taken.php?doctorIds=${encodeURIComponent(ids)}&date=${encodeURIComponent(a.date)}&excludeId=${encodeURIComponent(a.id)}`)
+    const d = await r.json()
+    byDoctor = d.byDoctor || {}
+  } catch (_) { /* fail open — treat as nobody booked yet */ }
+  if (!document.getElementById('assign-doc-list')) return // modal was closed mid-fetch
+
+  const slotMins = _clockToMinutes(a.time)
+  const apptDur  = CLINIC_SERVICES.find(s => s.name === a.type)?.duration || _durationMinutes(consultationSettings.defaultDuration)
+  const freeDocs = eligibleDocs.filter(d => {
+    const taken = byDoctor[d.id] || []
+    return !taken.some(bt => {
+      const btMins = _clockToMinutes(bt.time)
+      const btDur  = bt.duration || apptDur
+      if (btMins == null || slotMins == null) return false
+      return slotMins < btMins + btDur && slotMins + apptDur > btMins
+    })
+  })
+
+  if (!list) return
+  if (!freeDocs.length) {
+    list.innerHTML = `<div style="font-size:.82rem;color:#9CA3AF;text-align:center;padding:12px 0">No optometrist is free at this exact time. Consider rescheduling this appointment instead.</div>`
+    return
+  }
+  const getInitials = name => (name || '').replace('Dr. ','').split(' ').map(n=>n[0]).join('').slice(0,2).toUpperCase()
+  // Same photo-with-initials-fallback pattern as the booking wizard's own
+  // doctor cards (wizBuildDoctorCards()'s docAvatar()) — this list was
+  // showing initials-only even for doctors with a profile photo on file.
+  const docAvatar = d => d.photoUrl
+    ? `<div class="pick-person-avatar" style="overflow:hidden;padding:0"><img src="${d.photoUrl}" alt="${d.name}" style="width:100%;height:100%;object-fit:cover;object-position:top;border-radius:50%;display:block" onerror="${window.avatarFallbackAttr(d.name)}"></div>`
+    : `<div class="pick-person-avatar">${getInitials(d.name)}</div>`
+  list.innerHTML = freeDocs.map(d => `
+    <button class="pick-person-row" onclick="window._confirmAssignDoctor('${apptId}','${d.id}')">
+      ${docAvatar(d)}
+      <div style="flex:1;min-width:0">
+        <div style="font-size:.9rem;font-weight:700;color:#1C1C1C">${d.name}</div>
+        <div style="font-size:.78rem;color:#6B7280">${d.specialization}</div>
+      </div>
+      <span class="pick-person-arrow">${icon('chevron-right','icon-sm')}</span>
+    </button>`).join('')
+}
+window.openAssignDoctorModal = openAssignDoctorModal
+
+async function _confirmAssignDoctor(apptId, doctorId) {
+  try {
+    const r = await fetch('api/appointments/update.php', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: apptId, action: 'assign_doctor', doctorId })
+    })
+    const d = await r.json()
+    if (!d.success) { toast(d.message || 'Could not assign a doctor.', 'error'); return }
+    const a = appointments.find(x => x.id === apptId)
+    if (a) { a.doctorId = doctorId; a.doctorName = d.doctorName }
+    closeModal()
+    toast('Doctor assigned.', 'success')
+    renderPage()
+  } catch (_) {
+    toast('Network error — please try again.', 'error')
+  }
+}
+window._confirmAssignDoctor = _confirmAssignDoctor
+
 async function respondWaitlist(id, action) {
   try {
     const r = await fetch('api/waitlist/respond.php', {
@@ -3493,7 +4377,7 @@ function waitlistCardHtml(entry) {
             You're #${entry.position}${entry.totalWaiting > 1 ? ` of ${entry.totalWaiting}` : ''} in line
           </div>` : ''}
         </div>
-        <button class="btn-secondary" style="flex-shrink:0" onclick="window.leaveWaitlist(${entry.id})">Leave Waitlist</button>
+        <button class="btn-secondary" style="flex-shrink:0;align-self:center" onclick="window.leaveWaitlist(${entry.id})">Leave Waitlist</button>
       </div>
     </div>`
 }
@@ -3647,9 +4531,7 @@ function openAddUserModal() {
           <input id="nu-contact" class="form-input" inputmode="numeric" onkeypress="return /[0-9]/.test(event.key)" oninput="this.value=this.value.replace(/\D/g,'')" placeholder="09XXXXXXXXX"></div>
       </div>
       <div class="form-group"><label class="form-label">Role <span class="req">*</span></label>
-        <select id="nu-role" class="form-select" onchange="window.onAddUserRoleChange(this.value)">
-          <option>Admin</option><option>Staff</option><option>Doctor</option><option>Patient</option>
-        </select></div>
+        ${window.selectFieldHtml('nu-role', { value: 'Admin', options: ['Admin','Staff','Doctor','Patient'], onchange: 'window.onAddUserRoleChange(this.value)' })}</div>
 
       <!-- Doctor-specific fields -->
       <div id="nu-doctor-fields" style="display:none;flex-direction:column;gap:14px">
@@ -3669,20 +4551,11 @@ function openAddUserModal() {
           <div class="form-group"><label class="form-label">Date of Birth <span class="req">*</span></label>
             ${dobFieldHtml('nu-dob', { max: new Date().toISOString().slice(0, 10) })}</div>
           <div class="form-group"><label class="form-label">Gender <span class="req">*</span></label>
-            <select id="nu-gender" class="form-select">
-              <option value="" disabled selected>Select gender</option>
-              <option value="Male">Male</option><option value="Female">Female</option><option value="Other">Other</option>
-            </select></div>
+            ${window.selectFieldHtml('nu-gender', { value: '', placeholder: 'Select gender', options: ['Male','Female','Other'] })}</div>
         </div>
         <div class="form-row-2">
           <div class="form-group"><label class="form-label">Blood Type</label>
-            <select id="nu-blood" class="form-select">
-              <option value="">Unknown</option>
-              <option value="A+">A+</option><option value="A-">A-</option>
-              <option value="B+">B+</option><option value="B-">B-</option>
-              <option value="AB+">AB+</option><option value="AB-">AB-</option>
-              <option value="O+">O+</option><option value="O-">O-</option>
-            </select></div>
+            ${window.selectFieldHtml('nu-blood', { value: '', options: [{ value: '', label: 'Unknown' }, 'A+','A-','B+','B-','AB+','AB-','O+','O-'] })}</div>
           <div class="form-group"><label class="form-label">Occupation</label>
             <input id="nu-occupation" class="form-input" placeholder="e.g. Teacher, Engineer, Student"></div>
         </div>
@@ -3861,10 +4734,7 @@ function editUserModal(id, role) {
       </div>
       <p style="font-size:.74rem;color:#9CA3AF;margin:-8px 0 14px">Locked on the doctor's own Settings page — only admins can update these.</p>` : ''}
       <div class="form-group"><label class="form-label">Status</label>
-        <select id="eu-status" class="form-select">
-          <option value="active"${u.status==='active'?' selected':''}>Active</option>
-          <option value="inactive"${u.status==='inactive'?' selected':''}>Inactive</option>
-        </select></div>
+        ${window.selectFieldHtml('eu-status', { value: u.status, options: [{ value: 'active', label: 'Active' }, { value: 'inactive', label: 'Inactive' }] })}</div>
 
       <!-- Reset Password (collapsible) -->
       <div style="margin-top:4px;border-top:1px solid #F3F4F6;padding-top:14px">
@@ -4129,22 +4999,11 @@ function openAddPatientModal() {
         <div class="form-group"><label class="form-label">Date of Birth <span class="req">*</span></label>
           ${dobFieldHtml('ap-dob', { max: new Date().toISOString().slice(0, 10) })}</div>
         <div class="form-group"><label class="form-label">Gender <span class="req">*</span></label>
-          <select id="ap-gender" class="form-select">
-            <option value="" disabled selected>Select gender</option>
-            <option value="Male">Male</option>
-            <option value="Female">Female</option>
-            <option value="Other">Other</option>
-          </select></div>
+          ${window.selectFieldHtml('ap-gender', { value: '', placeholder: 'Select gender', options: ['Male','Female','Other'] })}</div>
       </div>
       <div class="form-row-2">
         <div class="form-group"><label class="form-label">Blood Type</label>
-          <select id="ap-blood" class="form-select">
-            <option value="">Unknown</option>
-            <option value="A+">A+</option><option value="A-">A-</option>
-            <option value="B+">B+</option><option value="B-">B-</option>
-            <option value="AB+">AB+</option><option value="AB-">AB-</option>
-            <option value="O+">O+</option><option value="O-">O-</option>
-          </select></div>
+          ${window.selectFieldHtml('ap-blood', { value: '', options: [{ value: '', label: 'Unknown' }, 'A+','A-','B+','B-','AB+','AB-','O+','O-'] })}</div>
         <div class="form-group"><label class="form-label">Occupation</label>
           <input id="ap-occupation" class="form-input" placeholder="e.g. Teacher, Engineer, Student"></div>
       </div>
@@ -4232,9 +5091,7 @@ function openEditPatientModal(patientId) {
         <div class="form-group"><label class="form-label">Date of Birth</label>
           ${dobFieldHtml('ep-dob', { value: p.dob || '', max: new Date().toISOString().slice(0, 10) })}</div>
         <div class="form-group"><label class="form-label">Gender</label>
-          <select id="ep-gender" class="form-select">
-            ${['Male','Female','Other'].map(g=>`<option${g===p.gender?' selected':''}>${g}</option>`).join('')}
-          </select></div>
+          ${window.selectFieldHtml('ep-gender', { value: p.gender || '', options: ['Male','Female','Other'] })}</div>
       </div>
       <p style="font-size:.74rem;color:#9CA3AF;margin:-8px 0 14px">Locked on the patient's own Settings page — only admins can update these.</p>
       <div class="form-group"><label class="form-label">Contact</label>
@@ -4246,14 +5103,9 @@ function openEditPatientModal(patientId) {
         <input id="ep-address" class="form-input" value="${p.address}"></div>
       <div class="form-row-2">
         <div class="form-group"><label class="form-label">Blood Type</label>
-          <select id="ep-blood" class="form-select">
-            ${['Unknown','A+','A-','B+','B-','AB+','AB-','O+','O-'].map(b=>`<option${b===p.bloodType?' selected':''}>${b}</option>`).join('')}
-          </select></div>
+          ${window.selectFieldHtml('ep-blood', { value: p.bloodType || 'Unknown', options: ['Unknown','A+','A-','B+','B-','AB+','AB-','O+','O-'] })}</div>
         ${isAdmin ? `<div class="form-group"><label class="form-label">Status</label>
-          <select id="ep-status" class="form-select">
-            <option value="active"${(p.status||'active')==='active'?' selected':''}>Active</option>
-            <option value="inactive"${(p.status||'active')==='inactive'?' selected':''}>Inactive</option>
-          </select></div>` : ''}
+          ${window.selectFieldHtml('ep-status', { value: p.status || 'active', options: [{ value: 'active', label: 'Active' }, { value: 'inactive', label: 'Inactive' }] })}</div>` : ''}
       </div>
       ${isAdmin ? `
       <div style="background:#F9FAFB;border:1px solid #F0F0F2;border-radius:12px;padding:14px 16px;margin-bottom:14px;display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">
@@ -4522,6 +5374,89 @@ async function clearBookingRestriction(patientId) {
 window.clearBookingRestriction = clearBookingRestriction
 
 // ════════════════════════════════════════════════════════════════
+//  EMAIL PATIENT — a direct, un-threaded message (unlike the Contact
+//  Messages reply flow, which replies to an existing inbound message).
+//  Reuses the exact same branded HTML email template server-side
+//  (see api/patients/email.php's patientEmailBody(), mirrors
+//  api/contact/reply.php's replyEmailBody()) so patients see a
+//  consistent look no matter which flow sent them mail.
+// ════════════════════════════════════════════════════════════════
+function openPatientEmailModal(patientId) {
+  const p = patients.find(p => p.id === patientId)
+  if (!p) return
+  if (!p.email) { toast("This patient has no email on file — they don't have a login account.", 'error'); return }
+
+  showModal(`
+    <div class="modal-header">
+      <div class="modal-title">Email ${p.name}</div>
+      <button class="modal-close" onclick="window.closeModal()">&times;</button>
+    </div>
+    <div class="modal-body">
+      <p style="margin:0 0 14px;font-size:.78rem;color:#9CA3AF">Sent to <strong style="color:#374151">${p.email}</strong> by email.</p>
+      <div class="form-group">
+        <label class="form-label">Subject <span class="req">*</span></label>
+        <input id="pe-subject" type="text" class="form-input" placeholder="e.g. Regarding your upcoming appointment">
+      </div>
+      <div class="form-group" style="margin:0">
+        <label class="form-label">Message <span class="req">*</span></label>
+        <textarea id="pe-message" class="form-textarea" style="border-radius:8px;min-height:140px"
+                  placeholder="Type your message…"></textarea>
+      </div>
+      <div id="pe-error" class="field-error"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn-secondary" onclick="window.closeModal()">Cancel</button>
+      <button id="pe-send-btn" class="btn-primary" onclick="window.sendPatientEmail('${patientId}')">
+        ${icon('mail', 'icon-sm')} Send Email
+      </button>
+    </div>`)
+
+  setTimeout(() => { document.getElementById('pe-subject')?.focus() }, 50)
+}
+window.openPatientEmailModal = openPatientEmailModal
+
+async function sendPatientEmail(patientId) {
+  const p = patients.find(p => p.id === patientId)
+  if (!p) return
+
+  const subjEl  = document.getElementById('pe-subject')
+  const msgEl   = document.getElementById('pe-message')
+  const errBox  = document.getElementById('pe-error')
+  const sendBtn = document.getElementById('pe-send-btn')
+  const subject = (subjEl?.value || '').trim()
+  const message = (msgEl?.value || '').trim()
+
+  if (!subject || !message) {
+    if (errBox) { errBox.textContent = 'Please fill in both subject and message.'; errBox.classList.add('show') }
+    return
+  }
+
+  sendBtn.disabled = true
+  sendBtn.innerHTML = `${icon('refresh-cw', 'icon-sm')} Sending…`
+
+  try {
+    const r = await fetch('api/patients/email.php', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ patientId, subject, message })
+    })
+    const d = await r.json()
+    if (!d.success) {
+      sendBtn.disabled = false
+      sendBtn.innerHTML = `${icon('mail', 'icon-sm')} Send Email`
+      if (errBox) { errBox.textContent = d.message || 'Failed to send email.'; errBox.classList.add('show') }
+      return
+    }
+    closeModal()
+    toast(`Email sent to ${p.name}.`, 'success')
+  } catch (_) {
+    sendBtn.disabled = false
+    sendBtn.innerHTML = `${icon('mail', 'icon-sm')} Send Email`
+    if (errBox) { errBox.textContent = 'Network error. Please try again.'; errBox.classList.add('show') }
+  }
+}
+window.sendPatientEmail = sendPatientEmail
+
+// ════════════════════════════════════════════════════════════════
 //  DELETE PATIENT
 // ════════════════════════════════════════════════════════════════
 function confirmArchivePatient(id) {
@@ -4667,8 +5602,8 @@ function openContactMessageModal(id) {
     <div class="modal-footer" style="justify-content:space-between;flex-wrap:wrap;gap:8px">
       <div style="display:flex;gap:8px">
         <button type="button" class="btn-ghost" style="display:inline-flex;align-items:center;gap:6px"
-                onclick="window.toggleContactMessageRead(${m.id})">
-          ${icon(m.isRead ? 'mail-open' : 'check-circle', 'icon-sm')} ${m.isRead ? 'Mark as Unread' : 'Mark as Read'}
+                onclick="window.markContactMessageUnread(${m.id})">
+          ${icon('mail-open', 'icon-sm')} Mark as Unread
         </button>
         <button type="button" class="btn-ghost" style="display:inline-flex;align-items:center;gap:6px"
                 onclick="window.toggleContactMessageArchive(${m.id})">
@@ -4690,6 +5625,7 @@ async function _setContactMessageRead(id, read, rerender = true) {
   if (!m) return
   m.isRead = read
   window._contactUnreadCount = contactMessages.filter(x => !x.isRead).length
+  if (window._updateContactUI) window._updateContactUI()
   if (window._updateSidebarBadges) window._updateSidebarBadges()
   if (rerender) renderPage()
   try {
@@ -4700,20 +5636,15 @@ async function _setContactMessageRead(id, read, rerender = true) {
   } catch (_) { /* local state already updated; will reconcile on next sync */ }
 }
 
-function toggleContactMessageRead(id) {
-  const m = contactMessages.find(m => m.id === id)
-  if (!m) return
-  const newRead = !m.isRead
-  _setContactMessageRead(id, newRead, true)
-  if (newRead) {
-    // Rebuild the modal in place so the toggle button reflects the new state
-    openContactMessageModal(id)
-  } else {
-    // Marking unread while viewing is a bit contradictory — return to the inbox
-    closeModal()
-  }
+// Opening a message already marks it read (see the guard at the top of
+// openContactMessageModal), so by the time this modal is on screen the only
+// meaningful manual action left is un-reading it.
+function markContactMessageUnread(id) {
+  _setContactMessageRead(id, false, true)
+  // Marking unread while viewing is a bit contradictory — return to the inbox
+  closeModal()
 }
-window.toggleContactMessageRead = toggleContactMessageRead
+window.markContactMessageUnread = markContactMessageUnread
 
 // ── Archive ──────────────────────────────────────────────────────
 async function toggleContactMessageArchive(id) {
@@ -4812,6 +5743,7 @@ window.sendContactReply = sendContactReply
 async function markAllContactRead() {
   contactMessages.forEach(m => { m.isRead = true })
   window._contactUnreadCount = 0
+  if (window._updateContactUI) window._updateContactUI()
   if (window._updateSidebarBadges) window._updateSidebarBadges()
   renderPage()
   try {
@@ -4863,6 +5795,7 @@ async function doDeleteContactMessage(id) {
 
   contactMessages.splice(idx, 1)
   window._contactUnreadCount = contactMessages.filter(m => !m.isRead).length
+  if (window._updateContactUI) window._updateContactUI()
   if (window._updateSidebarBadges) window._updateSidebarBadges()
   closeModal()
   toast('Message deleted.', 'success')
@@ -5195,6 +6128,7 @@ function saveSchedulingRules() {
   consultationSettings.maxApptsPerDoctorPerDay  = parseInt(gv('cs-max-appt')) || consultationSettings.maxApptsPerDoctorPerDay
   consultationSettings.reminderTime             = gv('cs-reminder-time')    || consultationSettings.reminderTime
   consultationSettings.confirmDeadlineTime      = gv('cs-confirm-deadline') || consultationSettings.confirmDeadlineTime
+  consultationSettings.waitlistOfferHours       = parseInt(gv('cs-waitlist-hours')) || consultationSettings.waitlistOfferHours
 
   fetch('api/clinic/settings.php', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -5204,7 +6138,8 @@ function saveSchedulingRules() {
       minAdvanceBooking: consultationSettings.minAdvanceBooking,
       maxApptsPerDoctorPerDay: consultationSettings.maxApptsPerDoctorPerDay,
       reminderTime: consultationSettings.reminderTime,
-      confirmDeadlineTime: consultationSettings.confirmDeadlineTime
+      confirmDeadlineTime: consultationSettings.confirmDeadlineTime,
+      waitlistOfferHours: consultationSettings.waitlistOfferHours
     })
   }).catch(() => {})
 
@@ -5272,7 +6207,7 @@ async function addService() {
   document.getElementById('svc-name').value     = ''
   document.getElementById('svc-desc').value     = ''
   document.getElementById('svc-duration').value = '30'
-  document.getElementById('svc-status').value   = 'active'
+  window.setSelectFieldValue('svc-status', 'active')
   _rebuildServicesTable()
   toast('Service added successfully.', 'success')
 }
@@ -5302,10 +6237,7 @@ function editServiceModal(id) {
         </div>
         <div class="form-group" style="margin-bottom:0">
           <label class="form-label">Status</label>
-          <select class="form-select" id="es-status">
-            <option value="active"${svc.status==='active'?' selected':''}>Active</option>
-            <option value="inactive"${svc.status==='inactive'?' selected':''}>Inactive</option>
-          </select>
+          ${window.selectFieldHtml('es-status', { value: svc.status, options: [{ value: 'active', label: 'Active' }, { value: 'inactive', label: 'Inactive' }] })}
         </div>
       </div>
     </div>
@@ -5672,9 +6604,7 @@ function openSetScheduleModal(doctorId) {
     </div>
     <div class="modal-body">
       <div class="form-group"><label class="form-label">Doctor</label>
-        <select id="sched-doc" class="form-select" onchange="window._schedDocChange(this.value)">
-          ${doctors.map(doc => `<option value="${doc.id}"${doc.id === doctorId ? ' selected' : ''}>${doc.name}</option>`).join('')}
-        </select></div>
+        ${window.selectFieldHtml('sched-doc', { value: doctorId, options: doctors.map(doc => ({ value: doc.id, label: doc.name })), onchange: 'window._schedDocChange(this.value)' })}</div>
       <div class="form-group"><label class="form-label">Available Days</label>
         <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:6px" id="sched-days-wrap">
           ${buildDayChecks(d)}
@@ -5890,43 +6820,23 @@ window.examWizGo   = examWizGo
 window.examWizJump = examWizJump
 
 // ════════════════════════════════════════════════════════════════
-//  OPTICAL EXAMINATION — START FROM APPOINTMENT / WALK-IN
+//  OPTICAL EXAMINATION — START FROM APPOINTMENT
 // ════════════════════════════════════════════════════════════════
 window._examApptId     = null   // tracks which appointment triggered this exam
 window._examApptDoctor = null   // admin-side: doctor from appointment
 
-function startExamFromAppt(apptId, fallbackPatientId) {
-  if (apptId) {
-    const appt = appointments.find(a => a.id === apptId)
-    if (!appt) return
-    window._examApptId     = apptId
-    window._examApptDoctor = appt.doctorName || null
-    toast('Starting consultation for ' + appt.patientName + '…', 'info')
-    navigate('new-examination', { patientId: appt.patientId })
-  } else if (fallbackPatientId) {
-    // Walk-in: no linked appointment
-    window._examApptId     = null
-    window._examApptDoctor = null
-    const pt = patients.find(p => p.id === fallbackPatientId)
-    if (pt) toast('Starting consultation for ' + pt.name + '…', 'info')
-    navigate('new-examination', { patientId: fallbackPatientId })
-  }
+// Examinations always trace back to a confirmed appointment — no walk-in
+// path that skips it, so the clinic's booking/approval process can't be
+// bypassed by starting a consultation for a patient with no appointment record.
+function startExamFromAppt(apptId) {
+  const appt = appointments.find(a => a.id === apptId)
+  if (!appt) return
+  window._examApptId     = apptId
+  window._examApptDoctor = appt.doctorName || null
+  toast('Starting consultation for ' + appt.patientName + '…', 'info')
+  navigate('new-examination', { patientId: appt.patientId })
 }
 window.startExamFromAppt = startExamFromAppt
-
-function toggleWalkinSearch() {
-  const sec = document.getElementById('walkin-search-section')
-  const lbl = document.getElementById('walkin-toggle-label')
-  if (!sec) return
-  const open = sec.style.display === 'none'
-  sec.style.display = open ? '' : 'none'
-  if (lbl) lbl.textContent = open ? 'Hide ✕' : 'Search Other Patients ›'
-  if (open) {
-    const inp = document.getElementById('walkin-search-input')
-    if (inp) setTimeout(() => inp.focus(), 50)
-  }
-}
-window.toggleWalkinSearch = toggleWalkinSearch
 
 
 // ════════════════════════════════════════════════════════════════
@@ -7681,9 +8591,11 @@ function updateStaffDashboard() {
   if (tbody && pending.length > 0) {
     tbody.innerHTML = pending.slice(0, 5).map(a => `<tr>
       <td style="font-size:.82rem;font-weight:600">${a.patientName || '—'}</td>
-      <td style="font-size:.78rem;color:#6B7280">${(a.doctorName || '').replace('Dr. ', '')}</td>
+      <td style="font-size:.78rem;color:#6B7280">${a.doctorName ? a.doctorName.replace('Dr. ', '') : '<span style="font-style:italic;color:#9CA3AF">Not yet assigned</span>'}</td>
       <td style="font-size:.78rem">${fmtDate(a.date)}</td>
-      <td><button class="btn-success" onclick="window.approveAppt('${a.id}')">Approve</button></td>
+      <td>${a.doctorId
+        ? `<button class="btn-success" onclick="window.approveAppt('${a.id}')">Approve</button>`
+        : `<button class="btn-secondary" onclick="window.openAssignDoctorModal('${a.id}')">Assign Optometrist</button>`}</td>
     </tr>`).join('')
   }
 }
@@ -7741,7 +8653,7 @@ function buildCalCells(year, month, docDays, docId) {
     const blockedReason = blockedByDate[dateStr]
     const isHoliday   = !blockedReason && !!phHolidays[dateStr]
     const holidayName = phHolidays[dateStr] || ''
-    let cls = avail ? 'avail' : ''
+    let cls = avail ? 'avail' : 'blocked'
     if (isToday)      cls += (cls ? ' ' : '') + 'today'
     if (blockedReason) cls = (isToday ? 'today date-blocked' : 'date-blocked')
     else if (isHoliday) cls = (isToday ? 'today cal-holiday' : 'cal-holiday')
@@ -7793,7 +8705,7 @@ function buildDocCalCells(year, month, docDays) {
     const isHoliday   = !blockedReason && !!phHolidays[dateStr]
     const holidayName = phHolidays[dateStr] || ''
 
-    let cls = avail ? 'avail' : ''
+    let cls = avail ? 'avail' : 'blocked'
     if (isToday) cls += (cls ? ' ' : '') + 'today'
     if (hasAppts) cls += ' has-appts'
     if (blockedReason) cls = (isToday ? 'today date-blocked' : 'date-blocked') + (hasAppts ? ' has-appts' : '')
@@ -8123,8 +9035,7 @@ function openBlockDateModal(doctorId, doctorName) {
     <div class="modal-body">
       <div class="form-group">
         <label class="form-label">Date to Block <span class="req">*</span></label>
-        <input id="block-date-input" type="date" class="form-input"
-               min="${localDateStr()}">
+        ${window.dateFieldHtml('block-date-input', { min: localDateStr(), max: localDateStr(new Date(new Date().setFullYear(new Date().getFullYear() + 1))) })}
       </div>
       <div class="form-group">
         <label class="form-label">Reason <span class="req">*</span></label>
@@ -8153,6 +9064,15 @@ async function doBlockDate(doctorId, doctorName) {
   if (!date)   { toast('Please select a date.', 'error'); return }
   if (!reason) { toast('Please provide a reason for blocking this date.', 'error'); return }
 
+  // Client-side pre-check purely for snappy UI (no round trip needed for
+  // the common case) — the real, unbypassable enforcement happens server-
+  // side in block-date.php against the database.
+  const conflicting = appointments.filter(a => a.doctorId === doctorId && a.date === date && a.status === 'approved')
+  if (conflicting.length) {
+    toast(`This date already has ${conflicting.length} approved appointment${conflicting.length === 1 ? '' : 's'}. Cancel or reschedule ${conflicting.length === 1 ? 'it' : 'them'} before blocking this date.`, 'error')
+    return
+  }
+
   const btn = document.querySelector('.modal-footer .btn-primary')
   if (btn) { btn.disabled = true; btn.textContent = 'Blocking…' }
 
@@ -8174,7 +9094,7 @@ async function doBlockDate(doctorId, doctorName) {
 
     // Refresh the modal in place instead of closing, so staff can block
     // several dates in one go and see the running list update live.
-    if (dateEl) dateEl.value = ''
+    window.setDateFieldValue('block-date-input', '')
     if (reasonEl) reasonEl.value = ''
     const listEl = document.getElementById('block-date-list')
     if (listEl) listEl.innerHTML = _blockedListHtml(doctorId)
@@ -8935,7 +9855,7 @@ function loadServicesAdmin() {
          style="position:relative;border-radius:10px;border:1.5px solid #E5E7EB;background:#fff;
                 cursor:grab;transition:box-shadow .18s,opacity .15s;padding:14px 14px 10px;
                 display:flex;flex-direction:column;gap:8px;user-select:none;-webkit-tap-highlight-color:transparent">
-      <div class="svc-grip" style="position:absolute;top:7px;left:7px;opacity:.45;pointer-events:none;transition:opacity .18s">
+      <div class="svc-grip" style="position:absolute;top:7px;left:7px;width:20px;height:20px;display:flex;align-items:center;justify-content:center;opacity:.45;pointer-events:none;transition:opacity .18s">
         <svg width="10" height="10" viewBox="0 0 10 10" fill="#6B7280">
           <circle cx="3" cy="2" r="1"/><circle cx="7" cy="2" r="1"/>
           <circle cx="3" cy="5" r="1"/><circle cx="7" cy="5" r="1"/>
@@ -8949,7 +9869,11 @@ function loadServicesAdmin() {
                   opacity:0;transform:scale(0.5);pointer-events:none;transition:opacity .18s,transform .18s;
                   box-shadow:0 2px 6px rgba(0,0,0,.2)"></div>
       ${s.status === 'inactive' ? `<span style="position:absolute;top:7px;right:7px;font-size:.6rem;font-weight:700;background:#F3F4F6;color:#9CA3AF;padding:2px 7px;border-radius:20px">Inactive</span>` : ''}
-      <div style="width:38px;height:38px;border-radius:10px;background:#FFF0DC;display:flex;align-items:center;justify-content:center;color:#E8760A;flex-shrink:0;margin-top:4px">
+      <!-- margin-top clears the grip/checkbox corner badge above (top:7px,
+           20px tall, so it reaches y=27 from the tile's edge) — this box's
+           old 4px margin (18px effective top, with 14px padding) put its
+           own top-left corner right underneath it. -->
+      <div style="width:38px;height:38px;border-radius:10px;background:#FFF0DC;display:flex;align-items:center;justify-content:center;color:#E8760A;flex-shrink:0;margin-top:16px">
         ${icon(s.icon || 'eye', 'icon-sm')}
       </div>
       <div style="font-size:.8rem;font-weight:700;color:#1C1C1C;line-height:1.3">${s.name}</div>
@@ -9597,8 +10521,12 @@ function applyLogFilters() {
 window.applyLogFilters = applyLogFilters
 
 function clearLogFilters() {
-  const ids = ['log-role-filter','log-type-filter','log-search','log-date-from','log-date-to']
-  ids.forEach(id => { const el = document.getElementById(id); if (el) el.value = '' })
+  window.resetSelectField('log-role-filter')
+  window.resetSelectField('log-type-filter')
+  window.setDateFieldValue('log-date-from', '')
+  window.setDateFieldValue('log-date-to', '')
+  const el = document.getElementById('log-search')
+  if (el) el.value = ''
   applyLogFilters()
 }
 window.clearLogFilters = clearLogFilters
@@ -10148,16 +11076,13 @@ function generateReport() {
 window.generateReport = generateReport
 
 function resetReport() {
-  const typeEl = document.getElementById('rpt-type')
-  if (typeEl) typeEl.value = ''
+  window.resetSelectField('rpt-type')
 
 
   const today      = localDateStr()
   const monthStart = today.slice(0,8) + '01'
-  const fromEl = document.getElementById('rpt-from')
-  const toEl   = document.getElementById('rpt-to')
-  if (fromEl) fromEl.value = monthStart
-  if (toEl)   toEl.value   = today
+  window.setDateFieldValue('rpt-from', monthStart)
+  window.setDateFieldValue('rpt-to', today)
 
   const hdr = document.getElementById('rpt-table-header')
   if (hdr) { hdr.style.display = 'none'; hdr.innerHTML = '' }

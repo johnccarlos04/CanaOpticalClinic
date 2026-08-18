@@ -105,7 +105,20 @@ button { border-radius: unset; }
   display: flex;
   width: 100%;
   max-width: 780px;
-  min-height: 640px; /* tallest screen: registration step 3 — inner content trimmed to fit 640px - 72px padding = 568px */
+  /* Fixed, not min-height — login, forgot-password (4 steps) and
+     registration (3 steps) are each a *separate* element using this same
+     class, not one shared element swapping content. With only a min-height
+     floor, whichever one's content happened to be tallest (registration's
+     password step, forgot-password's OTP/reset steps) could grow past it
+     while shorter screens (e.g. plain login) sat at the floor — a visible
+     height jump switching between screens. A fixed height plus
+     .auth-form-panel's overflow-y:auto below (any content that doesn't
+     fit scrolls internally) keeps every screen pinned to the exact same
+     height instead. 640px comfortably fits the tallest known content
+     (registration step 3: password + its 5-item checklist + confirm +
+     terms), with the scroll as a safety net for anything unexpectedly
+     taller rather than a hard requirement to get the number exactly right. */
+  height: 640px;
   background: #fff;
   border-radius: 24px;
   box-shadow:
@@ -219,10 +232,14 @@ button { border-radius: unset; }
   flex: 1; min-width: 0;
   padding: 52px 48px;
   display: flex; flex-direction: column; justify-content: center;
+  /* Was previously only set on the --register variant below — with
+     .auth-split-card now a fixed height (see comment there), every panel
+     needs this same safety net, not just registration's, or a login/
+     forgot-password step with unusually tall content would still grow the
+     card past the fixed height instead of scrolling internally. */
+  overflow-y: auto;
 }
 .auth-form-panel--register {
-  justify-content: center;
-  overflow-y: auto;
   padding-top: 36px; padding-bottom: 36px;
 }
 
@@ -234,7 +251,10 @@ button { border-radius: unset; }
   transition: color 0.2s ease;
 }
 .auth-back-link svg { transition: transform 0.2s ease; }
-.auth-back-link:hover { color: #E8760A; }
+/* Overrides the global a:hover underline (further down this file) — this
+   link's own color-shift + arrow-slide is the intended hover treatment;
+   an underline on top of that looks busy on an inline icon+text link. */
+.auth-back-link:hover { color: #E8760A; text-decoration: none; }
 .auth-back-link:hover svg { transform: translateX(-2px); }
 .auth-back-link:focus-visible { outline: 2px solid #E8760A; outline-offset: 3px; border-radius: 4px; }
 
@@ -261,6 +281,11 @@ button { border-radius: unset; }
     flex-direction: column;
     max-width: 420px;
     width: 100%;
+    /* height:auto too (not just min-height) — the desktop rule above now
+       sets a fixed height for cross-screen consistency there, which would
+       otherwise clip/break this stacked mobile layout's naturally taller
+       content. */
+    height: auto;
     min-height: auto;
     border-radius: 16px;
   }
@@ -324,6 +349,10 @@ button { border-radius: unset; }
 .lf-input:focus {
   border-color: #E8891C;
   box-shadow: 0 0 0 3px rgba(232,137,28,.1);
+}
+.lf-input.error {
+  border-color: #DC2626;
+  box-shadow: 0 0 0 3px rgba(220,38,38,.08);
 }
 
 /* Password + eye */
@@ -555,8 +584,15 @@ button { border-radius: unset; }
 .fp-btn-outline:hover { background:var(--clr-primary-tint) }
 .fp-btn-outline:active { transform:scale(.98) }
 .fp-btn-outline.full { width:100%;justify-content:center }
-.fp-back-link { display:inline-flex;align-items:center;gap:5px;font-size:0.82rem;color:#6b7280;background:none;border:none;cursor:pointer;font-family:'Poppins',sans-serif;padding:0;font-weight:500;transition:color .2s;text-decoration:none }
-.fp-back-link:hover { color:#E8891C;text-decoration:none }
+/* Unified with .auth-back-link ("Back to Website" on the login screen) —
+   same color/weight/hover-arrow-slide/focus-ring, so every "go back" link
+   across the auth flow (login, forgot-password, registration) reads as the
+   same component instead of two similar-but-different treatments. */
+.fp-back-link { display:inline-flex;align-items:center;gap:5px;font-size:0.79rem;color:#9ca3af;background:none;border:none;cursor:pointer;font-family:'Poppins',sans-serif;padding:0;font-weight:600;transition:color .2s ease;text-decoration:none }
+.fp-back-link svg { transition:transform .2s ease }
+.fp-back-link:hover { color:#E8760A;text-decoration:none }
+.fp-back-link:hover svg { transform:translateX(-2px) }
+.fp-back-link:focus-visible { outline:2px solid #E8760A;outline-offset:3px;border-radius:4px }
 .fp-btn-row { display:flex;align-items:center;justify-content:space-between;margin-top:6px }
 
 /* OTP inputs */
@@ -591,14 +627,20 @@ button { border-radius: unset; }
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 16px;
+  gap: 10px;
   background: #EDE9E0;
-  padding: 32px 16px;
+  /* Trimmed from the previous 32px — the card itself is already sized
+     tightly to its tallest step (see .auth-split-card's min-height
+     comment), so this outer padding plus the footer line below it was
+     just enough extra height to push the page a few pixels past one
+     viewport and force a scrollbar even though the content basically
+     already fits in one view. */
+  padding: 20px 16px;
 }
 
 @media (max-width: 768px) {
   #register-screen {
-    padding: 24px 16px;
+    padding: 20px 16px;
     align-items: center;
   }
 }
@@ -1388,6 +1430,8 @@ input[type="date"].reg-input::-webkit-datetime-edit-year-field {
   gap: 6px;
 }
 .topbar-crumb strong { color: #1C1C1C; font-weight: 600; }
+.topbar-crumb-link { cursor: pointer; transition: color 0.15s; }
+.topbar-crumb-link:hover, .topbar-crumb-link:focus-visible { color: var(--clr-primary); text-decoration: underline; }
 .topbar-right {
   display: flex;
   align-items: center;
@@ -1525,6 +1569,7 @@ input[type="date"].reg-input::-webkit-datetime-edit-year-field {
 .notify-list { padding: 6px 0; max-height: 300px; overflow-y: auto; }
 .notify-item {
   display: flex;
+  align-items: center;
   gap: 12px;
   padding: 12px 16px;
   cursor: pointer;
@@ -1543,6 +1588,13 @@ input[type="date"].reg-input::-webkit-datetime-edit-year-field {
 .notify-item-icon.blue   { background: #DBEAFE; color: #2563EB; }
 .notify-item-icon.green  { background: #D1FAE5; color: #059669; }
 .notify-item-icon.purple { background: #EDE9FE; color: #7C3AED; }
+/* Both were missing entirely — _NOTIF_COLOR (router.js) maps cancelled/
+   disapproved/no_show/waitlist_removed to 'red' and waitlist_left/info to
+   'gray', but with no matching rule here those icons fell back to no
+   background and default (black) text instead of the same red/gray the
+   full Notifications page already uses (pages.js) for the identical types. */
+.notify-item-icon.red    { background: #FEF2F2; color: #EF4444; }
+.notify-item-icon.gray   { background: #F3F4F6; color: #6B7280; }
 .notify-item-body { flex: 1; min-width: 0; }
 .notify-item-title {
   font-size: 0.8rem;
@@ -1858,6 +1910,7 @@ input[type="date"].reg-input::-webkit-datetime-edit-year-field {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  transition: background 0.15s;
 }
 .tbl tbody tr:last-child td { border-bottom: none; }
 .tbl tbody tr { transition: background 0.15s; }
@@ -2247,23 +2300,67 @@ input[type="date"].form-input::-webkit-datetime-edit-year-field {
   display: none;
 }
 .dob-picker-head { display: flex; gap: 6px; margin-bottom: 10px; }
+/* Month/year mini dropdowns in the calendar head — a <button> styled to
+   look identical to the old native <select> (same border/chevron/padding),
+   but its open option list (.dob-mini-popover) is our own markup instead of
+   the OS's native listbox, so it can actually be styled/matches the rest
+   of the app instead of rendering as a plain browser dropdown. */
+.dob-mini-select { position: relative; flex: 1; min-width: 0; }
 .dob-picker-select {
-  flex: 1;
+  width: 100%;
+  display: block;
+  text-align: left;
   padding: 7px 26px 7px 10px;
   border: 1.5px solid #E5E7EB;
   border-radius: 7px;
   font-family: inherit;
   font-size: .8rem;
   color: #1C1C1C;
-  background: #fff;
+  background-color: #fff;
   appearance: none;
   -webkit-appearance: none;
   cursor: pointer;
+  transition: border-color .15s, box-shadow .15s;
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='%239CA3AF' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E");
   background-repeat: no-repeat;
   background-position: right 8px center;
   background-size: 13px;
 }
+.dob-picker-select:hover { border-color: #D1D5DB; }
+.dob-picker-select.open {
+  border-color: #E8891C;
+  box-shadow: 0 0 0 3px rgba(232,137,28,.1);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='%23E8891C' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E");
+}
+.dob-mini-popover {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  z-index: 2;
+  max-height: 200px;
+  overflow-y: auto;
+  background: #fff;
+  border-radius: 10px;
+  box-shadow: 0 12px 32px rgba(0,0,0,.18), 0 2px 8px rgba(0,0,0,.08);
+  border: 1px solid #EEF0F2;
+  padding: 5px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  animation: modalIn 0.12s ease;
+}
+.dob-mini-item {
+  padding: 7px 10px;
+  border-radius: 6px;
+  font-size: .8rem;
+  color: #374151;
+  cursor: pointer;
+  transition: background .15s, color .15s;
+}
+.dob-mini-item:hover { background: #FFF0DC; }
+.dob-mini-item.selected { background: #E8891C; color: #fff; font-weight: 600; }
+.dob-mini-item.highlighted { outline: 2px solid #E8891C; outline-offset: -2px; }
 .dob-picker-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 2px; }
 .dob-picker-hdr {
   text-align: center; font-size: .62rem; font-weight: 700; color: #9CA3AF;
@@ -2283,6 +2380,61 @@ input[type="date"].form-input::-webkit-datetime-edit-year-field {
 .dob-day-selected { background: #E8891C !important; color: #fff !important; font-weight: 700; }
 .dob-day-disabled { opacity: .3; cursor: default; }
 .dob-day-empty { cursor: default; }
+
+/* ── Custom Select — replaces native <select> everywhere in the app (see
+   selectFieldHtml()/timeFieldHtml() in main.js). A native <select> with
+   many options (e.g. a 30-48 slot time list) renders as the OS's own
+   listbox, which can swallow nearly the whole viewport height on open;
+   this caps it at a compact, scrollable popover instead — same visual
+   language as the DOB picker above. A same-id hidden <input> still holds
+   the raw value so existing code reading `.value` is unaffected. */
+.cust-select { position: relative; }
+.cust-select-trigger {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  text-align: left;
+  cursor: pointer;
+  font-family: 'Poppins', sans-serif;
+}
+.cust-select-trigger svg { flex-shrink: 0; color: #9CA3AF; transition: transform .15s; }
+.cust-select-trigger.open svg { transform: rotate(180deg); }
+.cust-select-trigger.open { border-color: #E8891C; box-shadow: 0 0 0 3px rgba(232,137,28,.1); }
+.cust-select-text { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cust-select-text.placeholder { color: #9CA3AF; }
+
+.cust-select-popover {
+  position: fixed;
+  z-index: 1600; /* above .modal-overlay (1500) so it also works inside modals */
+  max-width: calc(100vw - 24px);
+  background: #fff;
+  border-radius: 12px;
+  box-shadow: 0 12px 32px rgba(0,0,0,.18), 0 2px 8px rgba(0,0,0,.08);
+  border: 1px solid #EEF0F2;
+  padding: 6px;
+  font-family: 'Poppins', sans-serif;
+  animation: modalIn 0.15s ease;
+  display: none;
+}
+/* padding-right on the list (not just the items) reserves room so the
+   scrollbar track never sits flush against a selected/hovered item's
+   rounded highlight; the 2px gap keeps adjacent rows from touching. */
+.cust-select-list { max-height: 260px; overflow-y: auto; display: flex; flex-direction: column; gap: 2px; padding-right: 4px; }
+.cust-select-item {
+  padding: 8px 12px;
+  border-radius: 7px;
+  font-size: .82rem;
+  color: #374151;
+  cursor: pointer;
+  transition: background .15s, color .15s;
+}
+.cust-select-item:hover { background: #FFF0DC; }
+.cust-select-item.selected { background: #E8891C; color: #fff; font-weight: 600; }
+/* Keyboard cursor — an outline ring so it reads correctly whether or not
+   the row it's on is also .selected (solid fill) or plain (no fill). */
+.cust-select-item.highlighted { outline: 2px solid #E8891C; outline-offset: -2px; }
 
 /* Appointment row action icons (view/approve/disapprove/cancel/complete/
    no-show/reschedule) — up to 5 buttons for an approved row. Desktop has
@@ -2642,6 +2794,39 @@ input[type="date"].form-input::-webkit-datetime-edit-year-field {
 }
 
 /* ════════════════════════════════════════════════════════════════
+   PICK-A-PERSON ROW — a selectable "assign this doctor" style row
+   (avatar + name + subtitle), used inside modals that can be opened from
+   ANY page (e.g. the Assign Doctor modal, main.js openAssignDoctorModal()).
+   Deliberately its own global class, not the booking wizard's .doc-card —
+   that class only exists inside appointmentWizardHtml()'s own <style>
+   block (pages.js), so it renders completely unstyled (no border-radius,
+   no avatar circle, no hover/transition) anywhere outside the wizard.
+════════════════════════════════════════════════════════════════ */
+.pick-person-row {
+  display: flex; align-items: center; gap: 12px; width: 100%;
+  padding: 12px 14px; border-radius: 10px; border: 1.5px solid #E5E7EB;
+  background: #fff; cursor: pointer; text-align: left;
+  font-family: 'Poppins', sans-serif;
+  transition: border-color .18s ease, background-color .18s ease,
+              transform .18s ease, box-shadow .18s ease;
+}
+.pick-person-row:hover {
+  border-color: #E8760A;
+  background: #FFFBF5;
+  transform: translateY(-1px);
+  box-shadow: 0 6px 16px rgba(232,118,10,.12), 0 1px 3px rgba(0,0,0,.04);
+}
+.pick-person-row:active { transform: translateY(0) scale(.99); }
+.pick-person-row:focus-visible { outline: 2px solid #E8760A; outline-offset: 2px; }
+.pick-person-avatar {
+  width: 40px; height: 40px; border-radius: 50%; background: #E8760A; color: #fff;
+  display: flex; align-items: center; justify-content: center;
+  font-size: .78rem; font-weight: 700; flex-shrink: 0;
+}
+.pick-person-arrow { color: #D1D5DB; flex-shrink: 0; transition: color .18s ease, transform .18s ease; }
+.pick-person-row:hover .pick-person-arrow { color: #E8760A; transform: translateX(2px); }
+
+/* ════════════════════════════════════════════════════════════════
    CUSTOM CHECKBOX — fully reskinned (not just accent-color), so it
    renders identically everywhere instead of inheriting each OS/browser's
    native checkbox chrome (which often shows a plain black/grey box).
@@ -2930,9 +3115,9 @@ input[type="date"].form-input::-webkit-datetime-edit-year-field {
   color: #fff !important;
   font-weight: 700;
 }
-.cal-day.blocked { background: #FFEBEE; color: #9CA3AF; cursor: default; }
+.cal-day.blocked { background: #F3F4F6; color: #9CA3AF; cursor: default; }
 .cal-day.cal-holiday { background: #FFF1F2; color: #f43f5e; cursor: default; font-weight: 600; }
-.cal-holiday-lbl { position: absolute; left: 2px; right: 2px; top: calc(50% + 8px); font-size: .42rem; line-height: 1.1; text-align: center; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; font-weight: 500; padding: 0 1px; }
+.cal-holiday-lbl { position: absolute; left: 2px; right: 2px; top: calc(50% + 8px); font-size: .58rem; line-height: 1.1; text-align: center; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; font-weight: 500; padding: 0 1px; }
 @media (max-width: 480px) {
   .cal-day.cal-holiday { font-size: 0.7rem; }
   .cal-holiday-lbl { font-size: .35rem; }
@@ -3027,6 +3212,27 @@ input[type="date"].form-input::-webkit-datetime-edit-year-field {
   grid-template-columns: 1.4fr 1fr;
   gap: 24px;
   align-items: start;
+}
+
+/* "Selected Date" banner — Doctor Availability page, shown under the
+   calendar once a date is picked. Reuses .modal-close (see JS) for the
+   exit button and .btn-primary for Book This Date; this class only owns
+   the banner's own box (fadeUp is the app's existing entrance animation,
+   also used elsewhere for freshly-inserted content). */
+.pat-cal-selected-banner {
+  position: relative;
+  margin-top: 10px;
+  background: #fff;
+  border: 1.5px solid #E8760A;
+  border-radius: 10px;
+  padding: 16px 18px;
+  box-shadow: 0 4px 16px rgba(232,118,10,.12), 0 1px 4px rgba(0,0,0,.05);
+  animation: fadeUp 0.25s ease;
+}
+.pat-cal-selected-banner .modal-close {
+  position: absolute;
+  top: 10px;
+  right: 10px;
 }
 
 /* Doctor selector cards (schedule + patient avail pages) */
@@ -3431,8 +3637,6 @@ input[type="date"].form-input::-webkit-datetime-edit-year-field {
     flex: 1;
     overflow: hidden;
   }
-  .topbar-crumb span:first-child { display: none; } /* role label — redundant with sidebar context on mobile */
-  .topbar-crumb svg:first-of-type { display: none; }
   .topbar-crumb strong {
     display: inline-block;
     max-width: 100%;

@@ -16,8 +16,6 @@
         'padding:14px 20px 16px;border-top:1px solid #f3f4f6;flex-wrap:wrap;gap:10px}' +
       '.pg-info{font-size:.8rem;color:#6b7280}' +
       '.pg-rpp{display:flex;align-items:center;gap:6px;font-size:.8rem;color:#6b7280}' +
-      '.pg-rpp select{border:1px solid #d1d5db;border-radius:6px;padding:4px 8px;' +
-        'font-size:.8rem;font-family:\'Poppins\',sans-serif;color:#374151;background:#fff;cursor:pointer}' +
       '.pg-btns{display:flex;align-items:center;gap:4px}' +
       '.pg-btn{width:32px;height:32px;border-radius:8px;border:1px solid #e5e7eb;' +
         'background:transparent;color:#374151;font-size:.82rem;font-weight:500;' +
@@ -114,22 +112,47 @@
       wrap.appendChild(bar)
     }
 
-    // Hide bar when all records fit on one page
-    if (total <= rpp) { bar.style.display = 'none'; return }
+    // Hide the whole bar only when there's nothing to show at all -- not
+    // just when everything fits on one page. It used to hide any time
+    // total <= rpp, which meant picking "50" (or having a small table)
+    // hid the rows-per-page selector along with it -- the only way back to
+    // a smaller page size, gone with no way to reach it short of leaving
+    // and reopening the page. The Showing-X-of-Y text and Prev/Next/page-
+    // number buttons are what's actually pointless with a single page --
+    // those still collapse; the selector itself never does.
+    if (total === 0) { bar.style.display = 'none'; return }
     bar.style.display = 'flex'
 
     var s = (cur - 1) * rpp + 1
     var e = Math.min(cur * rpp, total)
+    var onePage = total <= rpp
+    // With everything else collapsed, "Rows per page" is the bar's only
+    // child — space-between (the multi-item layout) just parks a lone
+    // child at the left edge instead of centering it.
+    bar.style.justifyContent = onePage ? 'center' : 'space-between'
 
+    // Reuses the app's shared custom-select component (main.js) instead of a
+    // raw <select> \u2014 this only ever runs inside the authenticated app, which
+    // always has it loaded, so every dropdown in the app (including this
+    // one) renders with the same popover styling instead of the OS's own.
     bar.innerHTML =
-      '<span class="pg-info">Showing ' + s + '\u2013' + e + ' of ' + total + ' records</span>' +
+      (onePage ? '' : ('<span class="pg-info">Showing ' + s + '\u2013' + e + ' of ' + total + ' records</span>')) +
       '<span class="pg-rpp">Rows per page:\u00a0' +
-        '<select onchange="window._pgRpp(\'' + tbodyId + '\',+this.value)">' +
-        [5, 10, 20, 50].map(function (n) {
-          return '<option value="' + n + '"' + (n === rpp ? ' selected' : '') + '>' + n + '</option>'
-        }).join('') +
-        '</select></span>' +
-      '<span class="pg-btns">' + _btns(tbodyId, cur, totalPages) + '</span>'
+        window.selectFieldHtml('pg-rpp-' + tbodyId, {
+          value: String(rpp),
+          options: [5, 10, 20, 50].map(function (n) { return { value: String(n), label: String(n) } }),
+          onchange: 'window._pgRpp(\'' + tbodyId + '\',+this.value)',
+          // No min-width — the trigger is a flex row (text, gap, icon), not
+          // an icon positioned over reserved padding, so it can just hug a
+          // 1-2 digit number tightly. minWidth is the popover's own floor
+          // (see _custPositionPopover) — small on purpose, so the dropdown
+          // doesn't balloon out to the shared 160px default for a list of
+          // four short numbers.
+          style: 'width:auto;padding:5px 10px;font-size:.8rem',
+          minWidth: 70
+        }) +
+      '</span>' +
+      (onePage ? '' : ('<span class="pg-btns">' + _btns(tbodyId, cur, totalPages) + '</span>'))
   }
 
   // ── Page buttons with ellipsis ────────────────────────────────────

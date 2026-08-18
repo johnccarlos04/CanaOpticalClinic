@@ -63,31 +63,9 @@ try {
     // new time, rather than leaving them queued on a slot that's now
     // effectively locked in.
     if ($appt['doctor_id']) {
-        $waiters = $pdo->prepare(
-            "SELECT patient_id FROM appointment_waitlist
-             WHERE doctor_id = ? AND date = ? AND time = ? AND status = 'waiting'"
-        );
-        $waiters->execute([$appt['doctor_id'], $appt['date'], $appt['time']]);
-        $waiting = $waiters->fetchAll();
-
-        if ($waiting) {
-            $pdo->prepare(
-                "UPDATE appointment_waitlist SET status = 'cancelled'
-                 WHERE doctor_id = ? AND date = ? AND time = ? AND status = 'waiting'"
-            )->execute([$appt['doctor_id'], $appt['date'], $appt['time']]);
-
-            foreach ($waiting as $w) {
-                $ps = $pdo->prepare('SELECT user_id FROM patients WHERE id = ? LIMIT 1');
-                $ps->execute([$w['patient_id']]);
-                $userId = $ps->fetchColumn();
-                if ($userId) {
-                    createNotification($pdo, (int)$userId, 'waitlist_removed', 'Removed From Waitlist',
-                        "The patient holding the {$appt['doctor_name']} appointment on {$fmtDate} at {$appt['time']} you were waitlisted for has confirmed their attendance, "
-                      . "so that slot is no longer expected to open up. You've been removed from the waitlist, please select another available time."
-                    );
-                }
-            }
-        }
+        $noticeMsg = "The patient holding the {$appt['doctor_name']} appointment on {$fmtDate} at {$appt['time']} you were waitlisted for has confirmed their attendance, "
+          . "so that slot is no longer expected to open up. You've been removed from the waitlist, please select another available time.";
+        clearWaitlistForLockedSlot($pdo, $appt['doctor_id'], $appt['date'], $appt['time'], $noticeMsg);
     }
 
     jsonResponse(['success' => true]);

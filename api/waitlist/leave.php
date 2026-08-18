@@ -68,9 +68,9 @@ try {
         $userId = $ps->fetchColumn();
         if ($userId) {
             $fmtDate = date('M j, Y', strtotime($row['date']));
-            createNotification($pdo, (int)$userId, 'waitlist_removed', 'Removed From Waitlist',
-                "You've been removed from the waitlist for {$row['doctor_name']} on {$fmtDate} at {$row['time']}."
-            );
+            $noticeMsg = "You've been removed from the waitlist for {$row['doctor_name']} on {$fmtDate} at {$row['time']}.";
+            createNotification($pdo, (int)$userId, 'waitlist_removed', 'Removed From Waitlist', $noticeMsg);
+            _emailPatientNotice($pdo, (int)$userId, 'Removed From Waitlist', $noticeMsg);
         }
     } else {
         // Mirror join.php: a genuine self-service departure is worth telling

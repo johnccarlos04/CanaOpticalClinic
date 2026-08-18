@@ -76,12 +76,18 @@ function _showLoginError(msg) {
 }
 
 async function handleLogin() {
-  const email    = document.getElementById('login-email').value.trim()
-  const pass     = document.getElementById('login-password').value
+  const emailEl = document.getElementById('login-email')
+  const passEl  = document.getElementById('login-password')
+  const email    = emailEl.value.trim()
+  const pass     = passEl.value
   const remember = document.getElementById('login-remember')?.checked || false
   document.getElementById('login-error').style.display = 'none'
+  emailEl.classList.remove('error')
+  passEl.classList.remove('error')
 
   if (!email || !pass) {
+    if (!email) emailEl.classList.add('error')
+    if (!pass)  passEl.classList.add('error')
     _showLoginError(
       !email && !pass ? 'Please fill in your email and password.'
     : !email          ? 'Please enter your email address.'
@@ -414,7 +420,7 @@ function regNextStep() {
     if (!first) markError('reg-first')
     if (!last)  markError('reg-last')
     if (!dob)   markError('reg-dob-trigger') // visible custom-picker button — the real reg-dob is a hidden input now
-    if (!gender) markError('reg-gender')
+    if (!gender) markError('reg-gender-trigger') // visible custom-select button — the real reg-gender is a hidden input now
     if (!first || !last || !dob || !gender) {
       if (errMsg) errMsg.textContent = 'Please fill in all required fields.'
       if (errEl)  errEl.style.display = 'flex'; return
@@ -571,8 +577,12 @@ function showRegister() {
   const t = new Date()
   const maxDob = new Date(t.getFullYear() - 18, t.getMonth(), t.getDate())
   if (window.setDobFieldMax) window.setDobFieldMax('reg-dob', maxDob.toISOString().slice(0, 10))
-  const genderEl = document.getElementById('reg-gender'); if (genderEl) genderEl.value = ''
-  const bloodEl  = document.getElementById('reg-blood');  if (bloodEl)  bloodEl.value  = ''
+  // reg-gender/reg-blood are also the custom select (see main.js) now — a
+  // direct .value = '' reset would clear the hidden input but leave the
+  // visible trigger button still showing whatever was last picked.
+  // resetSelectField('reg-blood') correctly lands on "Unknown" (its ''
+  // option) rather than a blank placeholder, since that's a real match.
+  if (window.resetSelectField) { window.resetSelectField('reg-gender'); window.resetSelectField('reg-blood') }
   document.getElementById('reg-error').style.display = 'none'
   const termsCb = document.getElementById('reg-terms-agree')
   if (termsCb) { termsCb.checked = false; termsCb.disabled = true }
@@ -601,17 +611,39 @@ function showForgotPassword() {
   const s1 = document.getElementById('fp-step-1')
   s1.style.display = 'block'
   s1.classList.add('active')
-  const emailEl = document.getElementById('fp-s1-email')
-  if (emailEl) { emailEl.value = ''; emailEl.classList.remove('error') }
-  document.getElementById('fp-s1-error').classList.remove('show')
   window._fpStep = 1
-  window._fpEmail = ''
+  // Reopening always lands back on step 1 — so if a step-1 submit is still
+  // in flight, keep showing it that way (email field + disabled "Sending…"
+  // button left untouched) rather than resetting to a blank, clickable
+  // state while a request nobody can see keeps running in the background.
+  // Its own success/error handling in fpS1Submit() takes over normally
+  // once it resolves — there's nothing stale about it, since step 1 is
+  // exactly what's on screen either way.
+  if (!window._fpBusy.s1) {
+    const emailEl = document.getElementById('fp-s1-email')
+    if (emailEl) { emailEl.value = ''; emailEl.classList.remove('error') }
+    document.getElementById('fp-s1-error').classList.remove('show')
+    window._fpEmail = ''
+    const s1btn = document.getElementById('fp-s1-btn')
+    if (s1btn) s1btn.innerHTML = 'Submit'
+  }
+  // Steps 3/4 aren't shown on reopen (the block above always jumps back to
+  // step 1), so a verify/reset still in flight from one of those has no
+  // visible home to "keep loading" in the way step 1 can — bumping this
+  // makes their eventual response a no-op instead of yanking whatever's on
+  // screen now to step 4/step 2 for an attempt the user already left.
+  window._fpFlowId++
   // Deliberately NOT resetting the resend cooldown here — it must survive a
   // full "Back to Login → Forgot Password?" restart, otherwise this cooldown
   // does nothing (someone could just reopen the flow to skip the wait).
   clearInterval(window._fpTimerInterval)
   window._fpTimeLeft = 300
-  fpSyncS1Cooldown()
+  // Only while NOT busy — this only ever toggles disabled based on cooldown
+  // state, so calling it unconditionally while a submit is still in flight
+  // (no cooldown recorded yet, since that only starts once the request
+  // succeeds) would immediately re-enable the button, undoing the "still
+  // loading" state preserved above.
+  if (!window._fpBusy.s1) fpSyncS1Cooldown()
 
   // Clear any password entered in a previous pass through this flow —
   // the step-4 inputs are never unmounted between visits, so without this
@@ -632,6 +664,13 @@ window._fpResetToken = ''
 window._fpTimerInterval = null
 window._fpTimeLeft = 300
 window._fpResendCooldownInterval = null
+// Bumped every time showForgotPassword() (re-)opens the flow. A submit that
+// was started, then abandoned by leaving and reopening the screen before
+// its response arrived, captures the id in effect at the time — if that id
+// no longer matches when the response finally shows up, the request is
+// stale and its result is discarded instead of mutating whatever screen
+// (now reset, possibly for a different email) happens to be showing.
+window._fpFlowId = 0
 
 // Guards against double-submission from any entry point — clicking the
 // button (disabled, normally blocks re-clicks), but ALSO pressing Enter
@@ -780,6 +819,10 @@ async function fpS3Submit() {
   const code   = [...inputs].map(i => i.value).join('')
   inputs.forEach(i => i.classList.remove('error')); errEl.classList.remove('show')
   if (code.length < 6) { inputs.forEach(i => { if (!i.value) i.classList.add('error') }); errEl.classList.add('show'); return }
+  // See fpS1Submit()'s comment — reused here so a verify left in flight
+  // when the flow is abandoned (Back to Login, then Forgot Password?
+  // again) doesn't advance a freshly-reset screen to step 4.
+  const myFlow = window._fpFlowId
   window._fpBusy.s3 = true
   btn.disabled = true; btn.innerHTML = '<div class="fp-spinner"></div> Verifying…'
   try {
@@ -788,6 +831,7 @@ async function fpS3Submit() {
       body: JSON.stringify({ email: window._fpEmail, otp: code }),
     })
     const data = await res.json()
+    if (myFlow !== window._fpFlowId) return // stale — screen was reopened while this was in flight
     if (!data.success) {
       window._fpBusy.s3 = false
       btn.disabled = false; btn.innerHTML = 'Verify OTP'
@@ -803,6 +847,7 @@ async function fpS3Submit() {
     btn.disabled = false; btn.innerHTML = 'Verify OTP'
     fpGoToStep(4)
   } catch (_) {
+    if (myFlow !== window._fpFlowId) return // stale — see above
     errEl.textContent = 'Network error. Please try again.'
     errEl.classList.add('show')
     window._fpBusy.s3 = false
@@ -824,6 +869,8 @@ async function fpS4Submit() {
   if (!pw2.value) { pw2.classList.add('error'); err2.textContent = 'Please confirm your password.'; err2.classList.add('show'); valid = false }
   else if (pw1.value && pw2.value !== pw1.value) { pw2.classList.add('error'); err2.textContent = 'Passwords do not match.'; err2.classList.add('show'); valid = false }
   if (!valid) return
+  // See fpS1Submit()'s comment.
+  const myFlow = window._fpFlowId
   window._fpBusy.s4 = true
   btn.disabled = true; btn.innerHTML = '<div class="fp-spinner"></div> Saving…'
   try {
@@ -832,6 +879,7 @@ async function fpS4Submit() {
       body: JSON.stringify({ token: window._fpResetToken, password: pw1.value }),
     })
     const data = await res.json()
+    if (myFlow !== window._fpFlowId) return // stale — screen was reopened while this was in flight
     if (!data.success) {
       err1.textContent = data.message || 'Password reset failed. Please start over.'
       err1.classList.add('show')
@@ -840,9 +888,11 @@ async function fpS4Submit() {
     }
     fpGoToStep(5)
   } catch (_) {
+    if (myFlow !== window._fpFlowId) return // stale — see above
     err1.textContent = 'Network error. Please try again.'
     err1.classList.add('show')
   } finally {
+    if (myFlow !== window._fpFlowId) return // stale — don't clobber a fresh attempt's own state
     window._fpBusy.s4 = false
     btn.disabled = false; btn.innerHTML = 'Reset Password'
   }
@@ -1074,8 +1124,22 @@ let _evFromReg = false
 let _evTimerInterval = null
 let _evResendCooldownInterval = null
 let _evResendCooldownLeft = 0
+let _evBusy = false
+// Same purpose as window._fpFlowId — bumped whenever showEmailVerify()
+// (re-)opens for a genuinely different attempt, so a stale resend/email-
+// edit/verify response can't mutate a screen the user has since left and
+// reopened for something else. Not bumped when it's a reopen for the exact
+// same email with a verify still running — see the sameOngoing check below.
+let _evFlowId = 0
 
 function showEmailVerify(email, fromRegistration = false) {
+  // A verify already running for this *same* email keeps going naturally
+  // instead of being reset/discarded — same reasoning as forgot-password's
+  // step 1 (see showForgotPassword()). But if this is for a *different*
+  // email (a separate, unrelated verification attempt — e.g. a second
+  // login elsewhere), the old one must not be allowed to resolve into a
+  // login/boot for the wrong account, so that case still gets a full reset.
+  const sameOngoing = _evBusy && _evEmail === email
   _evEmail   = email
   _evFromReg = fromRegistration
 
@@ -1096,6 +1160,10 @@ function showEmailVerify(email, fromRegistration = false) {
   // isn't backed by one, so hide the trigger there.
   const editRow = document.getElementById('ev-edit-email-trigger-row')
   if (editRow) editRow.style.display = fromRegistration ? '' : 'none'
+
+  if (sameOngoing) return // leave OTP boxes, error, button, and timer exactly as they are
+
+  _evFlowId++
 
   // Clear OTP inputs
   document.querySelectorAll('#ev-otp-row .otp-input').forEach(i => { i.value = ''; i.classList.remove('error') })
@@ -1188,6 +1256,7 @@ function _evStartResendCooldown() {
 }
 
 async function evSubmitOTP() {
+  if (_evBusy) return // already verifying — ignore re-entrant calls (this had no such guard before)
   const inputs = document.querySelectorAll('#ev-otp-row .otp-input')
   const otp    = [...inputs].map(i => i.value).join('')
   const errEl  = document.getElementById('ev-error')
@@ -1202,6 +1271,13 @@ async function evSubmitOTP() {
   inputs.forEach(i => i.classList.remove('error'))
 
   const btn = document.getElementById('ev-submit-btn')
+  // Captured before the request goes out — see showEmailVerify()'s
+  // sameOngoing comment. A reopen for the exact same email doesn't bump
+  // this, so this verify keeps going and resolves normally; a reopen for a
+  // different email does, so this stale one gets discarded below instead
+  // of potentially booting the wrong account.
+  const myFlow = _evFlowId
+  _evBusy = true
   if (btn) { btn.disabled = true; btn.textContent = 'Verifying…' }
 
   try {
@@ -1211,6 +1287,7 @@ async function evSubmitOTP() {
       body:    JSON.stringify({ email: _evEmail, otp }),
     })
     const data = await res.json()
+    if (myFlow !== _evFlowId) return // stale — a different verification attempt has since started
 
     if (!data.success) {
       const title   = document.getElementById('ev-2-title')
@@ -1267,9 +1344,12 @@ async function evSubmitOTP() {
     }, 900)
 
   } catch (_) {
+    if (myFlow !== _evFlowId) return // stale — see above
     errEl.textContent = 'Network error. Please check your connection and try again.'
     errEl.classList.add('show')
   } finally {
+    if (myFlow !== _evFlowId) return // stale — don't clobber a fresh attempt's own state
+    _evBusy = false
     if (btn) { btn.disabled = false; btn.textContent = 'Verify & Activate Account' }
   }
 }
@@ -1281,6 +1361,7 @@ async function evResendCode() {
   const errEl = document.getElementById('ev-error')
   errEl.classList.remove('show')
 
+  const myFlow = _evFlowId // see showEmailVerify()'s sameOngoing comment
   _evStartResendCooldown()
   const resendBtn = document.getElementById('ev-resend-btn')
   if (resendBtn) resendBtn.textContent = 'Sending…'
@@ -1292,6 +1373,7 @@ async function evResendCode() {
       body:    JSON.stringify({ email: _evEmail }),
     })
     const data = await res.json()
+    if (myFlow !== _evFlowId) return // stale — screen was reopened for a different attempt
 
     if (!data.success) {
       if (data.banned) {
@@ -1317,6 +1399,7 @@ async function evResendCode() {
     _evStartTimer(300)
 
   } catch (_) {
+    if (myFlow !== _evFlowId) return // stale — see above
     errEl.textContent = 'Network error. Please try again.'
     errEl.classList.add('show')
   }
@@ -1386,6 +1469,7 @@ async function evSaveEditEmail() {
     return
   }
 
+  const myFlow = _evFlowId // see showEmailVerify()'s sameOngoing comment
   saveBtn.disabled = true
   saveBtn.textContent = 'Saving…'
 
@@ -1396,6 +1480,7 @@ async function evSaveEditEmail() {
       body:    JSON.stringify({ email: _evEmail, newEmail }),
     })
     const data = await res.json()
+    if (myFlow !== _evFlowId) return // stale — screen was reopened for a different attempt
 
     if (!data.success) {
       errEl.textContent = data.message || 'Could not update your email. Please try again.'
@@ -1420,9 +1505,11 @@ async function evSaveEditEmail() {
     setTimeout(() => document.querySelector('#ev-otp-row .otp-input')?.focus(), 50)
 
   } catch (_) {
+    if (myFlow !== _evFlowId) return // stale — see above
     errEl.textContent = 'Network error. Please try again.'
     errEl.classList.add('show')
   } finally {
+    if (myFlow !== _evFlowId) return // stale — don't clobber a fresh attempt's own state
     saveBtn.disabled = false
     saveBtn.textContent = 'Save & Resend Code'
   }
@@ -1697,6 +1784,7 @@ async function _syncContactMessages() {
     const changed = _pollDataChanged(contactMessages, d.messages)
     contactMessages.splice(0, contactMessages.length, ...d.messages)
     window._contactUnreadCount = d.unread_count || 0
+    if (window._updateContactUI) window._updateContactUI()
     if (window._updateSidebarBadges) window._updateSidebarBadges()
     if (changed && window.state?.page === 'contact-messages' && window.renderPage) window.renderPage({ silent: true })
   } catch (_) {}
@@ -1755,7 +1843,8 @@ async function _syncClinicSettings() {
       morningStart: s.morningStart, morningEnd: s.morningEnd,
       afternoonStart: s.afternoonStart, afternoonEnd: s.afternoonEnd,
       lunchBreak: s.lunchBreak, clinicDays: s.clinicDays,
-      reminderTime: s.reminderTime, confirmDeadlineTime: s.confirmDeadlineTime
+      reminderTime: s.reminderTime, confirmDeadlineTime: s.confirmDeadlineTime,
+      waitlistOfferHours: s.waitlistOfferHours
     })
     window._clinicName     = clinicInfo.name     || 'Cana Optical Clinic'
     window._clinicAddress  = clinicInfo.address  || ''

@@ -194,13 +194,13 @@
       <form onsubmit="handleLogin(); return false" autocomplete="on">
       <div class="lf-group">
         <label class="lf-label">Email</label>
-        <input type="email" id="login-email" class="lf-input" placeholder="Enter your email address" autocomplete="email">
+        <input type="email" id="login-email" class="lf-input" placeholder="Enter your email address" autocomplete="email" oninput="this.classList.remove('error')">
       </div>
 
       <div class="lf-group">
         <label class="lf-label">Password</label>
         <div class="lf-pw-wrap">
-          <input type="password" id="login-password" class="lf-input" placeholder="Enter your password" autocomplete="current-password">
+          <input type="password" id="login-password" class="lf-input" placeholder="Enter your password" autocomplete="current-password" oninput="this.classList.remove('error')">
           <button type="button" class="lf-pw-eye" onclick="toggleLoginPw()" title="Show/hide password">
             <svg id="login-eye-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="18" height="18"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/><line x1="2" y1="2" x2="22" y2="22"/></svg>
           </button>
@@ -635,19 +635,31 @@
           </div>
           <div class="reg-group">
             <label class="reg-label">Gender <span class="reg-req">*</span></label>
-            <select id="reg-gender" class="reg-input">
-              <option value="" disabled selected>Select gender</option>
-              <option>Male</option><option>Female</option><option>Other</option>
-            </select>
+            <!-- Same custom-select markup selectFieldHtml() generates in main.js —
+                 hand-written here since this screen is static HTML, not a JS
+                 template (same reasoning as reg-dob's custom date picker above). -->
+            <div class="cust-select" id="reg-gender-wrap" data-options='[{"value":"Male","label":"Male"},{"value":"Female","label":"Female"},{"value":"Other","label":"Other"}]' data-placeholder="Select gender">
+              <input type="hidden" id="reg-gender" value="">
+              <button type="button" id="reg-gender-trigger" class="reg-input cust-select-trigger"
+                      role="combobox" aria-haspopup="listbox" aria-expanded="false" aria-controls="cust-select-popover-root"
+                      onclick="window.toggleCustSelect('reg-gender')" onkeydown="window.custSelectTriggerKey(event,'reg-gender')">
+                <span class="cust-select-text placeholder" id="reg-gender-text">Select gender</span>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="16" height="16"><polyline points="6 9 12 15 18 9"/></svg>
+              </button>
+            </div>
           </div>
 
           <div class="reg-group reg-full">
             <label class="reg-label">Blood Type</label>
-            <select id="reg-blood" class="reg-input">
-              <option value="">Unknown</option>
-              <option>A+</option><option>A-</option><option>B+</option><option>B-</option>
-              <option>AB+</option><option>AB-</option><option>O+</option><option>O-</option>
-            </select>
+            <div class="cust-select" id="reg-blood-wrap" data-options='[{"value":"","label":"Unknown"},{"value":"A+","label":"A+"},{"value":"A-","label":"A-"},{"value":"B+","label":"B+"},{"value":"B-","label":"B-"},{"value":"AB+","label":"AB+"},{"value":"AB-","label":"AB-"},{"value":"O+","label":"O+"},{"value":"O-","label":"O-"}]' data-placeholder="Unknown">
+              <input type="hidden" id="reg-blood" value="">
+              <button type="button" id="reg-blood-trigger" class="reg-input cust-select-trigger"
+                      role="combobox" aria-haspopup="listbox" aria-expanded="false" aria-controls="cust-select-popover-root"
+                      onclick="window.toggleCustSelect('reg-blood')" onkeydown="window.custSelectTriggerKey(event,'reg-blood')">
+                <span class="cust-select-text" id="reg-blood-text">Unknown</span>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="16" height="16"><polyline points="6 9 12 15 18 9"/></svg>
+              </button>
+            </div>
           </div>
 
         </div>

@@ -96,7 +96,8 @@ var consultationSettings = {
   lunchBreak:  true,
   clinicDays:  ['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'],
   reminderTime:        '12:00 PM',
-  confirmDeadlineTime: '9:00 PM'
+  confirmDeadlineTime: '9:00 PM',
+  waitlistOfferHours:  3
 }
 
 // Parses consultationSettings.minAdvanceBooking ('Same day','1 day','2 days',…)

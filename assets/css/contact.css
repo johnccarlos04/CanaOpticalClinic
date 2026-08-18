@@ -57,24 +57,137 @@ html, body { color: var(--text); background: var(--white); }
 .form-group { margin-bottom: 16px; }
 .form-group label { display: block; font-size: 0.75rem; font-weight: 600; color: #374151; margin-bottom: 6px; }
 .form-group input,
-.form-group select,
-.form-group textarea { width: 100%; padding: 10px 14px; border: 1.5px solid var(--border); border-radius: 8px; font-family: 'Poppins', sans-serif; font-size: 0.84rem; color: var(--text); background: #fafafa; outline: none; transition: border-color 0.2s, box-shadow 0.2s; }
-.form-group input::placeholder, .form-group textarea::placeholder { color: #c4c9d4; }
-.form-group select {
-  appearance: none; -webkit-appearance: none; -moz-appearance: none;
-  cursor: pointer; padding-right: 36px;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%236b7280' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E");
-  background-repeat: no-repeat; background-position: right 12px center; background-size: 14px;
+.form-group textarea {
+  width: 100%; padding: 10px 14px;
+  border: 1.5px solid var(--border);
+  border-radius: 8px;
+  font-family: 'Poppins', sans-serif;
+  font-size: 0.84rem;
+  color: var(--text);
+  /* White, same as the login/register screen's .reg-input fields — not the
+     #fafafa this page used before, which washed out the placeholder text. */
+  background: #fff;
+  outline: none;
+  transition: border-color 0.2s, box-shadow 0.2s;
 }
-.form-group input:focus, .form-group select:focus, .form-group textarea:focus { border-color: var(--orange); box-shadow: 0 0 0 3px rgba(232,137,28,0.1); background: white; }
+.form-group input::placeholder, .form-group textarea::placeholder { color: var(--muted); }
+.form-group input:focus, .form-group textarea:focus { border-color: var(--orange); box-shadow: 0 0 0 3px rgba(232,137,28,0.1); }
 .form-group textarea { resize: none; height: 120px; }
-.form-group input:focus-visible, .form-group select:focus-visible, .form-group textarea:focus-visible { outline: none; }
+.form-group input:focus-visible, .form-group textarea:focus-visible { outline: none; }
+/* Same red-outline treatment as .reg-input.error / .lf-input.error in the
+   app — applied to whichever required field(s) are actually empty on a
+   failed submit, cleared again as soon as the visitor fixes each one. */
+.form-group input.error, .form-group textarea.error, .pub-select-trigger.error {
+  border-color: #DC2626;
+  box-shadow: 0 0 0 3px rgba(220,38,38,.08);
+}
 
-.cf-error { font-size: 0.78rem; font-weight: 500; color: #DC2626; background: #FEF2F2; border: 1px solid #FECACA; border-radius: 8px; padding: 10px 14px; margin-bottom: 16px; }
+/* ── Custom select (Inquiry Type) ──────────────────────────────────
+   Small self-contained popover select, matching the look/behavior of the
+   authenticated app's cust-select component. This public page doesn't
+   load main.js, so it can't reuse that component directly — a native
+   <select>'s open option list is rendered by the OS/browser and can't be
+   restyled, which would look inconsistent with the rest of the site. */
+.pub-select { position: relative; }
+.pub-select-trigger {
+  width: 100%;
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  padding: 10px 14px;
+  border: 1.5px solid var(--border);
+  border-radius: 8px;
+  font-family: 'Poppins', sans-serif;
+  font-size: 0.84rem;
+  color: var(--text);
+  /* White (not the #fafafa the other fields on this page use) — same
+     background as the login/register screen's .reg-input fields, which
+     is where the more legible placeholder look this is matching lives. */
+  background: #fff;
+  text-align: left;
+  cursor: pointer;
+  outline: none;
+  /* A native <select>'s displayed value was never selectable text, so it
+     never showed a text-hover cursor either — this button's label text
+     was still plain selectable DOM text, which is what let the browser
+     show its own cursor over it (an hourglass while its webfont settles,
+     on some Chromium/Windows builds) regardless of the pointer set above. */
+  user-select: none;
+  -webkit-user-select: none;
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+.pub-select-trigger svg { flex-shrink: 0; color: #6b7280; transition: transform .15s; }
+.pub-select-trigger.open { border-color: var(--orange); box-shadow: 0 0 0 3px rgba(232,137,28,0.1); }
+.pub-select-trigger.open svg { transform: rotate(180deg); color: var(--orange); }
+.pub-select-trigger:focus-visible { outline: none; }
+/* Belt-and-suspenders: force pointer on every child too, in case a hover
+   ever lands on the text/icon directly rather than the button itself —
+   cursor is inherited by default, but this rules out any stray override. */
+.pub-select-trigger, .pub-select-trigger * { cursor: pointer; }
+.pub-select-text {
+  flex: 1; min-width: 0;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  background: transparent;
+  font-weight: 400;
+}
+/* Matches .reg-input's placeholder legibility on the login/register
+   screens (a plain browser-default placeholder gray, not this page's
+   much paler #c4c9d4) — clearly readable on the white background above. */
+.pub-select-text.placeholder { color: var(--muted); }
+
+.pub-select-popover {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0; right: 0;
+  z-index: 20;
+  background: #fff;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  box-shadow: 0 12px 32px rgba(0,0,0,.14), 0 2px 8px rgba(0,0,0,.06);
+  padding: 6px;
+  display: none;
+  animation: pubSelectIn 0.12s ease;
+}
+.pub-select-popover.open { display: block; }
+@keyframes pubSelectIn { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: translateY(0); } }
+.pub-select-list { max-height: 240px; overflow-y: auto; display: flex; flex-direction: column; gap: 2px; padding-right: 4px; }
+.pub-select-item { padding: 8px 12px; border-radius: 7px; font-size: 0.84rem; color: #374151; cursor: pointer; transition: background .15s, color .15s; }
+.pub-select-item:hover { background: var(--orange-lt); }
+.pub-select-item.selected { background: var(--orange); color: #fff; font-weight: 600; }
+.pub-select-item.highlighted { outline: 2px solid var(--orange); outline-offset: -2px; }
+
+/* Matches the app's .lf-error / .fp-field-error exactly — left accent
+   border, alert-circle icon, same colors/spacing — instead of the plain
+   text-only box this used before. Shown via display:flex (not block), so
+   the ::before icon and text sit side by side like those do. */
+.cf-error {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  background: #FEF2F2;
+  border: 1px solid #FECACA;
+  border-left: 4px solid #DC2626;
+  border-radius: 8px;
+  padding: 11px 14px;
+  font-size: 0.83rem;
+  font-weight: 500;
+  color: #B91C1C;
+  margin-bottom: 12px;
+  line-height: 1.5;
+}
+.cf-error::before {
+  content: "";
+  width: 16px; height: 16px; flex-shrink: 0; margin-top: 2px;
+  background: no-repeat center / contain url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23DC2626' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='12' cy='12' r='10'/%3E%3Cline x1='12' y1='8' x2='12' y2='12'/%3E%3Cline x1='12' y1='16' x2='12' y2='16'/%3E%3C/svg%3E");
+}
 .btn-submit { width: 100%; padding: 13px; background: var(--orange); color: white; font-family: 'Poppins', sans-serif; font-size: 0.9rem; font-weight: 600; border: none; border-radius: 8px; cursor: pointer; transition: opacity 0.22s ease, transform 0.22s ease; }
 .btn-submit:hover { opacity: 0.9; transform: translateY(-1px); }
 .btn-submit:active { transform: translateY(0); }
 .btn-submit:focus-visible { outline: 2px solid var(--orange-dk); outline-offset: 2px; }
+/* Matches the app's forgot-password submit buttons (.fp-btn-primary) —
+   same washed-out disabled look and the same CSS ring spinner instead of
+   a static icon, so "sending" reads consistently across the whole site. */
+.btn-submit:disabled { opacity: .55; cursor: not-allowed; transform: none; }
+.btn-spinner { width: 14px; height: 14px; border: 2px solid rgba(255,255,255,.4); border-top-color: #fff; border-radius: 50%; animation: btn-spin .7s linear infinite; display: inline-block; }
+@keyframes btn-spin { to { transform: rotate(360deg); } }
 
 @media (max-width: 991.98px) {
   #content { padding: 94px 0 56px; }

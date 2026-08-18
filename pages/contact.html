@@ -120,29 +120,43 @@
             <div class="form-row">
               <div class="form-group">
                 <label>Full Name</label>
-                <input type="text" id="cf-name" placeholder="Enter your full name">
+                <input type="text" id="cf-name" placeholder="Enter your full name" oninput="this.classList.remove('error')">
               </div>
               <div class="form-group">
                 <label>Email Address</label>
-                <input type="email" id="cf-email" placeholder="Enter your email address">
+                <input type="email" id="cf-email" placeholder="Enter your email address" oninput="this.classList.remove('error')">
               </div>
             </div>
             <div class="form-group">
               <label>Inquiry Type</label>
-              <select id="cf-service">
-                <option value="" disabled selected>Select an inquiry type...</option>
-                <option>Eye Examination</option>
-                <option>Vision Screening</option>
-                <option>Refraction Testing</option>
-                <option>Contact Lens Fitting</option>
-                <option>Frame Selection</option>
-                <option>Follow-up Consultation</option>
-                <option>Other Concern</option>
-              </select>
+              <!-- Small self-contained custom select — this public page doesn't
+                   load main.js, so it can't reuse the app's cust-select component,
+                   but a native <select>'s open option list is rendered by the OS
+                   and can't be restyled to match the rest of the site. See the
+                   script block at the bottom of this file for its behavior. -->
+              <div class="pub-select" id="cf-service-wrap" data-placeholder="Select an inquiry type...">
+                <input type="hidden" id="cf-service" value="">
+                <button type="button" id="cf-service-trigger" class="pub-select-trigger"
+                        role="combobox" aria-haspopup="listbox" aria-expanded="false" aria-controls="cf-service-popover">
+                  <span class="pub-select-text placeholder" id="cf-service-text">Select an inquiry type...</span>
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="14" height="14"><polyline points="6 9 12 15 18 9"/></svg>
+                </button>
+                <div class="pub-select-popover" id="cf-service-popover" role="listbox">
+                  <div class="pub-select-list">
+                    <div class="pub-select-item" role="option" data-value="Eye Examination">Eye Examination</div>
+                    <div class="pub-select-item" role="option" data-value="Vision Screening">Vision Screening</div>
+                    <div class="pub-select-item" role="option" data-value="Refraction Testing">Refraction Testing</div>
+                    <div class="pub-select-item" role="option" data-value="Contact Lens Fitting">Contact Lens Fitting</div>
+                    <div class="pub-select-item" role="option" data-value="Frame Selection">Frame Selection</div>
+                    <div class="pub-select-item" role="option" data-value="Follow-up Consultation">Follow-up Consultation</div>
+                    <div class="pub-select-item" role="option" data-value="Other Concern">Other Concern</div>
+                  </div>
+                </div>
+              </div>
             </div>
             <div class="form-group">
               <label>Message</label>
-              <textarea id="cf-message" placeholder="Tell us how we can help you..."></textarea>
+              <textarea id="cf-message" placeholder="Tell us how we can help you..." oninput="this.classList.remove('error')"></textarea>
             </div>
             <div id="cf-error" class="cf-error" style="display:none"></div>
             <button type="submit" class="btn-submit" id="cf-submit">Send Message</button>
@@ -238,6 +252,107 @@
   }
 
 
+  // ── Custom select (Inquiry Type) ─────────────────────────────
+  // Small self-contained popover select, mirroring the authenticated
+  // app's cust-select component visually/behaviorally (open/close,
+  // outside-click, Escape, arrow keys, Home/End, type-ahead) without
+  // depending on main.js, which this public page doesn't load.
+  (function () {
+    const wrap    = document.getElementById('cf-service-wrap');
+    const trigger = document.getElementById('cf-service-trigger');
+    const hidden  = document.getElementById('cf-service');
+    const text    = document.getElementById('cf-service-text');
+    const pop     = document.getElementById('cf-service-popover');
+    if (!wrap || !trigger || !hidden || !text || !pop) return;
+
+    const items = Array.from(pop.querySelectorAll('.pub-select-item'));
+    let highlight = -1;
+    let typeahead = '', typeaheadT = null;
+
+    function isOpen() { return pop.classList.contains('open'); }
+
+    function render() {
+      items.forEach((el, i) => {
+        el.classList.toggle('selected', el.dataset.value === hidden.value);
+        el.classList.toggle('highlighted', i === highlight);
+      });
+      const hi = items[highlight];
+      if (hi) hi.scrollIntoView({ block: 'nearest' });
+    }
+
+    function open() {
+      pop.classList.add('open');
+      trigger.classList.add('open');
+      trigger.setAttribute('aria-expanded', 'true');
+      highlight = items.findIndex(el => el.dataset.value === hidden.value);
+      if (highlight < 0) highlight = 0;
+      render();
+      document.addEventListener('mousedown', outsideClick, true);
+      document.addEventListener('keydown', keyNav, true);
+    }
+    function close() {
+      pop.classList.remove('open');
+      trigger.classList.remove('open');
+      trigger.setAttribute('aria-expanded', 'false');
+      highlight = -1;
+      document.removeEventListener('mousedown', outsideClick, true);
+      document.removeEventListener('keydown', keyNav, true);
+    }
+    function toggle() { isOpen() ? close() : open(); }
+
+    function pick(i) {
+      const item = items[i];
+      if (!item) return;
+      hidden.value = item.dataset.value;
+      hidden.dispatchEvent(new Event('change', { bubbles: true }));
+      text.textContent = item.textContent;
+      text.classList.remove('placeholder');
+      trigger.classList.remove('error');
+      close();
+    }
+
+    function outsideClick(e) {
+      if (wrap.contains(e.target)) return;
+      close();
+    }
+    function keyNav(e) {
+      if (!isOpen()) return;
+      if (e.key === 'Escape')    { e.preventDefault(); close(); return; }
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); pick(highlight); return; }
+      if (e.key === 'ArrowDown') { e.preventDefault(); highlight = Math.min(items.length - 1, highlight + 1); render(); return; }
+      if (e.key === 'ArrowUp')   { e.preventDefault(); highlight = Math.max(0, highlight - 1); render(); return; }
+      if (e.key === 'Home')      { e.preventDefault(); highlight = 0; render(); return; }
+      if (e.key === 'End')       { e.preventDefault(); highlight = items.length - 1; render(); return; }
+      if (e.key.length === 1 && /\S/.test(e.key)) {
+        e.preventDefault();
+        clearTimeout(typeaheadT);
+        typeahead += e.key.toLowerCase();
+        typeaheadT = setTimeout(() => { typeahead = ''; }, 600);
+        const match = items.findIndex(el => el.textContent.toLowerCase().startsWith(typeahead));
+        if (match !== -1) { highlight = match; render(); }
+      }
+    }
+
+    trigger.addEventListener('click', toggle);
+    trigger.addEventListener('keydown', function (e) {
+      if (!isOpen() && (e.key === 'ArrowDown' || e.key === 'ArrowUp')) { e.preventDefault(); open(); }
+    });
+    items.forEach((el, i) => el.addEventListener('click', () => pick(i)));
+
+    // A native form.reset() (called on successful submission below) resets
+    // the hidden input's value but has no idea this button's visible text
+    // needs updating too — same gotcha the main app's setSelectFieldValue()/
+    // resetSelectField() exist to handle, just wired via the form's own
+    // 'reset' event here instead.
+    const form = document.getElementById('contact-form');
+    if (form) form.addEventListener('reset', function () {
+      hidden.value = '';
+      text.textContent = wrap.dataset.placeholder;
+      text.classList.add('placeholder');
+      close();
+    });
+  })();
+
   // ── Contact form submission ──────────────────────────────────
   function showToast(text, isError) {
     const t = document.createElement('div');
@@ -254,28 +369,47 @@
   document.getElementById('contact-form').addEventListener('submit', function (e) {
     e.preventDefault();
 
-    const btn      = document.getElementById('cf-submit');
-    const errorBox = document.getElementById('cf-error');
-    const name     = document.getElementById('cf-name').value.trim();
-    const email    = document.getElementById('cf-email').value.trim();
+    const btn        = document.getElementById('cf-submit');
+    const errorBox   = document.getElementById('cf-error');
+    const nameEl     = document.getElementById('cf-name');
+    const emailEl    = document.getElementById('cf-email');
+    const serviceTrg = document.getElementById('cf-service-trigger');
+    const messageEl  = document.getElementById('cf-message');
+    const name     = nameEl.value.trim();
+    const email    = emailEl.value.trim();
     const service  = document.getElementById('cf-service').value;
-    const message  = document.getElementById('cf-message').value.trim();
+    const message  = messageEl.value.trim();
 
     errorBox.style.display = 'none';
+    [nameEl, emailEl, serviceTrg, messageEl].forEach(el => el.classList.remove('error'));
 
-    if (!name || !email || !message) {
-      errorBox.textContent = 'Please fill in your name, email, and message.';
-      errorBox.style.display = 'block';
+    // Names the missing required fields specifically (e.g. "Please fill in
+    // your email address and message.") instead of always listing all four
+    // regardless of which ones are actually empty, and puts a red outline
+    // on exactly those fields — same treatment as the login screen.
+    const missing = [];
+    if (!name)    { missing.push('full name');     nameEl.classList.add('error'); }
+    if (!email)   { missing.push('email address'); emailEl.classList.add('error'); }
+    if (!service) { missing.push('inquiry type');  serviceTrg.classList.add('error'); }
+    if (!message) { missing.push('message');       messageEl.classList.add('error'); }
+
+    if (missing.length) {
+      const list = missing.length === 1 ? missing[0]
+        : missing.length === 2 ? missing[0] + ' and ' + missing[1]
+        : missing.slice(0, -1).join(', ') + ', and ' + missing[missing.length - 1];
+      errorBox.textContent = 'Please fill in your ' + list + '.';
+      errorBox.style.display = 'flex';
       return;
     }
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      emailEl.classList.add('error');
       errorBox.textContent = 'Please enter a valid email address.';
-      errorBox.style.display = 'block';
+      errorBox.style.display = 'flex';
       return;
     }
 
     btn.disabled = true;
-    btn.innerHTML = '<span style="display:flex;align-items:center;justify-content:center;gap:8px"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>Sending…</span>';
+    btn.innerHTML = '<span style="display:flex;align-items:center;justify-content:center;gap:8px"><span class="btn-spinner"></span>Sending…</span>';
 
     fetch('../api/contact/create.php', {
       method: 'POST',
@@ -292,7 +426,7 @@
           showToast("Message sent! We'll get back to you shortly.");
         } else {
           errorBox.textContent = data.message || 'Something went wrong. Please try again.';
-          errorBox.style.display = 'block';
+          errorBox.style.display = 'flex';
           showToast(data.message || 'Something went wrong. Please try again.', true);
         }
       })
@@ -300,7 +434,7 @@
         btn.disabled = false;
         btn.textContent = 'Send Message';
         errorBox.textContent = 'Network error. Please check your connection and try again.';
-        errorBox.style.display = 'block';
+        errorBox.style.display = 'flex';
         showToast('Network error. Please check your connection and try again.', true);
       });
   });

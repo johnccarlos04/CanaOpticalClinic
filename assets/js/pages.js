@@ -162,6 +162,8 @@ function apptActions(a, role) {
     <div style="display:flex;flex-direction:column;gap:4px;align-items:flex-start">
       <div class="appt-actions-row">
         <button class="btn-icon" title="View Details" onclick="window.viewAppt('${a.id}')">${ic('eye','icon-sm')}</button>
+        ${!a.doctorId ? `
+          <button class="btn-icon" title="Assign Optometrist" style="color:#E8760A" onclick="window.openAssignDoctorModal('${a.id}')">${ic('users','icon-sm')}</button>` : ''}
         ${a.status === 'pending' ? `
           <button class="btn-icon" title="Approve" style="color:#059669" onclick="window.approveAppt('${a.id}')">${ic('check','icon-sm')}</button>
           <button class="btn-icon" title="Disapprove" style="color:#991b1b" onclick="window.confirmDisapproveAppt('${a.id}')">${ic('x-circle','icon-sm')}</button>
@@ -210,7 +212,7 @@ function appointmentsTable(list, role, tbodyId = 'appt-tbody', hidePatient = fal
             ${avatar(a.patientName, 'patient-avatar', patients.find(p=>p.id===a.patientId)?.photoUrl || null)}
             <div class="patient-name-info"><strong>${a.patientName}</strong><span>${a.patientId}</span></div>
           </div></td>`}
-          <td style="font-size:.82rem">${a.doctorName}</td>
+          <td style="font-size:.82rem">${a.doctorName || '<span style="color:#9CA3AF;font-style:italic">Not yet assigned</span>'}</td>
           <td style="font-size:.82rem">${fmtDate(a.date)}</td>
           <td style="font-size:.82rem;white-space:nowrap">${a.time}</td>
           <td style="font-size:.82rem">${a.type}</td>
@@ -260,7 +262,7 @@ function pageAdminDashboard() {
     .slice(0, 6)
     .map(a => ({
       patient: a.patientName,
-      doctor:  a.doctorName.replace('Dr. ', '').split(' ').pop(),
+      doctor:  a.doctorName ? a.doctorName.replace('Dr. ', '').split(' ').pop() : 'Unassigned',
       date:    new Date(a.date + 'T00:00:00').toLocaleDateString('en-PH', { month: 'short', day: 'numeric', year: 'numeric' }),
       status:  a.status
     }))
@@ -288,7 +290,8 @@ function pageAdminDashboard() {
       <h1 class="page-title">Dashboard</h1>
       <p class="page-subtitle">Welcome back, ${st().user?.firstName}. Here's your clinic overview.</p>
     </div>
-    <div style="display:flex;gap:8px;align-items:center">
+    <div style="display:flex;flex-direction:column;align-items:flex-end;gap:6px">
+      <button class="btn-primary" onclick="window.navigate('create-appointment')">${ic('plus','icon-sm')} New Appointment</button>
       <span style="font-size:.78rem;color:#9CA3AF">${new Date().toLocaleDateString('en-PH',{weekday:'long',year:'numeric',month:'long',day:'numeric'})}</span>
     </div>
   </div>
@@ -361,11 +364,12 @@ function pageAdminDashboard() {
             <div class="card-title">Monthly Appointments</div>
             <div class="card-subtitle" id="admin-chart-range-label">Last 6 months</div>
           </div>
-          <select id="admin-chart-range-select" class="form-select" style="width:auto;padding:6px 32px 6px 12px;font-size:.78rem" onchange="window.updateAdminCharts()">
-            <option value="3">Last 3 Months</option>
-            <option value="6" selected>Last 6 Months</option>
-            <option value="12">Last 12 Months</option>
-          </select>
+          ${window.selectFieldHtml('admin-chart-range-select', {
+            value: '6',
+            options: [{ value: '3', label: 'Last 3 Months' }, { value: '6', label: 'Last 6 Months' }, { value: '12', label: 'Last 12 Months' }],
+            onchange: 'window.updateAdminCharts()',
+            style: 'width:auto;min-width:150px;padding:6px 32px 6px 12px;font-size:.78rem'
+          })}
         </div>
         <div class="card-body"><div class="chart-wrap"><canvas id="chart-appointments"></canvas></div></div>
       </div>
@@ -831,6 +835,9 @@ function pagePatientView() {
     ${canEdit ? `<div style="display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end">
       <button class="btn-secondary" onclick="window.openEditPatientModal('${p.id}')">
         ${ic('edit','icon-sm')} Edit Profile
+      </button>
+      <button class="btn-secondary" onclick="window.openPatientEmailModal('${p.id}')">
+        ${ic('mail','icon-sm')} Email
       </button>
       <button class="btn-primary" onclick="window.navigate('create-appointment',{patientId:'${p.id}',patientName:'${(p.name||'').replace(/'/g,"\\'")}'})">
         ${ic('calendar','icon-sm')} Schedule Appointment
@@ -1594,8 +1601,7 @@ function pageAdminReports() {
       const blob = new Blob([csv], { type: 'text/csv' })
       const a = document.createElement('a')
       a.href = URL.createObjectURL(blob)
-      const sel = document.getElementById('rpt-type')
-      const label = sel?.selectedOptions[0]?.text || 'report'
+      const label = document.getElementById('rpt-type-text')?.textContent || 'report'
       a.download = 'canaopticalclinic-' + label.toLowerCase().replace(/[^a-z0-9]+/g, '-') + '.csv'
       a.click()
       window.toast('Report exported as CSV.', 'success')
@@ -1605,8 +1611,7 @@ function pageAdminReports() {
       const table = document.querySelector('#rpt-table-area table')
       if (!table) { window.toast('Generate a report first, then print.', 'error'); return }
 
-      const typeSel   = document.getElementById('rpt-type')
-      const typeLabel = typeSel?.selectedOptions[0]?.text || 'Report'
+      const typeLabel = document.getElementById('rpt-type-text')?.textContent || 'Report'
       const from = document.getElementById('rpt-from')?.value || ''
       const to   = document.getElementById('rpt-to')?.value || ''
       const ci   = (typeof clinicInfo !== 'undefined') ? clinicInfo : {}
@@ -1786,22 +1791,25 @@ function pageAdminReports() {
         <div style="display:flex;gap:14px;align-items:flex-end;flex-wrap:wrap">
           <div style="flex:1;min-width:220px">
             <label style="display:block;font-size:.68rem;font-weight:700;color:#6b7280;margin-bottom:6px">Report type</label>
-            <select id="rpt-type" class="form-select" style="height:42px">
-              <option value="" disabled selected>Select a report type</option>
-              <option value="patient-visit">Patient Visit History</option>
-              <option value="diagnosis-history">Diagnosis History</option>
-              <option value="prescription-records">Prescription Records</option>
-              <option value="daily-appointment">Daily Appointment Report</option>
-              <option value="completed-appts">Completed Appointments</option>
-              <option value="cancelled-appts">Cancelled / Disapproved Appointments</option>
-            </select>
+            ${window.selectFieldHtml('rpt-type', {
+              placeholder: 'Select a report type',
+              options: [
+                { value: 'patient-visit',       label: 'Patient Visit History' },
+                { value: 'diagnosis-history',   label: 'Diagnosis History' },
+                { value: 'prescription-records',label: 'Prescription Records' },
+                { value: 'daily-appointment',   label: 'Daily Appointment Report' },
+                { value: 'completed-appts',     label: 'Completed Appointments' },
+                { value: 'cancelled-appts',     label: 'Cancelled / Disapproved Appointments' }
+              ],
+              style: 'height:42px'
+            })}
           </div>
           <div>
             <label style="display:block;font-size:.68rem;font-weight:700;color:#6b7280;margin-bottom:6px">Date range</label>
             <div style="display:flex;align-items:center;gap:8px">
-              <input type="date" id="rpt-from" class="form-input" value="${monthStart}" style="width:142px">
+              ${window.dateFieldHtml('rpt-from', { value: monthStart, style: 'width:142px' })}
               <span style="font-size:.75rem;color:#9ca3af;font-weight:600;flex-shrink:0">\u2192</span>
-              <input type="date" id="rpt-to" class="form-input" value="${today}" style="width:142px">
+              ${window.dateFieldHtml('rpt-to', { value: today, style: 'width:142px' })}
             </div>
           </div>
           <div style="display:flex;gap:8px;align-items:center">
@@ -2213,10 +2221,7 @@ function pageAdminSettings() {
           </div>
           <div class="form-group" style="margin-bottom:0">
             <label class="form-label">Status</label>
-            <select class="form-select" id="svc-status">
-              <option value="active">Active</option>
-              <option value="inactive">Inactive</option>
-            </select>
+            ${window.selectFieldHtml('svc-status', { value: 'active', options: [{ value: 'active', label: 'Active' }, { value: 'inactive', label: 'Inactive' }] })}
           </div>
         </div>
         <div style="display:flex;justify-content:flex-end;margin-top:16px">
@@ -2250,34 +2255,35 @@ function pageAdminSettings() {
   // ── Section: Consultation Settings ──────────────────────────
   function sectionConsultation() {
     const cs = consultationSettings
-    function timeOpts(selected) {
+    // Returns a plain array of "h:mm AM/PM" labels for timeFieldHtml()'s
+    // popover list (not <option> HTML — the native <select> these used to
+    // build for was swallowing most of the viewport height with 30+ options).
+    function timeOpts() {
       const slots = []
       for (let h = 7; h <= 21; h++) {
         for (const m of [0, 30]) {
           const hh   = h % 12 === 0 ? 12 : h % 12
           const ampm = h < 12 ? 'AM' : 'PM'
-          const lbl  = `${hh}:${m === 0 ? '00' : '30'} ${ampm}`
-          slots.push(`<option${lbl === selected ? ' selected' : ''}>${lbl}</option>`)
+          slots.push(`${hh}:${m === 0 ? '00' : '30'} ${ampm}`)
         }
       }
-      return slots.join('')
+      return slots
     }
     // Reminder Send Time / Confirmation Deadline aren't clinic operating
     // hours — they're just "when does a notification fire" — so unlike
     // timeOpts() above (deliberately capped to a plausible 7 AM–9:30 PM
     // business-hours window for the open/close pickers), this covers the
     // full day so any time, including noon, is selectable.
-    function fullTimeOpts(selected) {
+    function fullTimeOpts() {
       const slots = []
       for (let h = 0; h <= 23; h++) {
         for (const m of [0, 30]) {
           const hh   = h % 12 === 0 ? 12 : h % 12
           const ampm = h < 12 ? 'AM' : 'PM'
-          const lbl  = `${hh}:${m === 0 ? '00' : '30'} ${ampm}`
-          slots.push(`<option${lbl === selected ? ' selected' : ''}>${lbl}</option>`)
+          slots.push(`${hh}:${m === 0 ? '00' : '30'} ${ampm}`)
         }
       }
-      return slots.join('')
+      return slots
     }
     const durationOpts = ['15 min','20 min','25 min','30 min','35 min','40 min','45 min','50 min','55 min','60 min']
     const maxAdvOpts   = ['1 week','2 weeks','1 month','2 months','3 months']
@@ -2299,23 +2305,17 @@ function pageAdminSettings() {
         <div class="form-row-2">
           <div class="form-group" style="margin-bottom:12px">
             <label class="form-label">Default Consultation Duration</label>
-            <select class="form-select" id="cs-duration">
-              ${durationOpts.map(o => `<option${o === (cs.defaultDuration || '40 min') ? ' selected' : ''}>${o}</option>`).join('')}
-            </select>
+            ${window.selectFieldHtml('cs-duration', { value: cs.defaultDuration || '40 min', options: durationOpts })}
             <div style="font-size:.72rem;color:#9CA3AF;margin-top:4px">Default time allocated per appointment slot.</div>
           </div>
           <div class="form-group" style="margin-bottom:12px">
             <label class="form-label">Maximum Advance Booking</label>
-            <select class="form-select" id="cs-adv-max">
-              ${maxAdvOpts.map(o => `<option${o === cs.maxAdvanceBooking ? ' selected' : ''}>${o}</option>`).join('')}
-            </select>
+            ${window.selectFieldHtml('cs-adv-max', { value: cs.maxAdvanceBooking, options: maxAdvOpts })}
             <div style="font-size:.72rem;color:#9CA3AF;margin-top:4px">How far in advance patients can book appointments.</div>
           </div>
           <div class="form-group" style="margin-bottom:0">
             <label class="form-label">Minimum Advance Booking</label>
-            <select class="form-select" id="cs-adv-min">
-              ${minAdvOpts.map(o => `<option${o === cs.minAdvanceBooking ? ' selected' : ''}>${o}</option>`).join('')}
-            </select>
+            ${window.selectFieldHtml('cs-adv-min', { value: cs.minAdvanceBooking, options: minAdvOpts })}
             <div style="font-size:.72rem;color:#9CA3AF;margin-top:4px">Earliest a patient can book before the appointment date.</div>
           </div>
           <div class="form-group" style="margin-bottom:0">
@@ -2325,13 +2325,18 @@ function pageAdminSettings() {
           </div>
           <div class="form-group" style="margin-bottom:0">
             <label class="form-label">Reminder Send Time</label>
-            <select class="form-select" id="cs-reminder-time">${fullTimeOpts(cs.reminderTime || '12:00 PM')}</select>
+            ${window.timeFieldHtml('cs-reminder-time', { value: cs.reminderTime || '12:00 PM', options: fullTimeOpts() })}
             <div style="font-size:.72rem;color:#9CA3AF;margin-top:4px">When the day-before reminder is sent for approved appointments.</div>
           </div>
           <div class="form-group" style="margin-bottom:0">
             <label class="form-label">Confirmation Deadline</label>
-            <select class="form-select" id="cs-confirm-deadline">${fullTimeOpts(cs.confirmDeadlineTime || '9:00 PM')}</select>
+            ${window.timeFieldHtml('cs-confirm-deadline', { value: cs.confirmDeadlineTime || '9:00 PM', options: fullTimeOpts() })}
             <div style="font-size:.72rem;color:#9CA3AF;margin-top:4px">Same-day cutoff to confirm attendance before auto-cancellation.</div>
+          </div>
+          <div class="form-group" style="margin-bottom:0">
+            <label class="form-label">Waitlist Claim Window (hours)</label>
+            <input class="form-input" type="number" id="cs-waitlist-hours" value="${cs.waitlistOfferHours || 3}" min="1" max="24">
+            <div style="font-size:.72rem;color:#9CA3AF;margin-top:4px">How long a freed slot stays claimable, and how close to the appointment a waitlist entry can still be offered one.</div>
           </div>
         </div>
         <div style="display:flex;justify-content:flex-end;margin-top:16px">
@@ -2349,11 +2354,11 @@ function pageAdminSettings() {
         <div class="form-row-2" style="margin-bottom:12px">
           <div class="form-group" style="margin-bottom:0">
             <label class="form-label">Clinic Opens (Morning Start)</label>
-            <select class="form-select" id="cs-am-start">${timeOpts(cs.morningStart)}</select>
+            ${window.timeFieldHtml('cs-am-start', { value: cs.morningStart, options: timeOpts() })}
           </div>
           <div class="form-group" style="margin-bottom:0">
             <label class="form-label">Clinic Closes (Afternoon End)</label>
-            <select class="form-select" id="cs-pm-end">${timeOpts(cs.afternoonEnd)}</select>
+            ${window.timeFieldHtml('cs-pm-end', { value: cs.afternoonEnd, options: timeOpts() })}
           </div>
         </div>
 
@@ -2362,21 +2367,22 @@ function pageAdminSettings() {
                  onchange="
                    const lb = this.checked;
                    document.getElementById('cs-lunch-fields').style.display = lb ? 'grid' : 'none';
-                   document.getElementById('cs-no-break-hint').style.display = lb ? 'none' : '';
+                   document.getElementById('cs-no-break-hint').style.display = lb ? 'none' : 'inline-flex';
                  ">
           <span>Lunch break between sessions</span>
         </label>
-        <div id="cs-no-break-hint" style="font-size:.72rem;color:#9CA3AF;margin-top:4px;margin-left:22px;margin-bottom:12px;${cs.lunchBreak ? 'display:none' : ''}">
-          No break — the clinic runs as one continuous session.
+        <div id="cs-no-break-hint" style="display:${cs.lunchBreak ? 'none' : 'inline-flex'};align-items:center;gap:6px;font-size:.72rem;font-weight:600;color:#B45309;background:#FFF8F0;border:1px solid #FFD9A8;border-radius:20px;padding:5px 12px 5px 10px;margin-top:6px;margin-left:22px;margin-bottom:12px">
+          ${ic('alert-circle','icon-sm')}
+          The clinic runs as one continuous session with no break in between.
         </div>
         <div id="cs-lunch-fields" class="form-row-2" style="display:${cs.lunchBreak ? 'grid' : 'none'};margin-top:10px;margin-bottom:16px">
           <div class="form-group" style="margin-bottom:0">
             <label class="form-label">Break Start</label>
-            <select class="form-select" id="cs-am-end">${timeOpts(cs.morningEnd)}</select>
+            ${window.timeFieldHtml('cs-am-end', { value: cs.morningEnd, options: timeOpts() })}
           </div>
           <div class="form-group" style="margin-bottom:0">
             <label class="form-label">Break End</label>
-            <select class="form-select" id="cs-pm-start">${timeOpts(cs.afternoonStart)}</select>
+            ${window.timeFieldHtml('cs-pm-start', { value: cs.afternoonStart, options: timeOpts() })}
           </div>
         </div>
 
@@ -2599,33 +2605,36 @@ function pageActivityLog() {
       <div style="padding:12px 16px;border-bottom:1px solid #F3F4F6;display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end">
         <div class="form-group" style="margin:0;flex:0 0 auto">
           <label class="form-label" style="font-size:.72rem">Role</label>
-          <select id="log-role-filter" class="form-select" style="width:auto;padding:7px 38px 7px 12px;font-size:.82rem"
-                  onchange="window.applyLogFilters()">
-            <option value="">All Roles</option>
-            <option>Admin</option><option>Staff</option><option>Doctor</option><option>Patient</option>
-          </select>
+          ${window.selectFieldHtml('log-role-filter', {
+            value: '',
+            options: [{ value: '', label: 'All Roles' }, 'Admin', 'Staff', 'Doctor', 'Patient'],
+            onchange: 'window.applyLogFilters()',
+            style: 'width:auto;min-width:130px;padding:7px 38px 7px 12px;font-size:.82rem'
+          })}
         </div>
         <div class="form-group" style="margin:0;flex:0 0 auto">
           <label class="form-label" style="font-size:.72rem">Action Type</label>
-          <select id="log-type-filter" class="form-select" style="width:auto;padding:7px 38px 7px 12px;font-size:.82rem"
-                  onchange="window.applyLogFilters()">
-            <option value="">All Types</option>
-            <option value="appointment">Appointment</option>
-            <option value="patient">Patient</option>
-            <option value="examination">Examination</option>
-            <option value="settings">Settings</option>
-            <option value="user">Account</option>
-          </select>
+          ${window.selectFieldHtml('log-type-filter', {
+            value: '',
+            options: [
+              { value: '', label: 'All Types' },
+              { value: 'appointment', label: 'Appointment' },
+              { value: 'patient', label: 'Patient' },
+              { value: 'examination', label: 'Examination' },
+              { value: 'settings', label: 'Settings' },
+              { value: 'user', label: 'Account' }
+            ],
+            onchange: 'window.applyLogFilters()',
+            style: 'width:auto;min-width:130px;padding:7px 38px 7px 12px;font-size:.82rem'
+          })}
         </div>
         <div class="form-group" style="margin:0;flex:0 0 auto">
           <label class="form-label" style="font-size:.72rem">From Date</label>
-          <input type="date" id="log-date-from" class="form-input" value="${monthStart}" style="width:150px;padding:7px 10px"
-                 onchange="window.applyLogFilters()">
+          ${window.dateFieldHtml('log-date-from', { value: monthStart, style: 'width:150px;padding:7px 10px;font-size:.82rem', onchange: 'window.applyLogFilters()' })}
         </div>
         <div class="form-group" style="margin:0;flex:0 0 auto">
           <label class="form-label" style="font-size:.72rem">To Date</label>
-          <input type="date" id="log-date-to" class="form-input" value="${today}" style="width:150px;padding:7px 10px"
-                 onchange="window.applyLogFilters()">
+          ${window.dateFieldHtml('log-date-to', { value: today, style: 'width:150px;padding:7px 10px;font-size:.82rem', onchange: 'window.applyLogFilters()' })}
         </div>
         <div class="search-input-wrap" style="flex:1;min-width:180px;align-self:flex-end">
           ${ic('search','icon-sm')}
@@ -2705,6 +2714,7 @@ function pageStaffDashboard() {
       <h1 class="page-title">Staff Dashboard</h1>
       <p class="page-subtitle">Welcome, ${st().user?.firstName}. Manage today's clinic operations.</p>
     </div>
+    <button class="btn-primary" onclick="window.navigate('create-appointment')">${ic('plus','icon-sm')} New Appointment</button>
   </div>
   <div class="page-body">
     <div class="stats-grid">
@@ -2737,9 +2747,11 @@ function pageStaffDashboard() {
           ${pending.length ? `<table class="tbl"><thead><tr><th>Patient</th><th>Doctor</th><th>Date</th><th>Action</th></tr></thead><tbody id="staff-appts-tbody">
             ${pending.slice(0,5).map(a=>`<tr>
               <td style="font-size:.82rem;font-weight:600">${a.patientName}</td>
-              <td style="font-size:.78rem;color:#6B7280">${a.doctorName.replace('Dr. ','')}</td>
+              <td style="font-size:.78rem;color:#6B7280">${a.doctorName ? a.doctorName.replace('Dr. ','') : '<span style="font-style:italic;color:#9CA3AF">Not yet assigned</span>'}</td>
               <td style="font-size:.78rem">${fmtDate(a.date)}</td>
-              <td><button class="btn-success" onclick="window.approveAppt('${a.id}')">Approve</button></td>
+              <td>${a.doctorId
+                ? `<button class="btn-success" onclick="window.approveAppt('${a.id}')">Approve</button>`
+                : `<button class="btn-secondary" onclick="window.openAssignDoctorModal('${a.id}')">Assign Optometrist</button>`}</td>
             </tr>`).join('')}
           </tbody></table>` : `<div class="table-empty" id="staff-appts-tbody">No pending appointments.</div>`}
         </div>
@@ -3086,6 +3098,12 @@ function pageDoctorSchedule() {
             </div>
             <div style="display:flex;align-items:center;gap:5px;font-size:.72rem;color:#6B7280">
               <div style="width:12px;height:12px;border-radius:3px;background:#F3F4F6"></div> Not Scheduled
+            </div>
+            <div style="display:flex;align-items:center;gap:5px;font-size:.72rem;color:#6B7280">
+              <div style="width:12px;height:12px;border-radius:3px;background:#FEE2E2;border:1px solid #FCA5A5"></div> Blocked
+            </div>
+            <div style="display:flex;align-items:center;gap:5px;font-size:.72rem;color:#6B7280">
+              <div style="width:12px;height:12px;border-radius:3px;background:#FFF1F2;border:1px solid #fda4af"></div> PH Holiday
             </div>
             <div style="display:flex;align-items:center;gap:5px;font-size:.72rem;color:#6B7280">
               <div style="width:6px;height:6px;border-radius:50%;background:#E8760A;margin:3px"></div> Has Appointments
@@ -3482,10 +3500,10 @@ function pageExamination() {
           </div>
           <div class="form-group">
             <label class="form-label">Lens Type</label>
-            <select id="ex-lens-type" class="form-select">
-              ${['—','Single Vision','Bifocal','Progressive','Contact Lens','Reading Glasses','Safety Glasses','Computer Lenses'].map(lt =>
-                `<option value="${lt}" ${(pre.lensType||'—')===lt?'selected':''}>${lt}</option>`).join('')}
-            </select>
+            ${window.selectFieldHtml('ex-lens-type', {
+              value: pre.lensType || '—',
+              options: ['—','Single Vision','Bifocal','Progressive','Contact Lens','Reading Glasses','Safety Glasses','Computer Lenses']
+            })}
           </div>
         </div>
         <div class="form-group">
@@ -3545,8 +3563,6 @@ function pageExamRecords() {
       <h1 class="page-title">Examination Records</h1>
       <p class="page-subtitle">${role === 'doctor' ? 'Your optical examination history.' : 'Complete history of optical examinations.'}</p>
     </div>
-    ${role !== 'patient' ? `<button class="btn-primary" onclick="window.navigate('patient-list')">
-      ${ic('plus','icon-sm')} New Examination</button>` : ''}
   </div>
   <div class="page-body">
     <div class="stats-grid" style="margin-bottom:20px">
@@ -3576,11 +3592,12 @@ function pageExamRecords() {
             <input class="search-input" placeholder="Search patient or diagnosis…"
                    oninput="window.filterTable(this,'exam-records-tbody')">
           </div>
-          ${role !== 'doctor' ? `<select class="form-select" style="width:auto;padding:7px 32px 7px 12px;font-size:.82rem"
-                  onchange="window.navigate('exam-records',{filter:this.value})">
-            <option value="all"${docFilter==='all'?' selected':''}>All Doctors</option>
-            ${uniqueDoctors.map(d=>`<option value="${d}"${docFilter===d?' selected':''}>${d}</option>`).join('')}
-          </select>` : ''}
+          ${role !== 'doctor' ? window.selectFieldHtml('exam-records-doc-filter', {
+            value: docFilter,
+            options: [{ value: 'all', label: 'All Doctors' }, ...uniqueDoctors.map(d => ({ value: d, label: d }))],
+            onchange: "window.navigate('exam-records',{filter:this.value})",
+            style: 'width:auto;min-width:150px;padding:7px 32px 7px 12px;font-size:.82rem'
+          }) : ''}
         </div>
       </div>
       ${filtered.length ? `<table class="tbl">
@@ -3667,16 +3684,6 @@ function pageNewExamination() {
       ? `<div style="width:${size}px;height:${size}px;border-radius:50%;overflow:hidden;flex-shrink:0"><img src="${photoUrl}" alt="${name}" style="width:100%;height:100%;object-fit:cover;display:block" onerror="var w=this.parentElement;if(w){w.style.cssText='width:${size}px;height:${size}px;border-radius:50%;background:#E8760A;color:white;display:flex;align-items:center;justify-content:center;font-size:${size>=38?'.75rem':'.65rem'};font-weight:700;flex-shrink:0';w.textContent='${initials(name).replace(/'/g,"\\'")}'}"></div>`
       : `<div style="width:${size}px;height:${size}px;border-radius:50%;background:#E8760A;color:white;display:flex;align-items:center;justify-content:center;font-size:${size>=38?'.75rem':'.65rem'};font-weight:700;flex-shrink:0">${initials(name)}</div>`
 
-    state.afterRender = () => {
-      const inp = document.getElementById('walkin-search-input')
-      if (inp) inp.addEventListener('input', () => {
-        const q = inp.value.trim().toLowerCase()
-        document.querySelectorAll('.walkin-pt-card').forEach(c => {
-          c.style.display = (!q || c.dataset.name.includes(q) || c.dataset.id.includes(q)) ? '' : 'none'
-        })
-      })
-    }
-
     // SVG calendar icon (no emoji, works cross-platform)
     const calSVG = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="20" height="20"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>`
 
@@ -3729,31 +3736,6 @@ function pageNewExamination() {
           </button>
         </div>`
 
-    // Walk-in cards — avatar + name + select button, rendered once, filtered via search
-    const walkinCardsHTML = [...patients].map(pt => {
-      return `
-      <div class="walkin-pt-card"
-           data-name="${pt.name.toLowerCase()}"
-           data-id="${pt.id.toLowerCase()}"
-           style="border:1.5px solid #e5e7eb;border-radius:10px;padding:14px;background:#fafafa;display:flex;flex-direction:column;gap:8px;transition:border-color .15s,box-shadow .15s"
-           onmouseover="this.style.borderColor='#E8891C';this.style.boxShadow='0 2px 8px rgba(232,137,28,0.1)'"
-           onmouseout="this.style.borderColor='#e5e7eb';this.style.boxShadow='none'">
-        <div style="display:flex;align-items:center;gap:8px">
-          ${miniAvatar(pt.name, pt.photoUrl, 30)}
-          <div style="min-width:0">
-            <div style="font-size:.82rem;font-weight:600;color:#111827;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${pt.name}</div>
-            <div style="font-size:.68rem;color:#9ca3af;margin-top:1px">${pt.id} · ${pt.age || '—'} yrs · ${pt.gender || '—'}</div>
-          </div>
-        </div>
-        <button onclick="window.startExamFromAppt(null,'${pt.id}')"
-                style="width:100%;padding:5px;border-radius:6px;border:1.5px solid #E8891C;background:white;color:#E8891C;font-size:.72rem;font-weight:600;cursor:pointer;transition:background .15s,color .15s"
-                onmouseover="this.style.background='#E8891C';this.style.color='white'"
-                onmouseout="this.style.background='white';this.style.color='#E8891C'">
-          Select
-        </button>
-      </div>`
-    }).join('')
-
     return `
   <div class="page-header">
     <div class="page-header-left">
@@ -3783,36 +3765,6 @@ function pageNewExamination() {
 
         ${apptCardHTML}
 
-      </div>
-
-      <!-- Walk-in section — collapsed by default -->
-      <div style="background:white;border:1px solid #e5e7eb;border-radius:14px;padding:14px 24px">
-        <div style="display:flex;align-items:center;justify-content:space-between;gap:12px">
-          <span style="font-size:.82rem;color:#6b7280;flex:1;min-width:0">Need to examine a walk-in patient?</span>
-          <button onclick="window.toggleWalkinSearch()"
-                  id="walkin-toggle-btn"
-                  style="font-size:.8rem;color:#E8891C;background:none;border:none;cursor:pointer;font-weight:600;display:flex;align-items:center;gap:4px;padding:0;flex-shrink:0;white-space:nowrap">
-            ${ic('search','icon-sm')}
-            <span id="walkin-toggle-label">Search Other Patients ›</span>
-          </button>
-        </div>
-
-        <!-- Hidden by default; revealed by toggleWalkinSearch() -->
-        <div id="walkin-search-section" style="display:none;margin-top:14px">
-          <div style="position:relative;margin-bottom:12px">
-            <div style="position:absolute;left:12px;top:50%;transform:translateY(-50%);color:#9ca3af;pointer-events:none;display:flex">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="15" height="15"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-            </div>
-            <input id="walkin-search-input" class="form-input" placeholder="Search patient by name or ID…"
-                   style="padding-left:36px;border-radius:10px;font-size:.88rem">
-          </div>
-          <!-- Scrollable patient list — does NOT expand the page -->
-          <div style="border:1px solid #e5e7eb;border-radius:10px;padding:12px;max-height:280px;overflow-y:auto;background:#f9fafb">
-            <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
-              ${walkinCardsHTML}
-            </div>
-          </div>
-        </div>
       </div>
 
     </div>
@@ -3878,7 +3830,7 @@ function pageNewExamination() {
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:16px">
       <div class="form-group" style="margin:0">
         ${fl('Examination Date')}
-        <input id="ne-date" type="date" class="form-input" style="${inp}" value="${pre.date || today}">
+        ${window.dateFieldHtml('ne-date', { value: pre.date || today, style: inp })}
       </div>
       <div class="form-group" style="margin:0">
         ${fl('Patient ID')}
@@ -4053,17 +4005,22 @@ function pageNewExamination() {
       </div>
       <div class="form-group" style="margin:0">
         ${fl('Lens Type / Contact Lens')}
-        <select id="ne-lens-type" class="form-select" style="${inp}">
-          <option value="" disabled selected>Select lens type</option>
-          ${['Single Vision','Bifocal','Progressive','Contact Lens','Photochromic'].map(t => `<option${lastExam?.lensType === t ? ' selected' : ''}>${t}</option>`).join('')}
-        </select>
+        ${window.selectFieldHtml('ne-lens-type', {
+          value: lastExam?.lensType || '',
+          placeholder: 'Select lens type',
+          options: ['Single Vision','Bifocal','Progressive','Contact Lens','Photochromic'],
+          style: inp
+        })}
       </div>
     </div>
     <div class="form-group" style="margin-bottom:16px">
       ${fl('Lens Material')}
-      <select id="ne-lens-material" class="form-select" style="${inp}">
-        ${['CR-39','Polycarbonate','High Index','Trivex'].map(m => `<option${lastExam?.lensMaterial === m ? ' selected' : ''}>${m}</option>`).join('')}
-      </select>
+      ${window.selectFieldHtml('ne-lens-material', {
+        value: lastExam?.lensMaterial || '',
+        placeholder: 'Select lens material',
+        options: ['CR-39','Polycarbonate','High Index','Trivex'],
+        style: inp
+      })}
     </div>
     <div class="form-group" style="margin-bottom:18px">
       ${fl('Lens Coatings')}
@@ -4102,7 +4059,7 @@ function pageNewExamination() {
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px">
       <div class="form-group" style="margin:0">
         ${fl('Dispensed Date')}
-        <input id="ne-dispensed-date" type="date" class="form-input" style="${inp}" value="${today}">
+        ${window.dateFieldHtml('ne-dispensed-date', { value: today, style: inp })}
       </div>
       <div class="form-group" style="margin:0">
         ${fl('Received By')}
@@ -4486,6 +4443,14 @@ function pagePatientDashboard() {
             onmouseup="this.style.transform='translateY(-1px)'">
             ${ic('plus','icon-sm')} Book Appointment
           </button>
+          <button onclick="window.navigate('doctor-availability')"
+            style="display:flex;align-items:center;justify-content:center;gap:6px;background:rgba(255,255,255,.1);border:1px solid rgba(255,255,255,.18);color:rgba(255,255,255,.85);padding:8px 14px;border-radius:8px;font-size:.8rem;font-weight:500;cursor:pointer;font-family:inherit;transition:background .18s ease,border-color .18s ease,transform .18s ease,color .18s ease"
+            onmouseover="this.style.background='rgba(255,255,255,.2)';this.style.borderColor='rgba(255,255,255,.4)';this.style.color='#fff';this.style.transform='translateY(-2px)'"
+            onmouseout="this.style.background='rgba(255,255,255,.1)';this.style.borderColor='rgba(255,255,255,.18)';this.style.color='rgba(255,255,255,.85)';this.style.transform='translateY(0)'"
+            onmousedown="this.style.transform='translateY(0)'"
+            onmouseup="this.style.transform='translateY(-2px)'">
+            ${ic('calendar','icon-sm')} Doctor Availability
+          </button>
           <button onclick="window.navigate('patient-prescriptions')"
             style="display:flex;align-items:center;justify-content:center;gap:6px;background:rgba(255,255,255,.1);border:1px solid rgba(255,255,255,.18);color:rgba(255,255,255,.85);padding:8px 14px;border-radius:8px;font-size:.8rem;font-weight:500;cursor:pointer;font-family:inherit;transition:background .18s ease,border-color .18s ease,transform .18s ease,color .18s ease"
             onmouseover="this.style.background='rgba(255,255,255,.2)';this.style.borderColor='rgba(255,255,255,.4)';this.style.color='#fff';this.style.transform='translateY(-2px)'"
@@ -4502,14 +4467,6 @@ function pagePatientDashboard() {
             onmouseup="this.style.transform='translateY(-2px)'">
             ${ic('eye','icon-sm')} Examination History
           </button>
-          <button onclick="window.navigate('doctor-availability')"
-            style="display:flex;align-items:center;justify-content:center;gap:6px;background:rgba(255,255,255,.1);border:1px solid rgba(255,255,255,.18);color:rgba(255,255,255,.85);padding:8px 14px;border-radius:8px;font-size:.8rem;font-weight:500;cursor:pointer;font-family:inherit;transition:background .18s ease,border-color .18s ease,transform .18s ease,color .18s ease"
-            onmouseover="this.style.background='rgba(255,255,255,.2)';this.style.borderColor='rgba(255,255,255,.4)';this.style.color='#fff';this.style.transform='translateY(-2px)'"
-            onmouseout="this.style.background='rgba(255,255,255,.1)';this.style.borderColor='rgba(255,255,255,.18)';this.style.color='rgba(255,255,255,.85)';this.style.transform='translateY(0)'"
-            onmousedown="this.style.transform='translateY(0)'"
-            onmouseup="this.style.transform='translateY(-2px)'">
-            ${ic('calendar','icon-sm')} Doctor Availability
-          </button>
         </div>
       </div>
     </div>
@@ -4518,7 +4475,7 @@ function pagePatientDashboard() {
     <div style="border-left:4px solid #E8760A;background:#FFF8F0;border-radius:10px;padding:14px 18px;margin-bottom:20px;display:flex;align-items:center;gap:14px;flex-wrap:wrap">
       <div style="flex:1;min-width:0">
         <div style="font-size:.7rem;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:#E8760A;margin-bottom:2px">Next Appointment</div>
-        <div style="font-size:.95rem;font-weight:700;color:#1C1C1C">${nextAppt.doctorName}</div>
+        <div style="font-size:.95rem;font-weight:700;color:#1C1C1C">${nextAppt.doctorName || 'Doctor to be assigned'}</div>
         <div style="font-size:.8rem;color:#6B7280;margin-top:2px">${fmtDate(nextAppt.date)} &bull; ${nextAppt.time} &bull; ${nextAppt.type}</div>
       </div>
       <div>${badge(nextAppt.status)}</div>
@@ -4543,7 +4500,7 @@ function pagePatientDashboard() {
           <thead><tr><th>Doctor</th><th data-sort-key="date" data-sort-type="date">Date</th><th>Time</th><th>Type</th><th>Status</th></tr></thead>
           <tbody id="dash-upcoming-tbody">
             ${show3.map(a => `<tr data-search="${(a.doctorName||'').toLowerCase()} ${(a.type||'').toLowerCase()}" data-sort-date="${a.date}">
-              <td style="font-size:.82rem;font-weight:500">${a.doctorName}</td>
+              <td style="font-size:.82rem;font-weight:500">${a.doctorName || '<span style="font-style:italic;color:#9CA3AF;font-weight:400">To be assigned</span>'}</td>
               <td style="font-size:.82rem">${fmtDate(a.date)}</td>
               <td style="font-size:.82rem;white-space:nowrap">${a.time}</td>
               <td style="font-size:.78rem;color:#6B7280">${a.type}</td>
@@ -4651,9 +4608,17 @@ function appointmentWizardHtml(mode) {
       .wiz-step-item.active .wiz-step-label { color:#E8760A; font-weight:600; }
       /* ── Step nav ── */
       .wiz-nav { display:flex; align-items:center; justify-content:space-between; margin-top:20px; }
+      /* Matches .auth-back-link/.fp-back-link (login/forgot-password/registration's
+         "go back" links) — same gray→orange hover color, arrow-slide, and
+         focus ring, so every "go back" affordance in the app reads as the
+         same component instead of a wizard-specific one-off. */
       .wiz-btn-back { background:none; border:none; font-family:'Poppins',sans-serif; font-size:.85rem;
-        color:#6B7280; cursor:pointer; padding:8px 0; display:flex; align-items:center; gap:5px; }
-      .wiz-btn-back:hover { color:#374151; }
+        color:#9ca3af; cursor:pointer; padding:8px 0; display:flex; align-items:center; gap:5px;
+        font-weight:600; transition:color .2s ease; }
+      .wiz-btn-back svg { transition:transform .2s ease; }
+      .wiz-btn-back:hover { color:#E8760A; }
+      .wiz-btn-back:hover svg { transform:translateX(-2px); }
+      .wiz-btn-back:focus-visible { outline:2px solid #E8760A; outline-offset:3px; border-radius:4px; }
       .wiz-btn-next { font-family:'Poppins',sans-serif; font-size:.88rem; font-weight:600; cursor:pointer;
         padding:11px 28px; border-radius:8px; border:none; background:#E8760A; color:#fff;
         display:flex; align-items:center; gap:7px; transition:opacity .2s; }
@@ -4669,6 +4634,17 @@ function appointmentWizardHtml(mode) {
       .doc-card-avatar { width:40px; height:40px; border-radius:50%; background:#E8760A;
         display:flex; align-items:center; justify-content:center; font-size:.78rem;
         font-weight:700; color:#fff; flex-shrink:0; }
+      /* ── Preference-gate cards (deliberately its own class, not .doc-card) ──
+         wizSelectDoctor() runs document.querySelectorAll('.doc-card') to strip
+         the old checkmark icon off every doctor card whenever a new one is
+         picked — sharing that class here meant its cleanup swept up these
+         icon spans too (they matched the same span[style*="E8760A"] selector)
+         and deleted them from the DOM for good after the first doctor pick. */
+      .pref-card { display:flex; flex-direction:column; align-items:center; justify-content:center;
+        text-align:center; gap:8px; width:230px; padding:22px 18px; border-radius:10px;
+        border:1.5px solid #e5e7eb; background:#fff; cursor:pointer;
+        transition:border-color .15s,background .15s; font-family:'Poppins',sans-serif; }
+      .pref-card:hover { border-color:#E8760A; background:#FFFBF5; }
       /* ── Type cards ── */
       .appt-type-card { text-align:left; padding:16px; border-radius:10px; border:1.5px solid #e5e7eb;
         background:#fff; cursor:pointer; font-family:'Poppins',sans-serif;
@@ -4699,15 +4675,16 @@ function appointmentWizardHtml(mode) {
         transition:background-color .15s, color .15s; }
       .amc-day:hover:not(.amc-past):not(.amc-empty):not(.amc-far) { background:#FFF0DC; }
       .amc-day.amc-avail { background:#ECFDF5; color:#065F46; font-weight:600; }
+      .amc-day.amc-unavailable { background:#F3F4F6; color:#9CA3AF; }
       .amc-day.amc-today { outline:2px solid #E8760A; font-weight:700; }
       .amc-day.amc-selected { background:#E8760A !important; color:#fff !important; font-weight:700; }
       .amc-day.amc-past { opacity:.35; cursor:default; }
       .amc-day.amc-far { opacity:.3; cursor:default; background:#f9fafb; }
       .amc-day.amc-empty { cursor:default; }
       .amc-day.amc-holiday { background:#FFF1F2; color:#f43f5e; cursor:default; font-weight:600; }
-      .amc-holiday-lbl { position:absolute; left:2px; right:2px; top:calc(50% + 8px); font-size:.6rem; line-height:1.15; text-align:center; overflow:hidden; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; font-weight:600; padding:0 1px; }
+      .amc-holiday-lbl { position:absolute; left:2px; right:2px; top:calc(50% + 8px); font-size:.7rem; line-height:1.15; text-align:center; overflow:hidden; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; font-weight:600; padding:0 1px; }
       .amc-day.amc-blocked { background:#FEE2E2; color:#B91C1C; cursor:default; font-weight:700; text-decoration:line-through; text-decoration-color:rgba(185,28,28,0.5); }
-      .amc-nodoc-lbl { position:absolute; left:2px; right:2px; top:calc(50% + 8px); font-size:.6rem; line-height:1.15; text-align:center; overflow:hidden; white-space:nowrap; font-weight:600; color:#6B7280; }
+      .amc-nodoc-lbl { position:absolute; left:2px; right:2px; top:calc(50% + 8px); font-size:.7rem; line-height:1.15; text-align:center; overflow:hidden; white-space:nowrap; font-weight:600; color:#6B7280; }
       @media (max-width:480px) {
         .amc-day.amc-holiday { font-size:.7rem; }
         .amc-holiday-lbl { font-size:.44rem; top:calc(50% + 4px); line-height:1.05; }
@@ -4716,10 +4693,16 @@ function appointmentWizardHtml(mode) {
       /* ── Summary sidebar (desktop) ── */
       .wiz-summary-rail { position:sticky; top:24px; }
       .sum-row { display:flex; align-items:flex-start; gap:10px; margin-bottom:14px; }
+      /* min-width:0 overrides flexbox's default min-width:auto on this text
+         column — without it, a value with no natural break points (e.g. a
+         long unbroken notes string) refuses to shrink and overflows the
+         card instead of wrapping. */
+      .sum-row > div:last-child { flex:1; min-width:0; }
       .sum-icon { width:28px; height:28px; border-radius:7px; background:#FFF0DC; display:flex; align-items:center;
         justify-content:center; flex-shrink:0; color:#E8760A; margin-top:1px; }
       .sum-label { font-size:.68rem; text-transform:uppercase; letter-spacing:.05em; color:#9CA3AF; margin-bottom:2px; }
-      .sum-val { font-size:.85rem; font-weight:600; color:#1C1C1C; transition:color .15s; }
+      .sum-val { font-size:.85rem; font-weight:600; color:#1C1C1C; transition:color .15s;
+        overflow-wrap:anywhere; word-break:break-word; }
       .sum-val.empty { color:#9CA3AF; font-weight:400; }
       /* ── Mobile: stack the wizard and booking summary top-to-bottom ── */
       @media (max-width:767px) {
@@ -4729,10 +4712,15 @@ function appointmentWizardHtml(mode) {
       /* ── Review step ── */
       .rev-row { display:flex; align-items:flex-start; gap:14px; padding:14px 0; border-bottom:1px solid #f3f4f6; }
       .rev-row:last-child { border-bottom:none; }
+      /* min-width:0 overrides flexbox's default min-width:auto on this
+         text column (the div carrying the inline flex:1) — without it, a
+         value with no natural break points (e.g. a long unbroken notes
+         string) refuses to shrink and overflows the card instead of wrapping. */
+      .rev-row > div[style*="flex:1"] { min-width:0; }
       .rev-icon { width:32px; height:32px; border-radius:8px; background:#FFF0DC; display:flex; align-items:center;
         justify-content:center; color:#E8760A; flex-shrink:0; }
       .rev-label { font-size:.68rem; text-transform:uppercase; letter-spacing:.06em; color:#9CA3AF; margin-bottom:3px; }
-      .rev-val { font-size:.9rem; font-weight:600; color:#1C1C1C; }
+      .rev-val { font-size:.9rem; font-weight:600; color:#1C1C1C; overflow-wrap:anywhere; word-break:break-word; }
       .rev-edit { font-size:.72rem; color:#E8760A; background:none; border:none; cursor:pointer;
         font-family:'Poppins',sans-serif; margin-left:auto; padding:0; flex-shrink:0; align-self:center; }
       .rev-edit:hover { text-decoration:underline; }
@@ -4747,7 +4735,33 @@ function appointmentWizardHtml(mode) {
 
     ${isStaff ? '' : '<div id="my-waitlist-card"></div>'}
 
-    <div class="wiz-layout">
+    ${isStaff ? '' : `
+    <!-- Preference gate — patient-only, shown before the wizard proper.
+         Choosing "Any available optometrist" sets _wiz.anyDoctor and skips
+         the Doctor step entirely (main.js wizGo()/wizJump()); the clinic
+         assigns an actual doctor after reviewing the request. -->
+    <div id="wiz-pref" class="card" style="border-radius:12px;border:1px solid #e5e7eb;margin-bottom:8px">
+      <div class="card-body" style="text-align:center;padding:40px 24px">
+        <div style="font-size:1.15rem;font-weight:700;color:#1C1C1C;margin-bottom:6px">Do you have a preferred optometrist?</div>
+        <div style="font-size:.85rem;color:#6B7280;margin-bottom:24px;max-width:440px;margin-left:auto;margin-right:auto">
+          You can pick a specific optometrist yourself, or let the clinic assign one who's free at the time you choose.
+        </div>
+        <div style="display:flex;gap:14px;justify-content:center;flex-wrap:wrap">
+          <button class="pref-card" onclick="window.wizChooseDoctorPref(false)">
+            <span style="color:#E8760A">${ic('user','icon-lg')}</span>
+            <span style="font-size:.88rem;font-weight:700;color:#1C1C1C">I have a preferred optometrist</span>
+            <span style="font-size:.74rem;color:#9CA3AF">Choose exactly who you'd like to see.</span>
+          </button>
+          <button class="pref-card" onclick="window.wizChooseDoctorPref(true)">
+            <span style="color:#E8760A">${ic('users','icon-lg')}</span>
+            <span style="font-size:.88rem;font-weight:700;color:#1C1C1C">Any available optometrist</span>
+            <span style="font-size:.74rem;color:#9CA3AF">The clinic will assign an optometrist for you.</span>
+          </button>
+        </div>
+      </div>
+    </div>`}
+
+    <div class="wiz-layout" id="wiz-main" style="${isStaff ? '' : 'display:none'}">
 
       <!-- ── LEFT: WIZARD ── -->
       <div>
@@ -4768,10 +4782,15 @@ function appointmentWizardHtml(mode) {
               <div style="font-size:1.1rem;font-weight:700;color:#1C1C1C;margin-bottom:4px">${isStaff ? 'When should the visit be scheduled?' : 'When would you like to visit?'}</div>
               <div style="font-size:.85rem;color:#6B7280">${isStaff ? `Select the consultation date for <strong id="wiz-patient-lbl0"></strong>.` : 'Select your preferred consultation date.'}</div>
             </div>
-            <!-- Doctor pre-fill banner — shown only when coming from Doctor Availability -->
-            <div id="amc-prefill-banner" style="display:none;background:#FFF8F0;border-left:3px solid #E8760A;border-radius:8px;padding:12px 16px;margin-bottom:16px;align-items:flex-start;gap:10px">
-              <svg viewBox="0 0 24 24" fill="none" stroke="#E8760A" stroke-width="2" width="16" height="16" style="flex-shrink:0;margin-top:2px"><circle cx="12" cy="12" r="10"/><path d="M12 8v4m0 4h.01"/></svg>
-              <div style="font-size:.82rem;color:#92400e;line-height:1.5">
+            <!-- Doctor pre-fill banner — shown only when coming from Doctor Availability.
+                 Blue/info styling (matching the advance-notice banner below, not the
+                 orange "Before you book" policy warning further down) — this is just
+                 context about where you came from, not a warning, and it used to share
+                 both the orange color AND an almost-identical exclamation-style icon
+                 with that real warning, making the two indistinguishable. -->
+            <div id="amc-prefill-banner" style="display:none;background:#eff6ff;border-left:3px solid #3b82f6;border-radius:8px;padding:12px 16px;margin-bottom:16px;align-items:flex-start;gap:10px">
+              <svg viewBox="0 0 24 24" fill="none" stroke="#3b82f6" stroke-width="2" stroke-linecap="round" width="16" height="16" style="flex-shrink:0;margin-top:2px"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
+              <div style="font-size:.82rem;color:#1e40af;line-height:1.5">
                 Booking with <strong id="amc-prefill-doc-name"></strong>. Only their available days are shown. Select your preferred date below.
               </div>
             </div>
@@ -4802,10 +4821,12 @@ function appointmentWizardHtml(mode) {
               <span style="display:flex;align-items:center;gap:5px;font-size:.7rem;color:#6B7280"><span style="width:10px;height:10px;border-radius:3px;background:#ECFDF5;border:1px solid #6EE7B7;display:inline-block"></span>Available</span>
               <span style="display:flex;align-items:center;gap:5px;font-size:.7rem;color:#6B7280"><span style="width:10px;height:10px;border-radius:3px;background:#E8760A;display:inline-block"></span>Today / Selected</span>
               <span style="display:flex;align-items:center;gap:5px;font-size:.7rem;color:#6B7280"><span style="width:10px;height:10px;border-radius:3px;background:#F3F4F6;display:inline-block"></span>Unavailable</span>
+              <span style="display:flex;align-items:center;gap:5px;font-size:.7rem;color:#6B7280"><span style="width:10px;height:10px;border-radius:3px;background:#F3F4F6;display:inline-block"></span>No Doctor Available <span style="color:#9CA3AF">(clinic open)</span></span>
               <span style="display:flex;align-items:center;gap:5px;font-size:.7rem;color:#6B7280"><span style="width:10px;height:10px;border-radius:3px;background:#FFF1F2;border:1px solid #fda4af;display:inline-block"></span>PH Holiday</span>
             </div>
             <div class="wiz-nav">
-              <span></span>
+              ${isStaff ? '<span></span>' : `
+              <button class="wiz-btn-back" id="wiz-back-pref-0" onclick="window.wizBackToPref()">${ic('chevron-left','icon-sm')} Back</button>`}
               <button class="wiz-btn-next" id="wiz-next-0" disabled onclick="window.wizGo(1)">
                 Continue ${ic('chevron-right','icon-sm')}
               </button>
@@ -4841,7 +4862,7 @@ function appointmentWizardHtml(mode) {
             <div id="appt-time-slots"></div>
             <div class="time-slot-legend">
               <div class="time-slot-legend-item"><span class="time-slot-legend-swatch" style="background:#fff;border:1.5px solid #e5e7eb"></span>Available</div>
-              <div class="time-slot-legend-item"><span class="time-slot-legend-swatch" style="background:#FFF7ED;border:1.5px solid #FDBA74"></span>Fully booked (waitlist available)</div>
+              <div class="time-slot-legend-item" id="tsl-full-item"><span class="time-slot-legend-swatch" id="tsl-full-swatch" style="background:#FFF7ED;border:1.5px solid #FDBA74"></span><span id="tsl-full-txt">Fully booked (waitlist available)</span></div>
               <div class="time-slot-legend-item"><span class="time-slot-legend-swatch" style="background:#E8760A"></span>Selected</div>
               ${_minAdv === 0 ? `<div class="time-slot-legend-item"><span class="time-slot-legend-swatch" style="background:#F3F4F6;border:1.5px solid #e5e7eb"></span>Past</div>` : ''}
             </div>
@@ -4864,7 +4885,7 @@ function appointmentWizardHtml(mode) {
             </div>
             <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:16px">
               ${bookableServices.map((s, i) => `
-              <button class="appt-type-card${i === 0 ? ' selected' : ''}"
+              <button class="appt-type-card"
                       onclick="window.selectApptType('${s.name.replace(/'/g,"\\'")}',this)">
                 <div style="display:flex;align-items:center;gap:7px;margin-bottom:5px">
                   <span style="color:#E8760A">${ic(s.icon || 'eye','icon-sm')}</span>
@@ -4874,15 +4895,15 @@ function appointmentWizardHtml(mode) {
                 <div style="font-size:.73rem;color:#9CA3AF;line-height:1.4">${s.description}</div>
               </button>`).join('')}
             </div>
-            <input type="hidden" id="appt-type" value="${bookableServices[0]?.name || 'Eye Examination'}">
+            <input type="hidden" id="appt-type" value="">
             <div style="margin-bottom:4px">
               <label style="font-size:.78rem;font-weight:600;color:#374151">Notes / Reason for Visit <span style="font-weight:400;color:#9CA3AF">(optional)</span></label>
             </div>
-            <textarea id="appt-notes" class="form-textarea" rows="3"
+            <textarea id="appt-notes" class="form-textarea" rows="3" oninput="window.syncSumNotes()"
                       placeholder="${isStaff ? "Describe the patient's symptoms or reason for the visit…" : 'Describe your symptoms or reason for the visit…'}"></textarea>
             <div class="wiz-nav">
               <button class="wiz-btn-back" onclick="window.wizGo(-1)">${ic('chevron-left','icon-sm')} Back</button>
-              <button class="wiz-btn-next" onclick="window.wizGo(1)">
+              <button class="wiz-btn-next" id="wiz-next-3" disabled onclick="window.wizGo(1)">
                 Review Booking ${ic('chevron-right','icon-sm')}
               </button>
             </div>
@@ -4910,7 +4931,7 @@ function appointmentWizardHtml(mode) {
               <div class="rev-row">
                 <div class="rev-icon">${ic('user','icon-sm')}</div>
                 <div style="flex:1"><div class="rev-label">Doctor</div><div class="rev-val" id="rev-doctor">—</div></div>
-                <button class="rev-edit" onclick="window.wizJump(1)">Edit</button>
+                <button class="rev-edit" id="rev-doctor-edit" onclick="window.wizJump(1)">Edit</button>
               </div>
               <div class="rev-row">
                 <div class="rev-icon">${ic('clock','icon-sm')}</div>
@@ -4997,9 +5018,13 @@ function appointmentWizardHtml(mode) {
               <div class="sum-icon">${ic('clock','icon-sm')}</div>
               <div><div class="sum-label">Time</div><div class="sum-val empty" id="sum-time">Not selected yet</div></div>
             </div>
-            <div class="sum-row" style="margin-bottom:0">
+            <div class="sum-row">
               <div class="sum-icon">${ic('file-text','icon-sm')}</div>
-              <div><div class="sum-label">Type</div><div class="sum-val" id="sum-type">${bookableServices[0]?.name || 'Eye Examination'}${bookableServices[0]?.duration ? ` (~${bookableServices[0].duration} min)` : ''}</div></div>
+              <div><div class="sum-label">Type</div><div class="sum-val empty" id="sum-type">Not selected yet</div></div>
+            </div>
+            <div class="sum-row" style="margin-bottom:0">
+              <div class="sum-icon">${ic('activity','icon-sm')}</div>
+              <div><div class="sum-label">Notes</div><div class="sum-val empty" id="sum-notes" style="font-weight:400;font-style:italic">No notes added</div></div>
             </div>
             <div style="border-top:1px solid #f3f4f6;margin:16px 0"></div>
             <div style="display:flex;align-items:center;gap:5px;font-size:.73rem;color:#9CA3AF;line-height:1.4" id="sum-hint">
@@ -5098,6 +5123,7 @@ function pagePatientAppts() {
       <h1 class="page-title">${tab === 'request' ? 'Request Appointment' : tab === 'today' ? "Today's Appointments" : (statusFilter ? statusFilter.charAt(0).toUpperCase()+statusFilter.slice(1)+' Appointments' : 'My Appointments')}</h1>
       <p class="page-subtitle">${tab === 'request' ? 'Book a new consultation with one of our doctors' : tab === 'today' ? 'Your appointments scheduled for today' : 'View your appointment history'}</p>
     </div>
+    ${tab !== 'request' ? `<button class="btn-primary" onclick="window.navigate('patient-request-appt')">${ic('plus','icon-sm')} New Appointment</button>` : ''}
   </div>
   <div class="page-body">
 
@@ -5141,8 +5167,8 @@ function pagePatientAppts() {
         </tr></thead>
         <tbody id="pt-appt-tbody">
           ${sortedAppts.map(a => {
-            return `<tr data-search="${a.doctorName.toLowerCase()} ${a.type.toLowerCase()}" data-appt-status="${a.status}" data-sort-doctor="${a.doctorName.toLowerCase()}" data-sort-date="${a.date}">
-            <td style="font-size:.82rem;font-weight:500">${a.doctorName}</td>
+            return `<tr data-search="${(a.doctorName||'').toLowerCase()} ${(a.type||'').toLowerCase()}" data-appt-status="${a.status}" data-sort-doctor="${(a.doctorName||'').toLowerCase()}" data-sort-date="${a.date}">
+            <td style="font-size:.82rem;font-weight:500">${a.doctorName || '<span style="font-style:italic;color:#9CA3AF;font-weight:400">To be assigned</span>'}</td>
             <td style="font-size:.82rem">${fmtDate(a.date)}</td>
             <td style="font-size:.82rem;white-space:nowrap">${a.time}</td>
             <td style="font-size:.82rem">${a.type}</td>
@@ -6211,16 +6237,19 @@ function pagePatientDoctorAvail() {
 
     const pop = document.createElement('div')
     pop.id = 'pat-cal-popover-' + docId
-    pop.style.cssText = 'position:relative;margin-top:10px;background:#fff;border:1.5px solid #E8760A;border-radius:10px;padding:14px 16px;box-shadow:0 4px 16px rgba(0,0,0,.1)'
+    pop.className = 'pat-cal-selected-banner'
+    // Close button and "Book This Date" both reuse the app's own existing
+    // components (.modal-close, .btn-primary) instead of hand-rolled inline
+    // styles + JS mouseover/mouseout — so the hover/active states and their
+    // transitions come from the same CSS every other close button and
+    // primary button in the app already uses, instead of duplicating (and
+    // under-animating) them here.
     pop.innerHTML = `
-      <button onclick="document.getElementById('pat-cal-popover-${docId}').remove();window._patCalState['${docId}'].selectedDate='';window.patCalNavMonth('${docId}',0)"
-              style="position:absolute;top:8px;right:10px;background:none;border:none;cursor:pointer;color:#9CA3AF;font-size:1rem;line-height:1">✕</button>
+      <button class="modal-close" onclick="document.getElementById('pat-cal-popover-${docId}').remove();window._patCalState['${docId}'].selectedDate='';window.patCalNavMonth('${docId}',0)">&times;</button>
       <div style="font-size:.72rem;font-weight:600;color:#9CA3AF;text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px">Selected Date</div>
-      <div style="font-size:.88rem;font-weight:700;color:#1C1C1C;margin-bottom:2px">${dayFull}</div>
-      <div style="font-size:.78rem;color:#6B7280;margin-bottom:12px">${doc.name} &nbsp;·&nbsp; 8:00 AM – 5:00 PM</div>
-      <button onclick="window.patCalBookAppt('${docId}')"
-              style="width:100%;background:#E8760A;color:#fff;border:none;border-radius:8px;padding:9px 0;font-size:.85rem;font-weight:600;cursor:pointer;font-family:inherit;transition:opacity .15s"
-              onmouseover="this.style.opacity='.88'" onmouseout="this.style.opacity='1'">
+      <div style="font-size:.88rem;font-weight:700;color:#1C1C1C;margin-bottom:2px;padding-right:26px">${dayFull}</div>
+      <div style="font-size:.78rem;color:#6B7280;margin-bottom:14px">${doc.name} &nbsp;·&nbsp; 8:00 AM – 5:00 PM</div>
+      <button class="btn-primary" style="width:100%;justify-content:center" onclick="window.patCalBookAppt('${docId}')">
         Book This Date →
       </button>`
     gridEl.insertAdjacentElement('afterend', pop)
@@ -6316,6 +6345,9 @@ function pagePatientDoctorAvail() {
               </div>
               <div style="display:flex;align-items:center;gap:6px;font-size:.72rem;color:#6B7280">
                 <div style="width:10px;height:10px;background:#F3F4F6;border-radius:2px"></div>Unavailable
+              </div>
+              <div style="display:flex;align-items:center;gap:6px;font-size:.72rem;color:#6B7280">
+                <div style="width:10px;height:10px;background:#FEE2E2;border:1px solid #FCA5A5;border-radius:2px"></div>Doctor Unavailable
               </div>
               <div style="display:flex;align-items:center;gap:6px;font-size:.72rem;color:#6B7280">
                 <div style="width:10px;height:10px;background:#FFF1F2;border:1px solid #fda4af;border-radius:2px"></div>PH Holiday

@@ -8,6 +8,9 @@
 //  action:'reschedule'         → { date, time, rescheduleNote? }
 //  action:'request_reschedule' → { reason, preferredDate? }
 //  action:'dismiss_reschedule' → (no extra fields)
+//  action:'assign_doctor'      → { doctorId }  — admin/staff only, for
+//                                 "any available optometrist" requests
+//                                 (doctor_id still NULL)
 // ================================================================
 
 require_once '../../config/db.php';
@@ -75,6 +78,15 @@ try {
             jsonResponse(['success' => false, 'message' => 'Patients may only cancel appointments.'], 403);
         }
 
+        // An "any available optometrist" request (doctor_id still NULL — see
+        // appointments/create.php's anyDoctor path) needs an actual doctor
+        // assigned (action=assign_doctor) before it can be approved — mirrors
+        // the disabled Approve button in the frontend's appointment detail
+        // modal, enforced here too so a direct API call can't skip it.
+        if ($newStatus === 'approved' && !$appt['doctor_id']) {
+            jsonResponse(['success' => false, 'message' => 'Please assign a doctor to this appointment before approving it.']);
+        }
+
         // Patients can only cancel up to CANCEL_DEADLINE_HOURS before the
         // appointment — mirrors the same window enforced client-side
         // (pages.js's CANCEL_DEADLINE_HOURS) so a direct API call can't bypass it.
@@ -97,6 +109,18 @@ try {
         if ($newStatus === 'completed' && $appt['patient_id']) {
             $pdo->prepare('UPDATE patients SET last_visit = ? WHERE id = ?')
                 ->execute([$appt['date'], $appt['patient_id']]);
+        }
+
+        // The visit already happened — this slot is now permanently locked
+        // in, even more finally than a patient just confirming attendance
+        // (see confirm.php). Anyone still waitlisted for this exact
+        // doctor+date+time is queued on something that will never open up,
+        // so clear them out and let them know, same as confirm.php does.
+        if ($newStatus === 'completed' && $appt['doctor_id']) {
+            $fmtDate = date('M j, Y', strtotime($appt['date']));
+            $noticeMsg = "The {$appt['doctor_name']} appointment on {$fmtDate} at {$appt['time']} you were waitlisted for has already taken place, "
+              . "so that slot will not be opening up. You've been removed from the waitlist, please select another available time.";
+            clearWaitlistForLockedSlot($pdo, $appt['doctor_id'], $appt['date'], $appt['time'], $noticeMsg);
         }
 
         // Manually marking a no-show (same-day, before the auto-transition in
@@ -196,14 +220,26 @@ try {
             )->execute([$newDate, $newTime, $note ?: null, $id]);
         }
 
-        // Notify patient of reschedule
+        // The appointment just vacated its *original* doctor+date+time slot
+        // (the $appt values fetched above, before this update) — offer that
+        // slot to the waitlist the same way a cancellation does below. This
+        // was missing entirely: rescheduling an appointment away from a slot
+        // never told anyone waiting on it that it had actually opened up.
+        if ($appt['doctor_id']) {
+            offerNextWaitlistSlot($pdo, $appt['doctor_id'], $appt['date'], $appt['time']);
+        }
+
+        // Notify patient of reschedule — email too, not just in-app, since
+        // showing up at the old date/time (rather than just missing a
+        // "good to know" update) is a real, tangible consequence of not
+        // seeing this in time. Same reasoning as the waitlist-offer and
+        // cron-reminder emails elsewhere in this file/helpers.php.
         if ($patientUid = $getPatientUserId()) {
             $fmtDate = date('M j, Y', strtotime($newDate));
-            createNotification($pdo, $patientUid, 'rescheduled',
-                'Appointment Rescheduled',
-                "Your appointment has been rescheduled to {$fmtDate} at {$newTime}."
-                . ($note ? " Note: {$note}" : '')
-            );
+            $rescheduleMsg = "Your appointment has been rescheduled to {$fmtDate} at {$newTime}."
+                . ($note ? " Note: {$note}" : '');
+            createNotification($pdo, $patientUid, 'rescheduled', 'Appointment Rescheduled', $rescheduleMsg);
+            _emailPatientNotice($pdo, $patientUid, 'Appointment Rescheduled', $rescheduleMsg);
         }
 
         jsonResponse(['success' => true]);
@@ -257,6 +293,53 @@ try {
         $pdo->prepare('UPDATE appointments SET reschedule_request = NULL WHERE id = ?')
             ->execute([$id]);
         jsonResponse(['success' => true]);
+    }
+
+    // ── Admin/staff assign a doctor to an "any available optometrist" ──
+    // request (created with doctor_id NULL — see appointments/create.php's
+    // anyDoctor path). Only valid while no doctor is assigned yet, so this
+    // can't be used to silently swap a patient's already-chosen doctor
+    // (that's what 'reschedule' plus picking a new doctor would be for).
+    if ($action === 'assign_doctor') {
+        if (!in_array($role, ['admin', 'staff'], true)) {
+            jsonResponse(['success' => false, 'message' => 'Unauthorized.'], 403);
+        }
+        if ($appt['doctor_id']) {
+            jsonResponse(['success' => false, 'message' => 'This appointment already has a doctor assigned.']);
+        }
+        $newDoctorId = trim($b['doctorId'] ?? '');
+        if (!$newDoctorId) {
+            jsonResponse(['success' => false, 'message' => 'Please choose a doctor.']);
+        }
+        $ds = $pdo->prepare('SELECT first_name, middle_name, last_name FROM doctors WHERE id = ? AND status = ? LIMIT 1');
+        $ds->execute([$newDoctorId, 'active']);
+        $doc = $ds->fetch();
+        if (!$doc) {
+            jsonResponse(['success' => false, 'message' => 'Doctor not found.']);
+        }
+        $newDoctorName = 'Dr. ' . trim($doc['first_name'] . _mi($doc['middle_name']) . ' ' . $doc['last_name']);
+
+        $durStr = $pdo->query('SELECT default_duration FROM clinic_settings WHERE id = 1 LIMIT 1')->fetchColumn();
+        preg_match('/(\d+)/', $durStr ?: '30', $dm);
+        $durationMin = isset($dm[1]) ? (int)$dm[1] : 30;
+        $conflict = checkApptConflict($pdo, $newDoctorId, $appt['date'], $appt['time'], $durationMin, $id);
+        if ($conflict !== null) {
+            jsonResponse(['success' => false, 'message' =>
+                "This doctor already has an appointment at {$conflict}. Please choose a different doctor."]);
+        }
+
+        $pdo->prepare('UPDATE appointments SET doctor_id = ?, doctor_name = ? WHERE id = ?')
+            ->execute([$newDoctorId, $newDoctorName, $id]);
+
+        if ($patientUid = $getPatientUserId()) {
+            $fmtDate = date('M j, Y', strtotime($appt['date']));
+            createNotification($pdo, $patientUid, 'new_appointment',
+                'Doctor Assigned',
+                "{$newDoctorName} has been assigned to your appointment on {$fmtDate} at {$appt['time']}."
+            );
+        }
+
+        jsonResponse(['success' => true, 'doctorName' => $newDoctorName]);
     }
 
     jsonResponse(['success' => false, 'message' => 'Unknown action.'], 400);

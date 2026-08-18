@@ -1,8 +1,8 @@
 <?php
 // ================================================================
 //  CANAOPTICALCLINIC — api/cron/appointment_reminders.php
-//  Not user-facing. Meant to be hit on a schedule (every 15-30 minutes)
-//  by an external scheduler — Railway's own cron/scheduled-job feature,
+//  Not user-facing. Meant to be hit on a schedule (every 5 minutes) by an
+//  external scheduler — Railway's own cron/scheduled-job feature,
 //  a pinger like cron-job.org, or a scheduled GitHub Action — since this
 //  repo has no in-process job runner. Auth via a shared secret in the
 //  `key` query param, set as the CRON_SECRET environment variable.
@@ -33,6 +33,13 @@ if (!$providedKey || !hash_equals($cronSecret, $providedKey)) {
     jsonResponse(['success' => false, 'message' => 'Unauthorized.'], 403);
 }
 
+// Every patient-facing notice below previously only ever reached the
+// in-app inbox via createNotification() — nothing outside the app itself
+// (email, let alone SMS) ever told a patient their appointment needed
+// confirming, so anyone not actively logged in when the cron fired would
+// just find it auto-cancelled later with no warning. _emailPatientNotice()
+// (api/helpers.php) sends the same notice by email too — also used by
+// api/waitlist/leave.php's manual-removal path for the same reason.
 $result = ['success' => true, 'remindersSent' => 0, 'autoCancelled' => 0, 'offersExpired' => 0, 'staleWaitlistRemoved' => 0];
 
 try {
@@ -60,11 +67,10 @@ try {
         $userId = $ps->fetchColumn();
         if ($userId) {
             $fmtDate = date('M j, Y', strtotime($r['date']));
-            createNotification($pdo, (int)$userId, 'reminder', 'Confirm Your Appointment',
-                "You have an appointment with {$r['doctor_name']} tomorrow ({$fmtDate}) at {$r['time']}. "
-              . "Please confirm by " . date('g:i A', strtotime($deadlineHourStr)) . " today or it will be automatically cancelled.",
-                $r['id']
-            );
+            $noticeMsg = "You have an appointment with {$r['doctor_name']} tomorrow ({$fmtDate}) at {$r['time']}. "
+              . "Please confirm by " . date('g:i A', strtotime($deadlineHourStr)) . " today or it will be automatically cancelled.";
+            createNotification($pdo, (int)$userId, 'reminder', 'Confirm Your Appointment', $noticeMsg, $r['id']);
+            _emailPatientNotice($pdo, (int)$userId, 'Confirm Your Appointment', $noticeMsg);
         }
     }
     $result['remindersSent'] = count($reminderRows);
@@ -97,9 +103,9 @@ try {
         $userId = $ps->fetchColumn();
         if ($userId) {
             $fmtDate = date('M j, Y', strtotime($r['date']));
-            createNotification($pdo, (int)$userId, 'cancelled', 'Appointment Automatically Cancelled',
-                "Your appointment with {$r['doctor_name']} on {$fmtDate} at {$r['time']} was automatically cancelled because no confirmation was received."
-            );
+            $noticeMsg = "Your appointment with {$r['doctor_name']} on {$fmtDate} at {$r['time']} was automatically cancelled because no confirmation was received.";
+            createNotification($pdo, (int)$userId, 'cancelled', 'Appointment Automatically Cancelled', $noticeMsg);
+            _emailPatientNotice($pdo, (int)$userId, 'Appointment Automatically Cancelled', $noticeMsg);
         }
     }
     $result['autoCancelled'] = count($cancelRows);
@@ -152,11 +158,11 @@ try {
         $userId = $ps->fetchColumn();
         if ($userId) {
             $fmtDate = date('M j, Y', strtotime($w['date']));
-            createNotification($pdo, (int)$userId, 'info', 'Removed From Waitlist',
-                "You've been removed from the waitlist for {$w['doctor_name']} on {$fmtDate} at {$w['time']}. "
+            $noticeMsg = "You've been removed from the waitlist for {$w['doctor_name']} on {$fmtDate} at {$w['time']}. "
               . "It's too close to that time now for the slot to open up for you. "
-              . "Please request a new appointment if you'd still like to be seen."
-            );
+              . "Please request a new appointment if you'd still like to be seen.";
+            createNotification($pdo, (int)$userId, 'info', 'Removed From Waitlist', $noticeMsg);
+            _emailPatientNotice($pdo, (int)$userId, 'Removed From Waitlist', $noticeMsg);
         }
     }
     $result['staleWaitlistRemoved'] = $staleRemoved;
