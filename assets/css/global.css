@@ -1882,6 +1882,26 @@ input[type="date"].reg-input::-webkit-datetime-edit-year-field {
 }
 .table-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-left: auto; }
 
+/* Reusable "many fields + buttons in a row" toolbar layout — a plain flex
+   row on desktop, a 2-column grid on mobile (see the media query below).
+   Kept as a real class rather than inline styles specifically so that
+   mobile override can switch display:flex to display:grid cleanly; an
+   inline style on the element would otherwise outrank it entirely.
+   Deliberately no padding/border opinions here — those vary by where it's
+   used (Activity Log's bordered toolbar strip vs. Reports' plain card
+   section), so each page keeps its own chrome around it. */
+.filter-grid {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  align-items: flex-end;
+}
+/* Activity Log's specific chrome on top of .filter-grid's layout */
+.activity-filter-bar {
+  padding: 12px 16px;
+  border-bottom: 1px solid #F3F4F6;
+}
+
 .tbl {
   width: 100%;
   border-collapse: collapse;
@@ -1990,6 +2010,28 @@ input[type="date"].reg-input::-webkit-datetime-edit-year-field {
   font-size: 0.85rem;
 }
 
+/* Shared row layout for the patient-facing "history list with search"
+   pattern (Prescriptions/Examination History/Consultations — .rx-hist-row/
+   .exam-hist-row/.con-hist-row). Deliberately a real class, not inline
+   style: the search filters toggle visibility via row.style.display = ''
+   to un-hide a row, which clears the CURRENT inline display value rather
+   than restoring whatever it used to be — when display:flex lived only in
+   that same inline style, clearing it left the row with no display
+   declared at all, so it fell back to a <div>'s default block and the
+   whole row collapsed into a vertical stack the moment a search matched
+   it again. Living in a stylesheet rule instead means that fallback is
+   flex, not block, regardless of how many times a filter clears the
+   inline override. */
+.hist-row { display: flex; align-items: center; gap: 12px; padding: 13px 20px; border-bottom: 1px solid #F3F4F6; }
+.hist-row-featured { background: #FAFAF8; }
+/* Real-time "no results" row a live text search inserts into a .tbl table
+   (see main.js's _syncSearchEmptyState()) — .table-empty already gives it
+   the exact same look every other "nothing here" message uses; this just
+   also stops it from picking up .tbl tbody tr:hover's cream highlight,
+   since unlike a real data row it isn't clickable and shouldn't read as
+   interactive. */
+.tbl tbody tr.tbl-search-empty:hover td { background: transparent; }
+
 /* ════════════════════════════════════════════════════════════════
    BADGES
 ════════════════════════════════════════════════════════════════ */
@@ -2092,6 +2134,12 @@ input[type="date"].reg-input::-webkit-datetime-edit-year-field {
    instead paired with .btn-secondary, which is a size class up — match that
    pairing specifically rather than resizing the base class everywhere. */
 .btn-secondary + .btn-danger { padding: 9px 20px; font-size: 0.85rem; border-radius: 8px; }
+/* Same reasoning as .btn-secondary + .btn-danger above: .btn-ghost is a size
+   class down from .btn-primary/.btn-secondary, which reads fine in a compact
+   toolbar but looks visibly undersized/misaligned next to Close/Print inside
+   a modal footer (e.g. the prescription/exam-results modals' "Full Results"/
+   "Prescription" cross-link buttons). Bump it to match its footer siblings. */
+.modal-footer .btn-ghost { padding: 9px 20px; font-size: 0.85rem; border-radius: 8px; }
 
 .btn-success {
   display: inline-flex;
@@ -2702,7 +2750,18 @@ input[type="date"].form-input::-webkit-datetime-edit-year-field {
     the left edge of narrow/phone screens, clipping the header/labels flush
     against the edge instead of centering with padding on both sides. */
   max-width: 540px;
+  /* vh is measured against the LARGEST possible viewport (as if the
+     browser's address bar were hidden) — on mobile Chrome/Safari with the
+     bar actually showing, 90vh can be taller than what's really on screen.
+     The overlay has no scroll of its own (it centers via flexbox), so a
+     modal-box that renders taller than the true visible area just has its
+     top and/or bottom pushed off-screen with nothing to scroll — the
+     .modal-body overflow-y below never gets a chance to kick in because
+     the box itself already doesn't fit. dvh tracks the real, current
+     viewport and wins in browsers that support it; vh is just the
+     fallback for the ones that don't. */
   max-height: 90vh;
+  max-height: 90dvh;
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -2761,6 +2820,14 @@ input[type="date"].form-input::-webkit-datetime-edit-year-field {
   min-height: 0;
   overflow-y: auto;
   overflow-x: hidden;
+  -webkit-overflow-scrolling: touch; /* without this, touch drags inside an
+    overflow:auto box can fail to register as a scroll gesture at all on
+    iOS Safari and some Android/Chrome touch-emulation paths, even though
+    overflow-y:auto is otherwise correctly set and a mouse wheel would
+    have scrolled it fine */
+  overscroll-behavior: contain; /* stop a drag that reaches the top/bottom
+    of this box from "chaining" into scrolling the page behind the modal */
+  touch-action: pan-y;
 }
 .modal-body::-webkit-scrollbar { width: 4px; }
 .modal-body::-webkit-scrollbar-track { background: transparent; margin: 8px 0; }
@@ -2774,6 +2841,57 @@ input[type="date"].form-input::-webkit-datetime-edit-year-field {
   .modal-header { padding: 16px 16px 14px; }
   .modal-body { padding: 16px; }
   .modal-footer { padding: 12px 16px; }
+
+  /* Prescription/exam-results modals' "Patient + Doctor" strip (main.js
+     viewPrescriptionModal()/viewExamDetail()) — on desktop this is 2 rows
+     side by side (patient avatar+info, doctor info+avatar), but that has no
+     room to breathe on a phone. .rx-pd-block has exactly 2 children —
+     .rx-patient-row and .rx-issued-block — each already its own internal
+     avatar+text flex row, so switching just the outer block to a column
+     stacks those two rows cleanly without splitting an avatar away from its
+     own text (an earlier version of this rule set flex-direction:column
+     directly on 3 unwrapped children — avatar, info, issued-block — which
+     stacked the avatar and name onto separate lines instead of side by
+     side; .rx-patient-row exists specifically to prevent that). */
+  .rx-pd-block { flex-direction: column; gap: 0; }
+  .rx-patient-row { width: 100%; }
+  /* !important needed on the alignment props here — the element also
+     carries inline text-align:right/justify-content:flex-end (the correct,
+     intentional look on desktop), and inline style always outranks an
+     external class regardless of media query, so a plain override never
+     actually took effect. */
+  .rx-issued-block {
+    width: 100%;
+    text-align: left !important;
+    justify-content: flex-start !important;
+    padding-top: 12px;
+    margin-top: 12px;
+    border-top: 1px dashed #E5E7EB;
+  }
+  .rx-issued-block > div:first-child { text-align: left !important; }
+  /* Both the photo and initials-fallback avatar render as the last child —
+     reorder it before the text so it reads avatar-then-name like the
+     patient row above it. */
+  .rx-issued-block > div:last-child { order: -1; }
+  /* Sizing/margin come from an inline style attribute, so !important is
+     required to shrink them here — see note above. Keeps the row from
+     feeling oversized once it's full-width instead of one of three squeezed
+     columns. */
+  .rx-pat-avatar { width: 38px !important; height: 38px !important; font-size: .82rem !important; }
+  .rx-doc-avatar { width: 32px !important; height: 32px !important; font-size: .65rem !important; }
+
+  /* renderRxDocumentCard()'s "Issued by" strip (pages.js, the printable Rx
+     card on the Prescriptions/Patient Records pages — a different component
+     from the modals above). Same root cause as .rx-pd-block: at this width
+     the avatar+name group and the date+pill group don't fit side by side,
+     so flex-wrap drops the date+pill onto its own line — but that group's
+     own text-align:right does nothing for its position on the row (a
+     single wrapped flex item under justify-content:space-between just sits
+     flush left), so it lands under the avatar instead of under the name,
+     out of step with the row above it. Stack on purpose instead, both
+     flush left. */
+  .rx-issuer-strip { flex-direction: column; align-items: flex-start !important; gap: 8px; }
+  .rx-issuer-meta { text-align: left !important; width: 100%; }
 }
 .modal-footer {
   background: #fff;
@@ -3578,7 +3696,13 @@ input[type="date"].form-input::-webkit-datetime-edit-year-field {
 
   /* Doctor availability — card picker: 2-col equal-width grid */
   .pat-doc-tabs-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
-  .doctor-sel-card { width: auto; flex: unset; }
+  /* Base padding (14px 12px) was tuned for the desktop's fixed 130px-wide
+     card — stretched across half of a mobile grid cell instead, the same
+     padding reads as flat/compressed since there's much more width for
+     the same amount of breathing room top-to-bottom. More vertical
+     padding and a bit more gap between avatar/name/spec gives it room to
+     match the wider footprint. */
+  .doctor-sel-card { width: auto; flex: unset; padding: 20px 12px; gap: 10px; }
   /* Calendar panel: single column on mobile */
   .pat-doc-cal-body { grid-template-columns: 1fr; gap: 16px; }
   /* Doctor header: stack Book button below on mobile */
@@ -3587,19 +3711,106 @@ input[type="date"].form-input::-webkit-datetime-edit-year-field {
   .sched-header-actions { width: 100%; justify-content: flex-end; }
 
   /* .tbl-scroll is injected by wrapTableScroll() after each page render.
-     It is the scroll container — 100% wide so its scrollbar stays on-screen.
-     The table inside can be wider than the viewport, creating scrollable overflow. */
-  .tbl-scroll {
-    overflow-x: auto;
-    -webkit-overflow-scrolling: touch;
-    width: 100%;
-  }
+     On mobile, tables no longer scroll horizontally inside it — every
+     .tbl instead collapses into a stacked list of cards, one per row,
+     with each cell showing its own column header inline via a
+     data-label attribute (see the *TableHtml()/…Table() builders in
+     pages.js/main.js). A <td> with no data-label just shows no header —
+     it degrades, it doesn't break. */
+  /* A light tray behind the cards (table-wrap itself is white, same as
+     each card) — without some background contrast, the cards' only
+     separation was a thin border + a small gap, which read as barely
+     separated at all. No border-radius of its own: this sits flush
+     against table-wrap's straight side edges (below the toolbar, above
+     table-wrap's own bottom edge), so rounding it independently just
+     carved a notch out of its own top corners instead of matching
+     anything — table-wrap's radius + overflow:hidden already handles all
+     the actual rounding/clipping at the real outer edges. */
+  .tbl-scroll { overflow-x: visible; width: 100%; background: #F7F5F2; padding: 12px; box-sizing: border-box; }
+  /* <table>/<tbody> stay display:table/table-row-group by default even
+     though thead/tr/td below are overridden to block/flex — a block-level
+     <tr> inside a still-tabular <tbody> has no defined containing-block
+     width to fill, so it was sizing to its own shrink-to-fit content width
+     instead of stretching across the tray. Making the whole chain block
+     gives width:100% something consistent to cascade through. */
   .tbl {
-    min-width: 600px;
+    display: block;
     table-layout: auto;
-    width: max-content;
+    width: 100%;
+    min-width: 0;
+    box-sizing: border-box;
   }
-  .tbl th, .tbl td { white-space: nowrap; }
+  .tbl tbody { display: block; width: 100%; }
+  .tbl thead { display: none; }
+  .tbl tbody tr {
+    display: block;
+    width: 100%;
+    box-sizing: border-box;
+    background: #fff;
+    border: 1px solid #E5E7EB;
+    border-radius: 12px;
+    padding: 2px 14px;
+    margin-bottom: 14px;
+    box-shadow: 0 1px 2px rgba(28,28,28,.04);
+  }
+  .tbl tbody tr:last-child { margin-bottom: 0; }
+  .tbl tbody tr:hover td { background: transparent; } /* no mouse on mobile — the hover highlight never clears without it */
+  .tbl td {
+    display: flex;
+    /* flex-start, not center: a value that's a single line of text looks
+       identical either way, but several cells (Status pill + its "Expires…"
+       subtext, the Waitlist Slot cell's badge + date + time stack) are
+       multi-line blocks — centered, the label floated against the middle
+       of that block instead of reading as attached to it. Top-aligning
+       matches the same convention .rev-row/.sum-row already use elsewhere
+       in the app for the same label-next-to-content shape. */
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 14px;
+    padding: 11px 0;
+    border-bottom: 1px solid #F3F4F6;
+    white-space: normal;
+    text-align: right;
+    overflow: visible;
+    text-overflow: clip;
+  }
+  .tbl td:last-child { border-bottom: none; }
+  .tbl td[data-label]::before {
+    content: attr(data-label);
+    flex-shrink: 0;
+    font-size: .68rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: .04em;
+    color: #9CA3AF;
+    text-align: left;
+    /* Nudges the label down to sit level with the first line of the value
+       text instead of its own box's literal top edge — the label's own
+       line-height (from its bigger font-size) otherwise sits a couple
+       pixels higher than the value's first line despite both starting at
+       the same flex-start position. */
+    padding-top: 1px;
+  }
+  /* Several tables set white-space:nowrap + max-width:0 + ellipsis inline
+     on individual <td>s to truncate long values in the desktop table's
+     fixed columns — exactly the opposite of what a mobile card needs,
+     where there's no column width to protect and truncating just hides
+     the value the label is right next to. Inline styles otherwise win over
+     the class rules above, so this has to fight them with !important. */
+  .tbl td {
+    white-space: normal !important;
+    overflow: visible !important;
+    text-overflow: clip !important;
+    max-width: none !important;
+  }
+  /* Full-width rows (empty states, "no records" placeholders) use colspan
+     to span every column — there's no second column left to pair a label
+     against, so they render as plain centered text instead. */
+  .tbl td[colspan] {
+    display: block;
+    text-align: center;
+    padding: 20px 0;
+  }
   .reg-row-2, .reg-row-3, .reg-form-grid, .form-row-2, .form-row-3 { grid-template-columns: 1fr; }
   .settings-layout { grid-template-columns: 1fr; }
   .eye-grid { grid-template-columns: 60px 1fr 1fr; }
@@ -3619,6 +3830,23 @@ input[type="date"].form-input::-webkit-datetime-edit-year-field {
   .filter-tabs::-webkit-scrollbar-thumb { background: #D1D5DB; border-radius: 99px; }
   .table-wrap { overflow-x: auto; }
   .table-toolbar { padding: 12px 16px; flex-direction: column; align-items: stretch; gap: 8px; }
+  /* .filter-grid — any "many fields + buttons" toolbar (Activity Log's
+     Role/Type/dates/search/Clear buttons, Reports' report-type/date-range/
+     Generate-Print-Reset). A straight column (one field per row) was
+     needlessly tall for fields this narrow; two-up grid instead — fields
+     pair off two to a row, and anything marked .filter-grid-full (a wide
+     field like Search, or a .filter-grid-actions button group) spans both
+     columns on its own row instead of trailing off next to whatever
+     field came before it. */
+  .filter-grid { display: grid; grid-template-columns: 1fr 1fr; align-items: flex-end; }
+  .filter-grid .form-group { min-width: 0; }
+  .filter-grid .search-input-wrap,
+  .filter-grid .filter-grid-full,
+  .filter-grid .filter-grid-actions { grid-column: 1 / -1; }
+  .filter-grid-actions .btn-ghost,
+  .filter-grid-actions .btn-danger,
+  .filter-grid-actions .btn-primary,
+  .filter-grid-actions .btn-secondary { flex: 1; justify-content: center; }
   .table-actions { width: 100%; margin-left: 0; justify-content: flex-end; }
   .search-input-wrap { flex: 1; }
   .search-input { width: 100%; }
@@ -3688,8 +3916,10 @@ input[type="date"].form-input::-webkit-datetime-edit-year-field {
   .page-header > *:not(.page-header-left) { width: 100%; }
   .page-header > *:not(.page-header-left) .btn-primary,
   .page-header > *:not(.page-header-left) .btn-secondary,
+  .page-header > *:not(.page-header-left) .btn-ghost,
   .page-header > .btn-primary,
-  .page-header > .btn-secondary {
+  .page-header > .btn-secondary,
+  .page-header > .btn-ghost {
     width: 100%;
     justify-content: center;
   }

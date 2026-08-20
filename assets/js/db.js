@@ -33,6 +33,7 @@ function getExamRecords() {
         id:                  e.id,
         patientId:           p.id,
         patientName:         p.name,
+        patientPhotoUrl:     p.photoUrl || null,
         doctor:              e.doctor || '',
         date:                e.date   || '',
         diagnosis:           e.diagnosis           || '',

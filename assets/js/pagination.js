@@ -28,9 +28,20 @@
       '.pg-btn[disabled]{opacity:.4;cursor:not-allowed;pointer-events:none}' +
       '.pg-ellipsis{width:32px;height:32px;display:inline-flex;align-items:center;' +
         'justify-content:center;color:#9ca3af;font-size:.82rem}' +
+      // Both info groups used to be display:none here — Showing X–Y of Z and
+      // the Rows per page selector simply weren't reachable on mobile at
+      // all, not just visually secondary. Now they stack, centered, above
+      // the page-number buttons instead. justify-content is forced with
+      // !important because _render() below sets it inline per-call
+      // ('center' or 'space-between' depending on page count) — inline
+      // style always outranks a plain stylesheet rule, so without
+      // !important this media query couldn't override it. Real centering
+      // on mobile comes from align-items, since flex-direction is column
+      // here — justify-content only controls the (irrelevant) vertical
+      // spacing between the stacked groups once rotated.
       '@media(max-width:768px){' +
-        '.pg-info,.pg-rpp{display:none}' +
-        '.pg-bar{justify-content:center}' +
+        '.pg-bar{flex-direction:column;align-items:center;text-align:center;justify-content:flex-start!important;gap:12px}' +
+        '.pg-rpp{justify-content:center}' +
         '.pg-btn{width:28px;height:28px;font-size:.78rem}' +
       '}'
     document.head.appendChild(s)

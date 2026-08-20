@@ -12,6 +12,24 @@ function fmtFullName(first, middle, last, prefix = '') {
 }
 window.fmtFullName = fmtFullName
 
+// Completed years since a "YYYY-MM-DD" date of birth — mirrors
+// api/patients/admin_update.php's (new DateTime())->diff($bd)->y exactly
+// (whole years, accounting for whether this year's birthday has passed
+// yet), so a client-side age recompute after editing DOB always agrees
+// with what the server just saved.
+function ageFromDob(dobStr) {
+  if (!dobStr) return null
+  const bd = new Date(dobStr.length > 10 ? dobStr : dobStr + 'T00:00:00')
+  if (isNaN(bd)) return null
+  const now = new Date()
+  let age = now.getFullYear() - bd.getFullYear()
+  const hadBirthdayThisYear = (now.getMonth() > bd.getMonth())
+    || (now.getMonth() === bd.getMonth() && now.getDate() >= bd.getDate())
+  if (!hadBirthdayThisYear) age--
+  return age
+}
+window.ageFromDob = ageFromDob
+
 // ── SVG Icon library ────────────────────────────────────────────
 function icon(name, cls = 'icon') {
   const p = {
@@ -199,6 +217,19 @@ function dobFieldHtml(id, opts = {}) {
   return dateFieldHtml(id, { defaultYearsAgo: 25, ...opts })
 }
 window.dobFieldHtml = dobFieldHtml
+
+// The latest a date of birth can be and still make someone 18+ today —
+// registration (auth.js) has enforced this on its own DOB picker (plus a
+// submit-time check) since the start; every other dobFieldHtml() caller
+// (New User, Add/Edit Patient, patient Settings) was still capping at
+// "today" instead, which let the calendar/year dropdown offer dates for
+// a newborn. One shared helper so all of them agree with registration's
+// exact cutoff instead of each recomputing it slightly differently.
+function maxDobFor18() {
+  const t = new Date()
+  return new Date(t.getFullYear() - 18, t.getMonth(), t.getDate()).toISOString().slice(0, 10)
+}
+window.maxDobFor18 = maxDobFor18
 
 function _dobFormat(iso) {
   if (!iso) return ''
@@ -1439,12 +1470,56 @@ window.processQRImageFile = processQRImageFile
 function filterTable(input, tbodyId) {
   const q    = input.value.toLowerCase()
   const rows = document.querySelectorAll(`#${tbodyId} tr[data-search]`)
+  let anyMatch = false
   rows.forEach(r => {
-    r.style.display = r.dataset.search.includes(q) ? '' : 'none'
+    const match = r.dataset.search.includes(q)
+    r.style.display = match ? '' : 'none'
+    if (match) anyMatch = true
   })
   if (window.pgReset) window.pgReset(tbodyId)
+  // Real-time "no results" row — a tab/status filter narrowing to zero
+  // already showed its own empty-state message (each page builds that
+  // server-side/at render time); a live text search narrowing to zero just
+  // left a blank table body with no explanation, so this gives it the same
+  // courtesy while the patient/staff is still typing.
+  _syncSearchEmptyState(tbodyId, rows.length > 0 && !anyMatch, 'table')
 }
 window.filterTable = filterTable
+
+// Shared by filterTable() (.tbl tables, appends an empty <tr>) and the
+// patient-facing history-list filters — Prescriptions/Examination
+// History/Consultations, main.js's window._filter*History functions
+// (appends a plain <div>, since those lists aren't real tables).
+function _syncSearchEmptyState(containerId, show, kind, label) {
+  const container = document.getElementById(containerId)
+  if (!container) return
+  const msg = label || 'No results match your search.'
+  let el = document.getElementById(containerId + '-search-empty')
+  if (show) {
+    if (!el) {
+      el = document.createElement(kind === 'table' ? 'tr' : 'div')
+      el.id = containerId + '-search-empty'
+      if (kind === 'table') {
+        // .tbl-search-empty exists purely so the CSS below can beat
+        // .tbl tbody tr:hover td's cream highlight for this one row —
+        // matches .table-empty (the same "no records at all" message
+        // every other empty table already uses) exactly instead of a
+        // one-off style, and isn't meant to look interactive since
+        // clicking it does nothing.
+        el.className = 'tbl-search-empty'
+        el.innerHTML = `<td colspan="20" class="table-empty" style="border:none">${msg}</td>`
+      } else {
+        el.className = 'table-empty'
+        el.textContent = msg
+      }
+      container.appendChild(el)
+    }
+    el.style.display = ''
+  } else if (el) {
+    el.style.display = 'none'
+  }
+}
+window._syncSearchEmptyState = _syncSearchEmptyState
 
 // ════════════════════════════════════════════════════════════════
 //  APPOINTMENT ACTIONS
@@ -2408,6 +2483,18 @@ async function saveUserProfile() {
 window.saveUserProfile = saveUserProfile
 
 // Save patient profile fields via backend
+// Live age preview as the patient edits their own DOB on Settings — the
+// actual saved age is still computed server-side (api/patients/update.php),
+// this is purely a "here's what that'll come out to" display.
+function _syncSettAge() {
+  const dobEl = document.getElementById('sett-dob')
+  const ageEl = document.getElementById('sett-age-display')
+  if (!dobEl || !ageEl) return
+  const age = ageFromDob(dobEl.value)
+  ageEl.value = age != null ? `${age} years old` : '—'
+}
+window._syncSettAge = _syncSettAge
+
 async function savePatientSettings() {
   const fn      = document.getElementById('sett-first')?.value.trim()   || ''
   const mn      = document.getElementById('sett-middle')?.value.trim() || ''
@@ -2416,13 +2503,15 @@ async function savePatientSettings() {
   const email   = document.getElementById('sett-email')?.value.trim()   || ''
   const address    = document.getElementById('sett-address')?.value.trim() || ''
   const occupation = document.getElementById('sett-occupation')?.value.trim() || ''
+  const dob     = document.getElementById('sett-dob')?.value    || ''
+  const gender  = document.getElementById('sett-gender')?.value || ''
   if (!fn || !ln) { toast('First and last name are required.', 'error'); return }
 
   try {
     const r = await fetch('api/patients/update.php', {
       method:  'POST',
       headers: { 'Content-Type': 'application/json' },
-      body:    JSON.stringify({ action: 'profile', firstName: fn, middleName: mn, lastName: ln, phone: contact, email, address, occupation })
+      body:    JSON.stringify({ action: 'profile', firstName: fn, middleName: mn, lastName: ln, phone: contact, email, address, occupation, dob, gender })
     })
     const d = await r.json()
     if (d.success) {
@@ -2450,6 +2539,8 @@ async function savePatientSettings() {
         if (email) p.email = email
         p.address    = address
         p.occupation = occupation
+        if (gender) p.gender = gender
+        if (dob) { p.dob = dob; p.age = ageFromDob(dob) }
       }
       window.navigate(state.page, { ...state.params })
     } else {
@@ -3418,20 +3509,29 @@ async function wizBuildDoctorCards() {
   container.innerHTML = availDocs.map(d => {
     const isFull = apptCountFor(d.id) >= maxPerDay
     const blockedReason = blockedReasonFor(d.id)
+    // Same pill language as elsewhere in the wizard (time-slot legend's
+    // "full" swatch, apptSubBadges' Confirmed/Rescheduled tags) instead of
+    // bare colored text — and the two reasons get different colors on
+    // purpose: red for a hard block (the doctor isn't working that day at
+    // all), orange for merely full (same "waitlist-able, not truly
+    // unbookable" meaning as .time-slot.full) so the two read as distinct
+    // severities at a glance, not identical red warnings.
     if (blockedReason) return `
-      <div class="doc-card" style="opacity:.55;cursor:not-allowed" title="Doctor unavailable: ${blockedReason.replace(/"/g,'&quot;')}">
+      <div class="doc-card doc-card-disabled" title="Doctor unavailable: ${blockedReason.replace(/"/g,'&quot;')}">
         ${docAvatar(d)}
         <div style="flex:1;min-width:0">
-          <div style="font-size:.9rem;font-weight:700;color:#1C1C1C">${d.name}</div>
-          <div style="font-size:.78rem;color:#DC2626;margin-top:2px">Unavailable on this date</div>
+          <div style="font-size:.9rem;font-weight:700;color:#9CA3AF">${d.name}</div>
+          <div style="font-size:.78rem;color:#9CA3AF;margin-top:2px">${d.specialization}</div>
+          <span style="display:inline-flex;align-items:center;gap:4px;font-size:.7rem;font-weight:600;background:#FEF2F2;color:#DC2626;border-radius:999px;padding:2px 9px;margin-top:5px;width:fit-content">${icon('x-circle','icon-xs')} Unavailable on this date</span>
         </div>
       </div>`
     if (isFull) return `
-      <div class="doc-card" style="opacity:.55;cursor:not-allowed" title="This doctor is fully booked on the selected date.">
+      <div class="doc-card doc-card-disabled" title="This doctor is fully booked on the selected date.">
         ${docAvatar(d)}
         <div style="flex:1;min-width:0">
-          <div style="font-size:.9rem;font-weight:700;color:#1C1C1C">${d.name}</div>
-          <div style="font-size:.78rem;color:#DC2626;margin-top:2px">Fully booked on this date</div>
+          <div style="font-size:.9rem;font-weight:700;color:#9CA3AF">${d.name}</div>
+          <div style="font-size:.78rem;color:#9CA3AF;margin-top:2px">${d.specialization}</div>
+          <span style="display:inline-flex;align-items:center;gap:4px;font-size:.7rem;font-weight:600;background:#FFF7ED;color:#C2410C;border-radius:999px;padding:2px 9px;margin-top:5px;width:fit-content">${icon('clock','icon-xs')} Fully booked on this date</span>
         </div>
       </div>`
     return `
@@ -4549,7 +4649,7 @@ function openAddUserModal() {
       <div id="nu-patient-fields" style="display:none;flex-direction:column;gap:14px">
         <div class="form-row-2">
           <div class="form-group"><label class="form-label">Date of Birth <span class="req">*</span></label>
-            ${dobFieldHtml('nu-dob', { max: new Date().toISOString().slice(0, 10) })}</div>
+            ${dobFieldHtml('nu-dob', { max: maxDobFor18() })}</div>
           <div class="form-group"><label class="form-label">Gender <span class="req">*</span></label>
             ${window.selectFieldHtml('nu-gender', { value: '', placeholder: 'Select gender', options: ['Male','Female','Other'] })}</div>
         </div>
@@ -4997,7 +5097,7 @@ function openAddPatientModal() {
       </div>
       <div class="form-row-2">
         <div class="form-group"><label class="form-label">Date of Birth <span class="req">*</span></label>
-          ${dobFieldHtml('ap-dob', { max: new Date().toISOString().slice(0, 10) })}</div>
+          ${dobFieldHtml('ap-dob', { max: maxDobFor18() })}</div>
         <div class="form-group"><label class="form-label">Gender <span class="req">*</span></label>
           ${window.selectFieldHtml('ap-gender', { value: '', placeholder: 'Select gender', options: ['Male','Female','Other'] })}</div>
       </div>
@@ -5089,7 +5189,7 @@ function openEditPatientModal(patientId) {
       </div>
       <div class="form-row-2">
         <div class="form-group"><label class="form-label">Date of Birth</label>
-          ${dobFieldHtml('ep-dob', { value: p.dob || '', max: new Date().toISOString().slice(0, 10) })}</div>
+          ${dobFieldHtml('ep-dob', { value: p.dob || '', max: maxDobFor18() })}</div>
         <div class="form-group"><label class="form-label">Gender</label>
           ${window.selectFieldHtml('ep-gender', { value: p.gender || '', options: ['Male','Female','Other'] })}</div>
       </div>
@@ -5250,7 +5350,10 @@ async function doEditPatient(patientId) {
   p.lastName   = lastName
   p.name       = fmtFullName(firstName, payload.middleName, lastName)
   if (payload.gender) p.gender = payload.gender
-  if (payload.dob)    p.dob    = payload.dob
+  // age isn't its own editable field — the backend derives and saves it
+  // from dob — but the local cache needs the same recompute done to it,
+  // or the UI keeps showing the pre-edit age until a full reload.
+  if (payload.dob) { p.dob = payload.dob; p.age = ageFromDob(payload.dob) }
   p.contact       = payload.contact
   if (payload.email && p.email) p.email = payload.email
   p.address       = payload.address
@@ -7155,6 +7258,10 @@ function viewExamDetail(patientId, examId) {
   const expiryDate = new Date(examDate)
   expiryDate.setFullYear(expiryDate.getFullYear() + 1)
   const expiryStr = expiryDate.toLocaleDateString('en-PH', {year:'numeric',month:'long',day:'numeric'})
+  const docRecord = doctors.find(d => d.name === e.doctor)
+  const docPhoto  = docRecord?.photoUrl || null
+  const docInits  = (e.doctor||'Dr').split(' ').slice(0,2).map(w=>w[0]||'').join('').toUpperCase()
+  const patInits  = (p.name||'').split(' ').slice(0,2).map(w=>w[0]||'').join('').toUpperCase()
 
   const eyeField = (label, val, isLast) => `
     <div style="padding:10px 6px;${isLast ? '' : 'border-right:1px solid #F3F4F6;'}text-align:center;flex:1;min-width:0">
@@ -7174,7 +7281,6 @@ function viewExamDetail(patientId, examId) {
         <div>
           <div style="font-size:.6rem;text-transform:uppercase;letter-spacing:.14em;color:#E8760A;font-weight:800;margin-bottom:3px">Optical Examination Results</div>
           <div style="font-size:1.1rem;font-weight:900;color:#fff;letter-spacing:-.01em">Cana Optical Clinic</div>
-          <div style="font-size:.73rem;color:rgba(255,255,255,.5);margin-top:4px">${examDateStr} &bull; ${e.doctor}</div>
         </div>
         <div style="text-align:right;flex-shrink:0">
           <div style="font-size:.6rem;color:rgba(255,255,255,.35);text-transform:uppercase;letter-spacing:.05em;margin-bottom:2px">Exam ID</div>
@@ -7183,15 +7289,35 @@ function viewExamDetail(patientId, examId) {
         </div>
       </div>
 
-      <!-- Patient strip -->
-      <div style="background:#FFF8F0;border-bottom:1px solid #FDE68A;padding:11px 24px;display:flex;align-items:center;gap:12px">
-        ${p.photoUrl
-          ? `<div style="width:36px;height:36px;border-radius:50%;overflow:hidden;flex-shrink:0"><img src="${p.photoUrl}" alt="${p.name}" style="width:100%;height:100%;object-fit:cover;border-radius:50%;display:block" onerror="var w=this.parentElement;if(w){w.style.cssText='width:36px;height:36px;border-radius:50%;background:linear-gradient(135deg,#E8760A,#F5A44D);display:flex;align-items:center;justify-content:center;font-size:.82rem;font-weight:800;color:#fff;flex-shrink:0';w.textContent='${(p.name||'').split(' ').slice(0,2).map(w=>w[0]||'').join('').toUpperCase().replace(/'/g,"\\'")}'}"></div>`
-          : `<div style="width:36px;height:36px;border-radius:50%;background:linear-gradient(135deg,#E8760A,#F5A44D);display:flex;align-items:center;justify-content:center;font-size:.82rem;font-weight:800;color:#fff;flex-shrink:0">${(p.name||'').split(' ').slice(0,2).map(w=>w[0]||'').join('').toUpperCase()}</div>`
-        }
-        <div style="flex:1;min-width:0">
-          <div style="font-size:.88rem;font-weight:700;color:#1C1C1C">${p.name}</div>
-          <div style="font-size:.7rem;color:#9CA3AF;margin-top:1px">${p.id}${p.gender ? ' &bull; ' + p.gender : ''}${p.age ? ' &bull; ' + p.age + ' yrs' : ''}</div>
+      <div style="padding:18px 24px 0">
+        <!-- Patient + Doctor block — same card used by viewPrescriptionModal(),
+             reusing its .rx-pd-block/.rx-issued-block mobile-stacking CSS. -->
+        <div class="rx-pd-block" style="display:flex;align-items:flex-start;gap:14px;padding:14px 16px;background:#F9FAFB;border:1px solid #F3F4F6;border-radius:10px">
+          <div class="rx-patient-row" style="display:flex;align-items:center;gap:14px;flex:1;min-width:0">
+            ${p.photoUrl
+              ? `<div class="rx-pat-avatar" style="width:46px;height:46px;border-radius:50%;overflow:hidden;flex-shrink:0"><img src="${p.photoUrl}" alt="${p.name}" style="width:100%;height:100%;object-fit:cover;border-radius:50%;display:block" onerror="var w=this.parentElement;if(w){w.style.cssText='width:46px;height:46px;border-radius:50%;background:#E8760A;display:flex;align-items:center;justify-content:center;font-size:1rem;font-weight:800;color:#fff;flex-shrink:0';w.className='rx-pat-avatar';w.textContent='${patInits.replace(/'/g,"\\'")}'}"></div>`
+              : `<div class="rx-pat-avatar" style="width:46px;height:46px;border-radius:50%;background:#E8760A;display:flex;align-items:center;justify-content:center;font-size:1rem;font-weight:800;color:#fff;flex-shrink:0">${patInits}</div>`
+            }
+            <div style="flex:1;min-width:0">
+              <div style="font-size:.97rem;font-weight:800;color:#111;margin-bottom:2px">${p.name}</div>
+              <div style="font-size:.7rem;font-family:monospace;color:#9CA3AF;margin-bottom:5px">${p.id}</div>
+              <div style="display:flex;flex-wrap:wrap;gap:5px 12px">
+                ${p.gender || p.age ? `<span style="font-size:.73rem;color:#555">${[p.gender, p.age ? p.age + ' yrs' : ''].filter(Boolean).join(', ')}</span>` : ''}
+                ${p.contact ? `<span style="font-size:.73rem;color:#555">${p.contact}</span>` : ''}
+              </div>
+            </div>
+          </div>
+          <div class="rx-issued-block" style="text-align:right;flex-shrink:0;min-width:150px;display:flex;align-items:center;justify-content:flex-end;gap:8px">
+            <div>
+              <div style="font-size:.62rem;color:#9CA3AF;text-transform:uppercase;letter-spacing:.04em;margin-bottom:2px">Doctor</div>
+              <div style="font-size:.85rem;font-weight:700;color:#111">${e.doctor}</div>
+              <div style="font-size:.72rem;color:#6B7280;margin-top:2px">${examDateStr}</div>
+            </div>
+            ${docPhoto
+              ? `<div class="rx-doc-avatar" style="width:36px;height:36px;border-radius:50%;overflow:hidden;flex-shrink:0"><img src="${docPhoto}" alt="${e.doctor}" style="width:100%;height:100%;object-fit:cover;border-radius:50%;display:block"></div>`
+              : `<div class="rx-doc-avatar" style="width:36px;height:36px;border-radius:50%;background:#1C1C1C;display:flex;align-items:center;justify-content:center;font-size:.7rem;font-weight:800;color:#E8760A;flex-shrink:0;letter-spacing:.02em">${docInits}</div>`
+            }
+          </div>
         </div>
       </div>
 
@@ -7413,6 +7539,11 @@ function viewExamRecord(examId) {
   const expiryDate = new Date(examDate)
   expiryDate.setFullYear(expiryDate.getFullYear() + 1)
   const expiryStr = expiryDate.toLocaleDateString('en-PH', {year:'numeric',month:'long',day:'numeric'})
+  const docRecord  = doctors.find(d => d.name === e.doctor)
+  const docPhoto   = docRecord?.photoUrl || null
+  const docInits   = (e.doctor||'Dr').split(' ').slice(0,2).map(w=>w[0]||'').join('').toUpperCase()
+  const patPhoto   = e.patientPhotoUrl || null
+  const patInits   = (e.patientName||'').split(' ').slice(0,2).map(w=>w[0]||'').join('').toUpperCase()
 
   const eyeField = (label, val, isLast) => `
     <div style="padding:10px 6px;${isLast ? '' : 'border-right:1px solid #F3F4F6;'}text-align:center;flex:1;min-width:0">
@@ -7422,23 +7553,35 @@ function viewExamRecord(examId) {
 
   showModal(`
     <div class="modal-header">
-      <div class="modal-title">Examination Record — ${e.patientName}</div>
+      <div class="modal-title">Examination Record</div>
       <button class="modal-close" onclick="window.closeModal()">&times;</button>
     </div>
     <div class="modal-body" style="padding:0">
 
       <!-- Header -->
-      <div style="background:linear-gradient(135deg,#1C1C1C 0%,#2A2A2A 100%);padding:18px 24px;display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">
-        <div>
-          <div style="font-size:.6rem;text-transform:uppercase;letter-spacing:.14em;color:#E8760A;font-weight:800;margin-bottom:3px">Patient Examination Record</div>
-          <div style="font-size:1rem;font-weight:900;color:#fff">${e.patientName}</div>
-          <div style="font-size:.7rem;font-family:monospace;color:rgba(255,255,255,.4);margin-top:1px">${e.patientId}</div>
+      <div class="examrec-header" style="background:linear-gradient(135deg,#1C1C1C 0%,#2A2A2A 100%);padding:18px 24px;display:flex;flex-direction:column;gap:14px">
+        <div style="display:flex;align-items:center;gap:10px">
+          ${patPhoto
+            ? `<div style="width:40px;height:40px;border-radius:50%;overflow:hidden;flex-shrink:0;border:2px solid rgba(255,255,255,.15)"><img src="${patPhoto}" alt="${e.patientName}" style="width:100%;height:100%;object-fit:cover;border-radius:50%;display:block" onerror="var w=this.parentElement;if(w){w.style.cssText='width:40px;height:40px;border-radius:50%;background:#E8760A;display:flex;align-items:center;justify-content:center;font-size:.85rem;font-weight:800;color:#fff;flex-shrink:0';w.textContent='${patInits.replace(/'/g,"\\'")}'}"></div>`
+            : `<div style="width:40px;height:40px;border-radius:50%;background:#E8760A;display:flex;align-items:center;justify-content:center;font-size:.85rem;font-weight:800;color:#fff;flex-shrink:0">${patInits}</div>`
+          }
+          <div>
+            <div style="font-size:.6rem;text-transform:uppercase;letter-spacing:.14em;color:#E8760A;font-weight:800;margin-bottom:3px">Patient Examination Record</div>
+            <div style="font-size:1rem;font-weight:900;color:#fff">${e.patientName}</div>
+            <div style="font-size:.7rem;font-family:monospace;color:rgba(255,255,255,.4);margin-top:1px">${e.patientId}</div>
+          </div>
         </div>
-        <div style="text-align:right;flex-shrink:0">
-          <div style="font-size:.6rem;color:rgba(255,255,255,.35);text-transform:uppercase;letter-spacing:.05em;margin-bottom:1px">Doctor</div>
-          <div style="font-size:.82rem;font-weight:600;color:#fff">${e.doctor}</div>
-          <div style="font-size:.72rem;color:rgba(255,255,255,.5);margin-top:1px">${examDateStr}</div>
-          <div style="font-size:.65rem;font-family:monospace;color:rgba(255,255,255,.28);margin-top:5px">${e.id}</div>
+        <div style="display:flex;align-items:center;gap:10px;padding-top:14px;border-top:1px solid rgba(255,255,255,.08)">
+          ${docPhoto
+            ? `<div style="width:40px;height:40px;border-radius:50%;overflow:hidden;flex-shrink:0;border:2px solid rgba(255,255,255,.15)"><img src="${docPhoto}" alt="${e.doctor}" style="width:100%;height:100%;object-fit:cover;border-radius:50%;display:block"></div>`
+            : `<div style="width:40px;height:40px;border-radius:50%;background:#3D3D3D;display:flex;align-items:center;justify-content:center;font-size:.75rem;font-weight:800;color:#E8760A;flex-shrink:0;letter-spacing:.02em">${docInits}</div>`
+          }
+          <div>
+            <div style="font-size:.6rem;color:rgba(255,255,255,.35);text-transform:uppercase;letter-spacing:.05em;margin-bottom:1px">Doctor</div>
+            <div style="font-size:.82rem;font-weight:600;color:#fff">${e.doctor}</div>
+            <div style="font-size:.72rem;color:rgba(255,255,255,.5);margin-top:1px">${examDateStr}</div>
+            <div style="font-size:.65rem;font-family:monospace;color:rgba(255,255,255,.28);margin-top:5px">${e.id}</div>
+          </div>
         </div>
       </div>
 
@@ -8244,20 +8387,26 @@ window.printRxRecord = printRxRecord
 // ════════════════════════════════════════════════════════════════
 //  PATIENT — VIEW PRESCRIPTION DETAIL (from the compact Rx list)
 // ════════════════════════════════════════════════════════════════
+// Not its own modal anymore — it had its own scroll problems (buttons
+// baked into the scrollable content instead of a real .modal-footer, see
+// git history) that kept resurfacing. Every prescription is generated
+// from an examination, and viewPrescriptionModal() (below) already
+// renders that exam's prescription correctly and scrolls properly, so
+// this just finds the matching exam and opens that instead of
+// maintaining a second, parallel implementation of the same document.
 function viewPrescriptionDetail(patientId, rxId) {
   const p  = patients.find(p => p.id === patientId)
   if (!p) return
   const rx = (p.prescriptions || []).find(r => r.id === rxId)
   if (!rx) return
 
-  showModal(`
-    <div class="modal-header">
-      <div class="modal-title">Prescription ${rx.id}</div>
-      <button class="modal-close" onclick="window.closeModal()">&times;</button>
-    </div>
-    <div class="modal-body" style="padding:16px">
-      ${window.renderRxDocumentCard(rx, p, false)}
-    </div>`, 'modal-lg')
+  const matchExam = (p.examinations || []).find(e => e.date === rx.date && e.doctor === rx.doctor)
+                   || (p.examinations || []).find(e => e.date === rx.date)
+  if (!matchExam) {
+    toast('Could not find the exam record behind this prescription.', 'error')
+    return
+  }
+  window.viewPrescriptionModal(patientId, matchExam.id)
 }
 window.viewPrescriptionDetail = viewPrescriptionDetail
 
@@ -8276,6 +8425,9 @@ function viewPrescriptionModal(patientId, examId) {
   expiryDate.setFullYear(expiryDate.getFullYear() + 1)
   const expiryStr = expiryDate.toLocaleDateString('en-PH', {year:'numeric',month:'long',day:'numeric'})
   const isExpired = expiryDate < new Date()
+  const docRecord = doctors.find(d => d.name === e.doctor)
+  const docPhoto  = docRecord?.photoUrl || null
+  const docInits  = (e.doctor||'Dr').split(' ').slice(0,2).map(w=>w[0]||'').join('').toUpperCase()
 
   const eyeField = (label, val, isLast) => `
     <div style="padding:11px 8px;${isLast ? '' : 'border-right:1px solid #F3F4F6;'}text-align:center;flex:1;min-width:0">
@@ -8285,7 +8437,7 @@ function viewPrescriptionModal(patientId, examId) {
 
   showModal(`
     <div class="modal-header">
-      <div class="modal-title">Optical Prescription — ${p.name}</div>
+      <div class="modal-title">Optical Prescription</div>
       <button class="modal-close" onclick="window.closeModal()">&times;</button>
     </div>
     <div class="modal-body" id="print-rx-area" style="padding:0">
@@ -8305,27 +8457,38 @@ function viewPrescriptionModal(patientId, examId) {
       <div style="padding:20px 24px;display:flex;flex-direction:column;gap:16px">
 
         <!-- Patient + Doctor block -->
-        <div style="display:flex;align-items:flex-start;gap:14px;padding:14px 16px;background:#F9FAFB;border:1px solid #F3F4F6;border-radius:10px">
-          <div style="width:46px;height:46px;border-radius:50%;background:linear-gradient(135deg,#E8760A,#F5A44D);display:flex;align-items:center;justify-content:center;font-size:1rem;font-weight:800;color:#fff;flex-shrink:0">${(p.name||'').split(' ').slice(0,2).map(w=>w[0]||'').join('').toUpperCase()}</div>
-          <div style="flex:1;min-width:0">
-            <div style="font-size:.97rem;font-weight:800;color:#111;margin-bottom:2px">${p.name}</div>
-            <div style="font-size:.7rem;font-family:monospace;color:#9CA3AF;margin-bottom:5px">${p.id}</div>
-            <div style="display:flex;flex-wrap:wrap;gap:5px 12px">
-              ${p.gender || p.age ? `<span style="font-size:.73rem;color:#555">${[p.gender, p.age ? p.age + ' yrs' : ''].filter(Boolean).join(', ')}</span>` : ''}
-              ${p.contact ? `<span style="font-size:.73rem;color:#555">${p.contact}</span>` : ''}
-              ${p.bloodType ? `<span style="font-size:.73rem;font-weight:700;color:#DC2626">BT ${p.bloodType}</span>` : ''}
+        <div class="rx-pd-block" style="display:flex;align-items:flex-start;gap:14px;padding:14px 16px;background:#F9FAFB;border:1px solid #F3F4F6;border-radius:10px">
+          <div class="rx-patient-row" style="display:flex;align-items:center;gap:14px;flex:1;min-width:0">
+            ${p.photoUrl
+              ? `<div class="rx-pat-avatar" style="width:46px;height:46px;border-radius:50%;overflow:hidden;flex-shrink:0"><img src="${p.photoUrl}" alt="${p.name}" style="width:100%;height:100%;object-fit:cover;border-radius:50%;display:block" onerror="var w=this.parentElement;if(w){w.style.cssText='width:46px;height:46px;border-radius:50%;background:#E8760A;display:flex;align-items:center;justify-content:center;font-size:1rem;font-weight:800;color:#fff;flex-shrink:0';w.className='rx-pat-avatar';w.textContent='${(p.name||'').split(' ').slice(0,2).map(w=>w[0]||'').join('').toUpperCase().replace(/'/g,"\\'")}'}"></div>`
+              : `<div class="rx-pat-avatar" style="width:46px;height:46px;border-radius:50%;background:#E8760A;display:flex;align-items:center;justify-content:center;font-size:1rem;font-weight:800;color:#fff;flex-shrink:0">${(p.name||'').split(' ').slice(0,2).map(w=>w[0]||'').join('').toUpperCase()}</div>`
+            }
+            <div style="flex:1;min-width:0">
+              <div style="font-size:.97rem;font-weight:800;color:#111;margin-bottom:2px">${p.name}</div>
+              <div style="font-size:.7rem;font-family:monospace;color:#9CA3AF;margin-bottom:5px">${p.id}</div>
+              <div style="display:flex;flex-wrap:wrap;gap:5px 12px">
+                ${p.gender || p.age ? `<span style="font-size:.73rem;color:#555">${[p.gender, p.age ? p.age + ' yrs' : ''].filter(Boolean).join(', ')}</span>` : ''}
+                ${p.contact ? `<span style="font-size:.73rem;color:#555">${p.contact}</span>` : ''}
+                ${p.bloodType ? `<span style="font-size:.73rem;font-weight:700;color:#DC2626">BT ${p.bloodType}</span>` : ''}
+              </div>
+              ${p.address ? `<div style="font-size:.68rem;color:#9CA3AF;margin-top:3px">${p.address}</div>` : ''}
             </div>
-            ${p.address ? `<div style="font-size:.68rem;color:#9CA3AF;margin-top:3px">${p.address}</div>` : ''}
           </div>
-          <div style="text-align:right;flex-shrink:0;min-width:120px">
-            <div style="font-size:.62rem;color:#9CA3AF;text-transform:uppercase;letter-spacing:.04em;margin-bottom:2px">Issued By</div>
-            <div style="font-size:.85rem;font-weight:700;color:#111">${e.doctor}</div>
-            <div style="font-size:.72rem;color:#6B7280;margin-top:2px">${rxDateStr}</div>
-            <div style="margin-top:8px">
-              <span style="font-size:.68rem;font-weight:700;padding:3px 9px;border-radius:20px;${isExpired ? 'background:#FEE2E2;color:#DC2626' : 'background:#ECFDF5;color:#059669'}">
+          <div class="rx-issued-block" style="text-align:right;flex-shrink:0;min-width:150px;display:flex;align-items:center;justify-content:flex-end;gap:8px">
+            <div>
+              <div style="font-size:.62rem;color:#9CA3AF;text-transform:uppercase;letter-spacing:.04em;margin-bottom:2px">Issued By</div>
+              <div style="font-size:.85rem;font-weight:700;color:#111">${e.doctor}</div>
+              <div style="font-size:.72rem;color:#6B7280;margin-top:2px">${rxDateStr}</div>
+              <div style="margin-top:8px">
+                <span style="font-size:.68rem;font-weight:700;padding:3px 9px;border-radius:20px;${isExpired ? 'background:#FEE2E2;color:#DC2626' : 'background:#ECFDF5;color:#059669'}">
                 ${isExpired ? 'Expired' : 'Valid until ' + expiryStr}
               </span>
+              </div>
             </div>
+            ${docPhoto
+              ? `<div class="rx-doc-avatar" style="width:36px;height:36px;border-radius:50%;overflow:hidden;flex-shrink:0"><img src="${docPhoto}" alt="${e.doctor}" style="width:100%;height:100%;object-fit:cover;border-radius:50%;display:block"></div>`
+              : `<div class="rx-doc-avatar" style="width:36px;height:36px;border-radius:50%;background:#1C1C1C;display:flex;align-items:center;justify-content:center;font-size:.7rem;font-weight:800;color:#E8760A;flex-shrink:0;letter-spacing:.02em">${docInits}</div>`
+            }
           </div>
         </div>
 
@@ -8522,10 +8685,10 @@ function updateAdminDashboard() {
   if (apptsTbody) {
     const recent = [...appointments].sort((a, b) => b.date.localeCompare(a.date) || String(b.id).localeCompare(String(a.id))).slice(0, 6)
     apptsTbody.innerHTML = recent.map(a => `<tr>
-      <td style="font-size:.82rem;font-weight:600">${a.patientName || '—'}</td>
-      <td style="font-size:.78rem;color:#6B7280">${(a.doctorName || '').replace('Dr. ', '').split(' ').pop()}</td>
-      <td style="font-size:.78rem;color:#6B7280;white-space:nowrap">${fmtDate(a.date)}</td>
-      <td>${badge(a.status)}</td>
+      <td data-label="Patient" style="font-size:.82rem;font-weight:600">${a.patientName || '—'}</td>
+      <td data-label="Doctor" style="font-size:.78rem;color:#6B7280">${(a.doctorName || '').replace('Dr. ', '').split(' ').pop()}</td>
+      <td data-label="Date" style="font-size:.78rem;color:#6B7280;white-space:nowrap">${fmtDate(a.date)}</td>
+      <td data-label="Status">${badge(a.status)}</td>
     </tr>`).join('')
   }
 
@@ -8590,10 +8753,10 @@ function updateStaffDashboard() {
   const tbody = el('staff-appts-tbody')
   if (tbody && pending.length > 0) {
     tbody.innerHTML = pending.slice(0, 5).map(a => `<tr>
-      <td style="font-size:.82rem;font-weight:600">${a.patientName || '—'}</td>
-      <td style="font-size:.78rem;color:#6B7280">${a.doctorName ? a.doctorName.replace('Dr. ', '') : '<span style="font-style:italic;color:#9CA3AF">Not yet assigned</span>'}</td>
-      <td style="font-size:.78rem">${fmtDate(a.date)}</td>
-      <td>${a.doctorId
+      <td data-label="Patient" style="font-size:.82rem;font-weight:600">${a.patientName || '—'}</td>
+      <td data-label="Doctor" style="font-size:.78rem;color:#6B7280">${a.doctorName ? a.doctorName.replace('Dr. ', '') : '<span style="font-style:italic;color:#9CA3AF">Not yet assigned</span>'}</td>
+      <td data-label="Date" style="font-size:.78rem">${fmtDate(a.date)}</td>
+      <td data-label="Action">${a.doctorId
         ? `<button class="btn-success" onclick="window.approveAppt('${a.id}')">Approve</button>`
         : `<button class="btn-secondary" onclick="window.openAssignDoctorModal('${a.id}')">Assign Optometrist</button>`}</td>
     </tr>`).join('')
@@ -11058,6 +11221,12 @@ function generateReport() {
 
     // Render table
     area.innerHTML = reportTable(def.headers, def.rows.map(def.render))
+    // This table is injected directly on click, not through router.js's
+    // render() — the only place wrapTableScroll() otherwise runs — so
+    // without calling it here too, this specific table never gets wrapped
+    // in .tbl-scroll at all and silently misses the mobile card styling
+    // (including its gray tray background) every other table gets for free.
+    if (window.wrapTableScroll) window.wrapTableScroll()
     if (window.initPagination) window.initPagination('rpt-tbody', 10)
 
     // Render trends
@@ -11217,7 +11386,7 @@ function reportTable(headers, rows) {
         <thead><tr>${headers.map(h=>`<th>${h}</th>`).join('')}</tr></thead>
         <tbody id="rpt-tbody">
           ${rows.map(r=>`<tr data-search="${r.map(c=>String(c).replace(/<[^>]+>/g,'')).join(' ').toLowerCase()}">
-            ${r.map(cell=>`<td style="font-size:.82rem">${cell}</td>`).join('')}
+            ${r.map((cell,i)=>`<td data-label="${headers[i]||''}" style="font-size:.82rem">${cell}</td>`).join('')}
           </tr>`).join('')}
         </tbody>
       </table>

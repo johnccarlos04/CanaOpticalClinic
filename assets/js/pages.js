@@ -207,17 +207,17 @@ function appointmentsTable(list, role, tbodyId = 'appt-tbody', hidePatient = fal
       </tr></thead>
       <tbody id="${tbodyId}">
         ${list.map(a => `<tr data-search="${(a.patientName||'').toLowerCase()} ${String(a.patientId||'').toLowerCase()} ${(a.doctorName||'').toLowerCase()} ${(a.type||'').toLowerCase()}" data-appt-status="${a.status}" data-sort-patient="${(a.patientName||'').toLowerCase()}" data-sort-date="${a.date}">
-          <td><code style="font-size:.75rem;color:#9CA3AF">${a.id}</code></td>
-          ${hidePatient ? '' : `<td><div class="patient-name-cell">
+          <td data-label="ID"><code style="font-size:.75rem;color:#9CA3AF">${a.id}</code></td>
+          ${hidePatient ? '' : `<td data-label="Patient"><div class="patient-name-cell">
             ${avatar(a.patientName, 'patient-avatar', patients.find(p=>p.id===a.patientId)?.photoUrl || null)}
             <div class="patient-name-info"><strong>${a.patientName}</strong><span>${a.patientId}</span></div>
           </div></td>`}
-          <td style="font-size:.82rem">${a.doctorName || '<span style="color:#9CA3AF;font-style:italic">Not yet assigned</span>'}</td>
-          <td style="font-size:.82rem">${fmtDate(a.date)}</td>
-          <td style="font-size:.82rem;white-space:nowrap">${a.time}</td>
-          <td style="font-size:.82rem">${a.type}</td>
-          <td>${apptStatusCell(a)}</td>
-          ${hasActions ? `<td>${apptActions(a, role)}</td>` : ''}
+          <td data-label="Doctor" style="font-size:.82rem">${a.doctorName || '<span style="color:#9CA3AF;font-style:italic">Not yet assigned</span>'}</td>
+          <td data-label="Date" style="font-size:.82rem">${fmtDate(a.date)}</td>
+          <td data-label="Time" style="font-size:.82rem;white-space:nowrap">${a.time}</td>
+          <td data-label="Type" style="font-size:.82rem">${a.type}</td>
+          <td data-label="Status" style="align-items:center">${apptStatusCell(a)}</td>
+          ${hasActions ? `<td data-label="Actions">${apptActions(a, role)}</td>` : ''}
         </tr>`).join('')}
       </tbody>
     </table>`
@@ -430,10 +430,10 @@ function pageAdminDashboard() {
             <thead><tr><th>Patient</th><th>Doctor</th><th>Date</th><th>Status</th></tr></thead>
             <tbody id="admin-appts-tbody">
               ${MOCK_APPTS.map(a => `<tr>
-                <td style="font-size:.82rem;font-weight:600">${a.patient}</td>
-                <td style="font-size:.78rem;color:#6B7280">${a.doctor}</td>
-                <td style="font-size:.78rem;color:#6B7280;white-space:nowrap">${a.date}</td>
-                <td>${badge(a.status)}</td>
+                <td data-label="Patient" style="font-size:.82rem;font-weight:600">${a.patient}</td>
+                <td data-label="Doctor" style="font-size:.78rem;color:#6B7280">${a.doctor}</td>
+                <td data-label="Date" style="font-size:.78rem;color:#6B7280;white-space:nowrap">${a.date}</td>
+                <td data-label="Status">${badge(a.status)}</td>
               </tr>`).join('')}
             </tbody>
           </table>
@@ -525,15 +525,15 @@ function pageAdminUsers() {
         </tr></thead>
         <tbody id="users-tbody">
           ${filtered.map(u => `<tr data-search="${(u.name||'').toLowerCase()} ${(u.email||'').toLowerCase()}" data-sort-name="${(u.name||'').toLowerCase()}">
-            <td><div class="patient-name-cell">
+            <td data-label="Name"><div class="patient-name-cell">
               ${avatar(u.name, 'patient-avatar', u.photoUrl || null)}
               <div class="patient-name-info"><strong>${u.name}</strong><span>${u.id}</span></div>
             </div></td>
-            <td style="font-size:.82rem">${u.email}</td>
-            <td style="font-size:.82rem">${u.contact || '—'}</td>
-            <td>${badge(u.role.toLowerCase())}</td>
-            <td>${badge(u.status || 'active')}</td>
-            <td><div style="display:flex;gap:6px;align-items:center;flex-wrap:nowrap">
+            <td data-label="Email" style="font-size:.82rem">${u.email}</td>
+            <td data-label="Contact" style="font-size:.82rem">${u.contact || '—'}</td>
+            <td data-label="Role">${badge(u.role.toLowerCase())}</td>
+            <td data-label="Status">${badge(u.status || 'active')}</td>
+            <td data-label="Actions"><div style="display:flex;gap:6px;align-items:center;flex-wrap:nowrap">
               ${u.role.toLowerCase() === 'patient' ? `<button class="btn-icon" title="View Profile"
                       onclick="window.navigate('patient-view',{patientId:'${u.id}',patientName:'${(u.name||'').replace(/'/g,"\\'")}'})">
                 ${ic('eye','icon-sm')}
@@ -692,16 +692,16 @@ function pagePatientList() {
         </tr></thead>
         <tbody id="patients-tbody">
           ${list.map(p => `<tr data-search="${(p.name||'').toLowerCase()} ${String(p.id||'').toLowerCase()} ${(p.contact||'').toLowerCase()}" data-sort-name="${(p.name||'').toLowerCase()}" data-sort-visit="${p.lastVisit && p.lastVisit !== '—' ? p.lastVisit : ''}">
-            <td><div class="patient-name-cell">
+            <td data-label="Patient"><div class="patient-name-cell">
               ${avatar(p.name, 'patient-avatar', p.photoUrl || null)}
               <div class="patient-name-info"><strong>${p.name}</strong><span>${p.id}</span></div>
             </div></td>
-            <td style="font-size:.82rem">${p.age}</td>
-            <td style="font-size:.82rem">${p.gender}</td>
-            <td style="font-size:.82rem">${p.contact}</td>
-            <td style="font-size:.82rem">${fmtDate(p.lastVisit)}</td>
-            <td>${badge(p.status || 'active')}</td>
-            <td><div style="display:flex;gap:4px;align-items:center;flex-wrap:nowrap">
+            <td data-label="Age" style="font-size:.82rem">${p.age}</td>
+            <td data-label="Gender" style="font-size:.82rem">${p.gender}</td>
+            <td data-label="Contact" style="font-size:.82rem">${p.contact}</td>
+            <td data-label="Last Visit" style="font-size:.82rem">${fmtDate(p.lastVisit)}</td>
+            <td data-label="Status">${badge(p.status || 'active')}</td>
+            <td data-label="Actions"><div style="display:flex;gap:4px;align-items:center;flex-wrap:nowrap">
               <button class="btn-icon" title="View Profile"
                       onclick="window.navigate('patient-view',{patientId:'${p.id}',patientName:'${p.name}'})">
                 ${ic('eye','icon-sm')}
@@ -1076,18 +1076,18 @@ function pageContactMessages() {
                         data-sort-from="${(m.name || '').toLowerCase()}" data-sort-received="${m.createdAt || ''}"
                         class="${!m.isRead ? 'msg-unread' : ''}" style="cursor:pointer"
                         onclick="window.openContactMessageModal(${m.id})">
-              <td><div class="patient-name-cell">
+              <td data-label="From"><div class="patient-name-cell">
                 ${!m.isRead ? '<span class="msg-dot" title="Unread"></span>' : ''}
                 ${avatar(m.name, 'patient-avatar')}
                 <div class="patient-name-info"><strong>${m.name}</strong><span>${m.email}</span></div>
               </div></td>
-              <td style="font-size:.82rem">${m.service || '—'}</td>
-              <td style="font-size:.82rem;color:#6b7280">
+              <td data-label="Service" style="font-size:.82rem">${m.service || '—'}</td>
+              <td data-label="Message" style="font-size:.82rem;color:#6b7280">
                 ${excerpt}
                 ${m.reply ? `<span style="display:inline-flex;align-items:center;gap:3px;margin-left:8px;font-size:.68rem;font-weight:600;color:#059669;background:#ECFDF5;border:1px solid #A7F3D0;border-radius:999px;padding:1px 8px;white-space:nowrap">${ic('check', 'icon-xs')} Replied</span>` : ''}
               </td>
-              <td style="font-size:.78rem;color:#9ca3af;white-space:nowrap">${window._notifTimeAgo(m.createdAt)}</td>
-              <td onclick="event.stopPropagation()">
+              <td data-label="Received" style="font-size:.78rem;color:#9ca3af;white-space:nowrap">${window._notifTimeAgo(m.createdAt)}</td>
+              <td data-label="Actions" onclick="event.stopPropagation()">
                 <div style="display:flex;gap:4px;align-items:center;flex-wrap:nowrap">
                   <button class="btn-icon" title="${m.archivedAt ? 'Move back to inbox' : 'Archive'}"
                           onclick="window.toggleContactMessageArchive(${m.id})">
@@ -1209,20 +1209,22 @@ function pageWaitlist() {
                         data-sort-doctor="${(e.doctorName || '').toLowerCase()}"
                         data-sort-position="${isOffered ? 0 : e._pos}"
                         data-sort-joined="${e.createdAt}">
-              <td>
-                <span style="display:inline-flex;align-items:center;padding:2px 9px;border-radius:6px;font-size:.71rem;font-weight:700;background:#EFF6FF;color:#2563EB">Slot ${g.no}</span>
-                <div style="font-size:.78rem;color:#374151;margin-top:4px">${fmtD(e.date)}</div>
-                <div style="font-size:.76rem;color:#6B7280">${e.time}</div>
+              <td data-label="Slot" style="align-items:center">
+                <div>
+                  <span style="display:inline-flex;align-items:center;padding:2px 9px;border-radius:6px;font-size:.71rem;font-weight:700;background:#EFF6FF;color:#2563EB">Slot ${g.no}</span>
+                  <div style="font-size:.78rem;color:#374151;margin-top:4px">${fmtD(e.date)}</div>
+                  <div style="font-size:.76rem;color:#6B7280">${e.time}</div>
+                </div>
               </td>
-              <td><div class="patient-name-cell">
+              <td data-label="Patient"><div class="patient-name-cell">
                 ${avatar(e.patientName, 'patient-avatar')}
                 <div class="patient-name-info"><strong>${e.patientName}</strong><span>${e.patientId}</span></div>
               </div></td>
-              <td style="font-size:.82rem">${e.doctorName || '—'}</td>
-              <td>${posBadge}</td>
-              <td>${statusPill}</td>
-              <td style="font-size:.78rem;color:#9ca3af;white-space:nowrap">${window._notifTimeAgo(e.createdAt)}</td>
-              <td>
+              <td data-label="Doctor" style="font-size:.82rem">${e.doctorName || '—'}</td>
+              <td data-label="Queue Position">${posBadge}</td>
+              <td data-label="Status" style="align-items:center">${statusPill}</td>
+              <td data-label="Joined" style="font-size:.78rem;color:#9ca3af;white-space:nowrap">${window._notifTimeAgo(e.createdAt)}</td>
+              <td data-label="Actions">
                 <button class="btn-icon" title="Remove from waitlist" style="color:#DC2626"
                         onclick="window.confirmRemoveWaitlistEntry(${e.id})">
                   ${ic('trash-2', 'icon-sm')}
@@ -1532,9 +1534,9 @@ function pageSchedule() {
             ${docAppts.length
               ? `<table class="tbl"><thead><tr><th>Patient</th><th>Time</th><th>Type</th></tr></thead><tbody>
                   ${docAppts.map(a=>`<tr>
-                    <td style="font-size:.82rem;font-weight:600">${a.patientName}</td>
-                    <td style="font-size:.78rem;white-space:nowrap">${a.time}</td>
-                    <td style="font-size:.78rem;color:#6B7280">${a.type}</td>
+                    <td data-label="Patient" style="font-size:.82rem;font-weight:600">${a.patientName}</td>
+                    <td data-label="Time" style="font-size:.78rem;white-space:nowrap">${a.time}</td>
+                    <td data-label="Type" style="font-size:.78rem;color:#6B7280">${a.type}</td>
                   </tr>`).join('')}
                 </tbody></table>`
               : `<div class="table-empty">No appointments today for this doctor.</div>`}
@@ -1788,8 +1790,8 @@ function pageAdminReports() {
         <div style="font-size:.72rem;color:#9ca3af;margin-top:2px">Select a report type and date range to get started.</div>
       </div>
       <div style="padding:20px 24px">
-        <div style="display:flex;gap:14px;align-items:flex-end;flex-wrap:wrap">
-          <div style="flex:1;min-width:220px">
+        <div class="filter-grid">
+          <div class="form-group filter-grid-full" style="flex:1;min-width:220px">
             <label style="display:block;font-size:.68rem;font-weight:700;color:#6b7280;margin-bottom:6px">Report type</label>
             ${window.selectFieldHtml('rpt-type', {
               placeholder: 'Select a report type',
@@ -1804,7 +1806,7 @@ function pageAdminReports() {
               style: 'height:42px'
             })}
           </div>
-          <div>
+          <div class="form-group filter-grid-full">
             <label style="display:block;font-size:.68rem;font-weight:700;color:#6b7280;margin-bottom:6px">Date range</label>
             <div style="display:flex;align-items:center;gap:8px">
               ${window.dateFieldHtml('rpt-from', { value: monthStart, style: 'width:142px' })}
@@ -1812,7 +1814,7 @@ function pageAdminReports() {
               ${window.dateFieldHtml('rpt-to', { value: today, style: 'width:142px' })}
             </div>
           </div>
-          <div style="display:flex;gap:8px;align-items:center">
+          <div class="filter-grid-actions" style="display:flex;gap:8px;align-items:center">
             <button class="btn-primary" id="rpt-gen-btn" onclick="window.generateReport()"
                     style="display:flex;align-items:center;gap:7px;padding:10px 22px;height:40px;white-space:nowrap">
               ${ic('bar-chart','icon-sm')} Generate
@@ -2516,15 +2518,15 @@ function pageAdminSettings() {
           </tr></thead>
           <tbody id="archives-tbody">
             ${list.map(r => `<tr data-search="${r.name.toLowerCase()} ${r.refId.toLowerCase()} ${r.archivedBy.toLowerCase()}" data-sort-name="${r.name.toLowerCase()}" data-sort-date="${r.date}">
-              <td style="white-space:nowrap">${typeBadge(r.type)}</td>
-              <td style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:0">
+              <td data-label="Type" style="white-space:nowrap">${typeBadge(r.type)}</td>
+              <td data-label="Name / ID" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:0">
                 <span style="font-size:.82rem;font-weight:600;color:#1f2937">${r.name}</span>
                 <span style="font-size:.72rem;color:#9ca3af;margin-left:5px">${r.refId}</span>
               </td>
-              <td style="font-size:.82rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:0">${r.archivedBy}</td>
-              <td style="font-size:.78rem;color:#6b7280;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:0" title="${r.reason}">${r.reason}</td>
-              <td style="font-size:.78rem;white-space:nowrap">${r.date}</td>
-              <td style="white-space:nowrap">
+              <td data-label="Archived By" style="font-size:.82rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:0">${r.archivedBy}</td>
+              <td data-label="Reason" style="font-size:.78rem;color:#6b7280;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:0" title="${r.reason}">${r.reason}</td>
+              <td data-label="Date" style="font-size:.78rem;white-space:nowrap">${r.date}</td>
+              <td data-label="Actions" style="white-space:nowrap">
                 <div style="display:flex;gap:4px;align-items:center;flex-wrap:nowrap">
                   <button class="btn-icon" title="View" onclick="window.viewArchivedRecord('${r.id}')">${ic('eye','icon-sm')}</button>
                   <button class="btn-icon" title="Restore" style="color:#16a34a;border-color:#d1fae5" onclick="window.confirmRestore('${r.id}','${r.name.replace(/'/g,"\\'")}')">${ic('rotate-ccw','icon-sm')}</button>
@@ -2602,7 +2604,7 @@ function pageActivityLog() {
     <div class="table-wrap">
 
       <!-- ── Filter bar ── -->
-      <div style="padding:12px 16px;border-bottom:1px solid #F3F4F6;display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end">
+      <div class="filter-grid activity-filter-bar">
         <div class="form-group" style="margin:0;flex:0 0 auto">
           <label class="form-label" style="font-size:.72rem">Role</label>
           ${window.selectFieldHtml('log-role-filter', {
@@ -2641,12 +2643,14 @@ function pageActivityLog() {
           <input id="log-search" class="search-input" placeholder="Search user or action…"
                  oninput="window.applyLogFilters()">
         </div>
-        <button class="btn-ghost" style="font-size:.78rem;align-self:flex-end" onclick="window.clearLogFilters()">
-          ${ic('x','icon-sm')} Clear Filters
-        </button>
-        <button class="btn-danger" style="font-size:.78rem;align-self:flex-end" onclick="window.clearAllLogs()">
-          ${ic('trash-2','icon-sm')} Clear All Logs
-        </button>
+        <div class="filter-grid-actions" style="display:flex;gap:10px;align-self:flex-end">
+          <button class="btn-ghost" style="font-size:.78rem" onclick="window.clearLogFilters()">
+            ${ic('x','icon-sm')} Clear Filters
+          </button>
+          <button class="btn-danger" style="font-size:.78rem" onclick="window.clearAllLogs()">
+            ${ic('trash-2','icon-sm')} Clear All Logs
+          </button>
+        </div>
       </div>
 
       ${activityLog.length ? `
@@ -2678,13 +2682,13 @@ function pageActivityLog() {
               data-ts="${l.timestamp}"
               data-sort-user="${l.user.toLowerCase()}"
               data-sort-ts="${l.timestamp}">
-              <td style="color:#9CA3AF;font-size:.75rem">${i+1}</td>
-              <td><div class="patient-name-cell">${avatar(l.user, 'patient-avatar', l.photoUrl || userPhotoMap[l.user] || null)}<strong style="font-size:.82rem">${l.user}</strong></div></td>
-              <td>${badge(l.role.toLowerCase())}</td>
-              <td style="font-size:.82rem;max-width:380px">${l.action}</td>
-              <td style="font-size:.75rem;color:#9CA3AF;white-space:nowrap">${fmtTimestamp12h(l.timestamp)}</td>
-              <td>${logTypeBadge(l.type)}</td>
-              <td style="font-size:.75rem;color:#9CA3AF;font-family:monospace;white-space:nowrap">${l.ip || '—'}</td>
+              <td data-label="#" style="color:#9CA3AF;font-size:.75rem">${i+1}</td>
+              <td data-label="User"><div class="patient-name-cell">${avatar(l.user, 'patient-avatar', l.photoUrl || userPhotoMap[l.user] || null)}<strong style="font-size:.82rem">${l.user}</strong></div></td>
+              <td data-label="Role">${badge(l.role.toLowerCase())}</td>
+              <td data-label="Action" style="font-size:.82rem;max-width:380px">${l.action}</td>
+              <td data-label="Timestamp" style="font-size:.75rem;color:#9CA3AF;white-space:nowrap">${fmtTimestamp12h(l.timestamp)}</td>
+              <td data-label="Type">${logTypeBadge(l.type)}</td>
+              <td data-label="IP Address" style="font-size:.75rem;color:#9CA3AF;font-family:monospace;white-space:nowrap">${l.ip || '—'}</td>
             </tr>`
           }).join('')}
           <tr id="log-empty-row" style="display:none;pointer-events:none">
@@ -2850,14 +2854,14 @@ function pageDoctorDashboard() {
         <thead><tr><th>Patient</th><th>Time</th><th>Type</th><th>Status</th><th>Action</th></tr></thead>
         <tbody>
           ${todayList.map(a => `<tr>
-            <td><div class="patient-name-cell">
+            <td data-label="Patient"><div class="patient-name-cell">
               ${avatar(a.patientName, 'patient-avatar', patients.find(p=>p.id===a.patientId)?.photoUrl || null)}
               <div class="patient-name-info"><strong>${a.patientName}</strong><span>${a.patientId}</span></div>
             </div></td>
-            <td style="font-size:.82rem;font-weight:600;white-space:nowrap">${a.time}</td>
-            <td style="font-size:.82rem">${a.type}</td>
-            <td>${badge(a.status)}</td>
-            <td>${a.status === 'completed'
+            <td data-label="Time" style="font-size:.82rem;font-weight:600;white-space:nowrap">${a.time}</td>
+            <td data-label="Type" style="font-size:.82rem">${a.type}</td>
+            <td data-label="Status">${badge(a.status)}</td>
+            <td data-label="Action">${a.status === 'completed'
               ? `<button class="btn-ghost" style="font-size:.75rem;padding:4px 10px" onclick="window.navigate('patient-view',{patientId:'${a.patientId}',patientName:'${a.patientName}'})">${ic('eye','icon-sm')} View Record</button>`
               : a.status === 'approved'
               ? `<button class="btn-primary btn-sm" onclick="window.startExamFromAppt('${a.id}','${a.patientId}')">${ic('check','icon-sm')} Start Consultation</button>`
@@ -2885,14 +2889,14 @@ function pageDoctorDashboard() {
         <thead><tr><th>Patient</th><th>Date</th><th>Type</th><th>Status</th><th></th></tr></thead>
         <tbody>
           ${recentDone.map(a => `<tr>
-            <td><div class="patient-name-cell">
+            <td data-label="Patient"><div class="patient-name-cell">
               ${avatar(a.patientName, 'patient-avatar', patients.find(p=>p.id===a.patientId)?.photoUrl || null)}
               <div class="patient-name-info"><strong>${a.patientName}</strong></div>
             </div></td>
-            <td style="font-size:.78rem;color:#6B7280;white-space:nowrap">${fmtDate(a.date)}</td>
-            <td style="font-size:.78rem">${a.type}</td>
-            <td>${badge(a.status)}</td>
-            <td><button class="btn-icon" title="View" onclick="window.navigate('patient-view',{patientId:'${a.patientId}',patientName:'${a.patientName}'})">${ic('eye','icon-sm')}</button></td>
+            <td data-label="Date" style="font-size:.78rem;color:#6B7280;white-space:nowrap">${fmtDate(a.date)}</td>
+            <td data-label="Type" style="font-size:.78rem">${a.type}</td>
+            <td data-label="Status">${badge(a.status)}</td>
+            <td data-label="Actions"><button class="btn-icon" title="View" onclick="window.navigate('patient-view',{patientId:'${a.patientId}',patientName:'${a.patientName}'})">${ic('eye','icon-sm')}</button></td>
           </tr>`).join('')}
         </tbody>
       </table>
@@ -2987,16 +2991,16 @@ function pageDoctorAppointments() {
         </tr></thead>
         <tbody id="doc-appt-tbody">
           ${list.map(a => `<tr data-search="${(a.patientName||'').toLowerCase()} ${(a.type||'').toLowerCase()}" data-sort-patient="${(a.patientName||'').toLowerCase()}" data-sort-date="${a.date}">
-            <td><code style="font-size:.73rem;color:#9CA3AF">${a.id}</code></td>
-            <td><div class="patient-name-cell">
+            <td data-label="ID"><code style="font-size:.73rem;color:#9CA3AF">${a.id}</code></td>
+            <td data-label="Patient"><div class="patient-name-cell">
               ${avatar(a.patientName, 'patient-avatar', patients.find(p=>p.id===a.patientId)?.photoUrl || null)}
               <div class="patient-name-info"><strong>${a.patientName}</strong><span>${a.patientId}</span></div>
             </div></td>
-            <td style="font-size:.82rem;white-space:nowrap">${fmtDate(a.date)}</td>
-            <td style="font-size:.82rem;white-space:nowrap">${a.time}</td>
-            <td style="font-size:.82rem">${a.type}</td>
-            <td>${badge(a.status)}</td>
-            <td>${docActions(a)}</td>
+            <td data-label="Date" style="font-size:.82rem;white-space:nowrap">${fmtDate(a.date)}</td>
+            <td data-label="Time" style="font-size:.82rem;white-space:nowrap">${a.time}</td>
+            <td data-label="Type" style="font-size:.82rem">${a.type}</td>
+            <td data-label="Status">${badge(a.status)}</td>
+            <td data-label="Actions">${docActions(a)}</td>
           </tr>`).join('')}
         </tbody>
       </table>` : `<div class="table-empty">No appointments found.</div>`}
@@ -3614,32 +3618,33 @@ function pageExamRecords() {
         </tr></thead>
         <tbody id="exam-records-tbody">
           ${filtered.map(e => `<tr data-search="${e.patientName.toLowerCase()} ${(e.diagnosis||'').toLowerCase()} ${e.doctor.toLowerCase()}" data-sort-patient="${e.patientName.toLowerCase()}" data-sort-date="${e.date}">
-            <td><code style="font-size:.73rem;color:#9CA3AF">${e.id}</code></td>
-            <td><div class="patient-name-cell">
+            <td data-label="Exam ID"><code style="font-size:.73rem;color:#9CA3AF">${e.id}</code></td>
+            <td data-label="Patient"><div class="patient-name-cell">
               ${avatar(e.patientName, 'patient-avatar', patients.find(p=>p.id===e.patientId)?.photoUrl || null)}
               <div class="patient-name-info"><strong>${e.patientName}</strong><span>${e.patientId}</span></div>
             </div></td>
-            <td style="font-size:.82rem">${e.doctor}</td>
-            <td style="font-size:.82rem;white-space:nowrap">${fmtDate(e.date)}</td>
-            <td style="font-size:.82rem;max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${e.diagnosis}">${e.diagnosis}</td>
-            <td style="font-size:.78rem;color:#6B7280">${e.lensType || '—'}</td>
-            <td>${badge(e.status || 'completed')}</td>
-            <td style="white-space:nowrap">
-              <button class="btn-icon" title="View Details"
-                      onclick="window.viewExamRecord('${e.id}')">
-                ${ic('eye','icon-sm')}
-              </button>
-              <button class="btn-icon" title="Print"
-                      onclick="window.printExamRecord('${e.id}')"
-                      style="margin-left:2px">
-                ${ic('printer','icon-sm')}
-              </button>
-              ${(role === 'admin' || role === 'doctor') ? `
-              <button class="btn-icon" title="Generate Clearance"
-                      style="color:#0891b2;margin-left:2px"
-                      onclick="window.generateClearanceFromRecord('${e.id}')">
-                ${ic('award','icon-sm')}
-              </button>` : ''}
+            <td data-label="Doctor" style="font-size:.82rem">${e.doctor}</td>
+            <td data-label="Date" style="font-size:.82rem;white-space:nowrap">${fmtDate(e.date)}</td>
+            <td data-label="Diagnosis" style="font-size:.82rem;max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${e.diagnosis}">${e.diagnosis}</td>
+            <td data-label="Lens Type" style="font-size:.78rem;color:#6B7280">${e.lensType || '—'}</td>
+            <td data-label="Status">${badge(e.status || 'completed')}</td>
+            <td data-label="Actions" style="white-space:nowrap">
+              <div style="display:flex;gap:4px;align-items:center">
+                <button class="btn-icon" title="View Details"
+                        onclick="window.viewExamRecord('${e.id}')">
+                  ${ic('eye','icon-sm')}
+                </button>
+                <button class="btn-icon" title="Print"
+                        onclick="window.printExamRecord('${e.id}')">
+                  ${ic('printer','icon-sm')}
+                </button>
+                ${(role === 'admin' || role === 'doctor') ? `
+                <button class="btn-icon" title="Generate Clearance"
+                        style="color:#0891b2"
+                        onclick="window.generateClearanceFromRecord('${e.id}')">
+                  ${ic('award','icon-sm')}
+                </button>` : ''}
+              </div>
             </td>
           </tr>`).join('')}
         </tbody>
@@ -4297,9 +4302,13 @@ function pagePatientExamHistory() {
   window.state.afterRender = () => {
     window._filterExamHistory = function(q) {
       const term = q.toLowerCase()
+      let anyMatch = false
       document.querySelectorAll('.exam-hist-row').forEach(function(r) {
-        r.style.display = (r.dataset.search || '').includes(term) ? '' : 'none'
+        const match = (r.dataset.search || '').includes(term)
+        r.style.display = match ? '' : 'none'
+        if (match) anyMatch = true
       })
+      window._syncSearchEmptyState('exam-hist-card', !anyMatch, 'div', 'No examinations match your search.')
     }
   }
 
@@ -4309,7 +4318,6 @@ function pagePatientExamHistory() {
       <h1 class="page-title">Examination History</h1>
       <p class="page-subtitle">Your complete optical examination records from Cana Optical Clinic</p>
     </div>
-    ${sorted.length ? `<button class="btn-ghost" onclick="window.navigate('patient-prescriptions')" style="font-size:.82rem">${ic('file-text','icon-sm')} Prescriptions</button>` : ''}
   </div>
   <div class="page-body">
 
@@ -4360,7 +4368,7 @@ function pagePatientExamHistory() {
     </div>` : ''}
 
     <!-- All examinations list -->
-    <div class="card">
+    <div class="card" id="exam-hist-card">
       <div class="card-header">
         <div class="card-title">${sorted.length} Examination${sorted.length !== 1 ? 's' : ''} on Record</div>
         <div class="search-input-wrap">
@@ -4369,8 +4377,7 @@ function pagePatientExamHistory() {
         </div>
       </div>
       ${sorted.map((e, i) => `
-      <div class="exam-hist-row" data-search="${(e.diagnosis||'').toLowerCase()} ${e.doctor.toLowerCase()}"
-           style="display:flex;align-items:center;gap:12px;padding:13px 20px;border-bottom:1px solid #F3F4F6;${i===0 ? 'background:#FAFAF8;' : ''}">
+      <div class="exam-hist-row hist-row${i===0 ? ' hist-row-featured' : ''}" data-search="${(e.diagnosis||'').toLowerCase()} ${e.doctor.toLowerCase()}">
         <!-- Date block -->
         <div style="text-align:center;min-width:38px;flex-shrink:0">
           <div style="font-size:1.05rem;font-weight:800;color:#1C1C1C;line-height:1">${new Date(e.date + 'T00:00:00').getDate()}</div>
@@ -4500,11 +4507,11 @@ function pagePatientDashboard() {
           <thead><tr><th>Doctor</th><th data-sort-key="date" data-sort-type="date">Date</th><th>Time</th><th>Type</th><th>Status</th></tr></thead>
           <tbody id="dash-upcoming-tbody">
             ${show3.map(a => `<tr data-search="${(a.doctorName||'').toLowerCase()} ${(a.type||'').toLowerCase()}" data-sort-date="${a.date}">
-              <td style="font-size:.82rem;font-weight:500">${a.doctorName || '<span style="font-style:italic;color:#9CA3AF;font-weight:400">To be assigned</span>'}</td>
-              <td style="font-size:.82rem">${fmtDate(a.date)}</td>
-              <td style="font-size:.82rem;white-space:nowrap">${a.time}</td>
-              <td style="font-size:.78rem;color:#6B7280">${a.type}</td>
-              <td>${badge(a.status)}</td>
+              <td data-label="Doctor" style="font-size:.82rem;font-weight:500">${a.doctorName || '<span style="font-style:italic;color:#9CA3AF;font-weight:400">To be assigned</span>'}</td>
+              <td data-label="Date" style="font-size:.82rem">${fmtDate(a.date)}</td>
+              <td data-label="Time" style="font-size:.82rem;white-space:nowrap">${a.time}</td>
+              <td data-label="Type" style="font-size:.78rem;color:#6B7280">${a.type}</td>
+              <td data-label="Status">${badge(a.status)}</td>
             </tr>`).join('')}
           </tbody>
         </table>
@@ -4631,6 +4638,15 @@ function appointmentWizardHtml(mode) {
         font-family:'Poppins',sans-serif; }
       .doc-card:hover { border-color:#E8760A; background:#FFFBF5; }
       .doc-card.selected { border-color:#E8760A; background:#FFF7ED; }
+      /* Unavailable/fully-booked doctor cards — a plain opacity dial-down
+         still let the base .doc-card:hover rule fire on mouseover (same
+         orange border+tint as a real selectable card), so it kept reading
+         as clickable no matter how faint it was. This overrides hover
+         outright instead, plus mutes the card to a flat grey so "not an
+         option today" is legible even before you touch it. */
+      .doc-card.doc-card-disabled { background:#F9FAFB; border-color:#E5E7EB; cursor:not-allowed; }
+      .doc-card.doc-card-disabled:hover { border-color:#E5E7EB; background:#F9FAFB; }
+      .doc-card.doc-card-disabled .doc-card-avatar { filter:grayscale(1); opacity:.6; }
       .doc-card-avatar { width:40px; height:40px; border-radius:50%; background:#E8760A;
         display:flex; align-items:center; justify-content:center; font-size:.78rem;
         font-weight:700; color:#fff; flex-shrink:0; }
@@ -5168,12 +5184,12 @@ function pagePatientAppts() {
         <tbody id="pt-appt-tbody">
           ${sortedAppts.map(a => {
             return `<tr data-search="${(a.doctorName||'').toLowerCase()} ${(a.type||'').toLowerCase()}" data-appt-status="${a.status}" data-sort-doctor="${(a.doctorName||'').toLowerCase()}" data-sort-date="${a.date}">
-            <td style="font-size:.82rem;font-weight:500">${a.doctorName || '<span style="font-style:italic;color:#9CA3AF;font-weight:400">To be assigned</span>'}</td>
-            <td style="font-size:.82rem">${fmtDate(a.date)}</td>
-            <td style="font-size:.82rem;white-space:nowrap">${a.time}</td>
-            <td style="font-size:.82rem">${a.type}</td>
-            <td>${apptStatusCell(a)}</td>
-            <td>
+            <td data-label="Doctor" style="font-size:.82rem;font-weight:500">${a.doctorName || '<span style="font-style:italic;color:#9CA3AF;font-weight:400">To be assigned</span>'}</td>
+            <td data-label="Date" style="font-size:.82rem">${fmtDate(a.date)}</td>
+            <td data-label="Time" style="font-size:.82rem;white-space:nowrap">${a.time}</td>
+            <td data-label="Type" style="font-size:.82rem">${a.type}</td>
+            <td data-label="Status" style="align-items:center">${apptStatusCell(a)}</td>
+            <td data-label="Actions">
               <div style="display:flex;flex-direction:column;gap:4px;align-items:flex-start">
                 <div class="pt-appt-act">
                   <button class="btn-icon" title="View Details" onclick="window.viewAppt('${a.id}')">${ic('eye','icon-sm')}</button>
@@ -5207,9 +5223,13 @@ function pagePatientConsultations() {
   window.state.afterRender = () => {
     window._filterConsultHistory = function(q) {
       const term = q.toLowerCase()
+      let anyMatch = false
       document.querySelectorAll('.con-hist-row').forEach(function(r) {
-        r.style.display = (r.dataset.search || '').includes(term) ? '' : 'none'
+        const match = (r.dataset.search || '').includes(term)
+        r.style.display = match ? '' : 'none'
+        if (match) anyMatch = true
       })
+      window._syncSearchEmptyState('con-hist-card', !anyMatch, 'div', 'No consultations match your search.')
     }
   }
 
@@ -5257,7 +5277,7 @@ function pagePatientConsultations() {
     </div>
 
     <!-- All consultations list -->
-    <div class="card">
+    <div class="card" id="con-hist-card">
       <div class="card-header">
         <div class="card-title">${sorted.length} Consultation${sorted.length !== 1 ? 's' : ''} on Record</div>
         <div class="search-input-wrap">
@@ -5266,8 +5286,7 @@ function pagePatientConsultations() {
         </div>
       </div>
       ${sorted.map((c, i) => `
-      <div class="con-hist-row" data-search="${(c.diagnosis||'').toLowerCase()} ${(c.doctor||'').toLowerCase()} ${(c.type||'').toLowerCase()}"
-           style="display:flex;align-items:center;gap:12px;padding:13px 20px;border-bottom:1px solid #F3F4F6;${i===0 ? 'background:#FAFAF8;' : ''}">
+      <div class="con-hist-row hist-row${i===0 ? ' hist-row-featured' : ''}" data-search="${(c.diagnosis||'').toLowerCase()} ${(c.doctor||'').toLowerCase()} ${(c.type||'').toLowerCase()}">
         <!-- Date block -->
         <div style="text-align:center;min-width:38px;flex-shrink:0">
           <div style="font-size:1.05rem;font-weight:800;color:#1C1C1C;line-height:1">${new Date(c.date+'T00:00:00').getDate()}</div>
@@ -5540,8 +5559,10 @@ function pageStaffSettings() {
 //  PATIENT — PRESCRIPTIONS
 // ════════════════════════════════════════════════════════════════
 
-// Full printable "document" card for one prescription — used both inline
-// (the featured latest Rx) and inside the view-detail modal for any other.
+// Full printable "document" card for one prescription — used inline on the
+// patient's own Prescriptions list and Patient Records (viewing a specific
+// Rx now opens viewPrescriptionModal() instead, main.js — see
+// viewPrescriptionDetail()).
 function renderRxDocumentCard(rx, patient, isFeatured) {
   if (!rx) return ''
   const rxDate     = new Date(rx.date.includes('T') ? rx.date : rx.date + 'T00:00:00')
@@ -5553,8 +5574,6 @@ function renderRxDocumentCard(rx, patient, isFeatured) {
   const docInits   = (rx.doctor||'Dr').split(' ').slice(0,2).map(w=>w[0]||'').join('').toUpperCase()
   const docRecord  = doctors.find(d => d.name === rx.doctor)
   const docPhoto   = docRecord?.photoUrl || null
-  const matchExam  = (patient?.examinations || []).find(e => e.date === rx.date && e.doctor === rx.doctor)
-                    || (patient?.examinations || []).find(e => e.date === rx.date)
   return `
     <div class="card" style="margin-bottom:18px;overflow:hidden${isFeatured ? ';box-shadow:0 0 0 2px #E8760A,0 8px 24px rgba(232,118,10,.12)' : ''}">
 
@@ -5572,18 +5591,18 @@ function renderRxDocumentCard(rx, patient, isFeatured) {
       </div>
 
       <!-- Issuer + validity strip -->
-      <div style="background:#F9FAFB;border-bottom:1px solid #F3F4F6;padding:10px 20px;display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">
+      <div class="rx-issuer-strip" style="background:#F9FAFB;border-bottom:1px solid #F3F4F6;padding:10px 20px;display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">
         <div style="display:flex;align-items:center;gap:10px">
           ${docPhoto
             ? `<div style="width:34px;height:34px;border-radius:50%;overflow:hidden;flex-shrink:0"><img src="${docPhoto}" alt="${rx.doctor}" style="width:100%;height:100%;object-fit:cover;border-radius:50%;display:block"></div>`
-            : `<div style="width:34px;height:34px;border-radius:50%;background:linear-gradient(135deg,#1C1C1C,#3D3D3D);display:flex;align-items:center;justify-content:center;font-size:.72rem;font-weight:800;color:#E8760A;flex-shrink:0;letter-spacing:.02em">${docInits}</div>`
+            : `<div style="width:34px;height:34px;border-radius:50%;background:#1C1C1C;display:flex;align-items:center;justify-content:center;font-size:.72rem;font-weight:800;color:#E8760A;flex-shrink:0;letter-spacing:.02em">${docInits}</div>`
           }
           <div>
             <div style="font-size:.6rem;color:#9CA3AF;text-transform:uppercase;letter-spacing:.05em">Issued by</div>
             <div style="font-size:.85rem;font-weight:700;color:#1C1C1C">${rx.doctor}</div>
           </div>
         </div>
-        <div style="text-align:right;flex-shrink:0">
+        <div class="rx-issuer-meta" style="text-align:right;flex-shrink:0">
           <div style="font-size:.72rem;color:#9CA3AF;margin-bottom:4px">${rxDateStr}</div>
           <span style="font-size:.68rem;font-weight:700;padding:3px 10px;border-radius:20px;${isExpired ? 'background:#FEE2E2;color:#DC2626;border:1px solid #FECACA' : 'background:#ECFDF5;color:#059669;border:1px solid #A7F3D0'}">
             ${isExpired ? ic('x-circle','icon-sm') + ' Expired' : ic('check-circle','icon-sm') + ' Valid until ' + expiryStr}
@@ -5657,14 +5676,11 @@ function renderRxDocumentCard(rx, patient, isFeatured) {
 
       </div><!-- end printable body -->
 
-      <!-- Card footer actions -->
+      <!-- Card footer actions — no Exam History cross-link here anymore,
+           that page is already one click away via the sidebar. -->
       <div style="padding:10px 20px;border-top:1px solid #F3F4F6;background:#FAFAFA;display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap">
         <div style="font-size:.72rem;color:#9CA3AF">Rx valid for 1 year from date of issue</div>
         <div style="display:flex;gap:8px">
-          <button class="btn-ghost" style="font-size:.78rem;padding:5px 12px"
-                  onclick="${matchExam ? `window.viewExamDetail('${patient.id}','${matchExam.id}')` : `window.navigate('patient-exam-history')`}">
-            ${ic('eye','icon-sm')} Exam History
-          </button>
           <button class="btn-secondary" style="font-size:.78rem;padding:5px 12px"
                   onclick="window.printRxRecord('${patient.id}','${rx.id}')">
             ${ic('printer','icon-sm')} Print Rx
@@ -5686,9 +5702,13 @@ function pagePatientPrescriptions() {
   window.state.afterRender = () => {
     window._filterRxHistory = function(q) {
       const term = q.toLowerCase()
+      let anyMatch = false
       document.querySelectorAll('.rx-hist-row').forEach(function(r) {
-        r.style.display = (r.dataset.search || '').includes(term) ? '' : 'none'
+        const match = (r.dataset.search || '').includes(term)
+        r.style.display = match ? '' : 'none'
+        if (match) anyMatch = true
       })
+      window._syncSearchEmptyState('rx-hist-card', !anyMatch, 'div', 'No prescriptions match your search.')
     }
   }
 
@@ -5698,7 +5718,6 @@ function pagePatientPrescriptions() {
       <h1 class="page-title">My Prescriptions</h1>
       <p class="page-subtitle">Official optical prescriptions from Cana Optical Clinic</p>
     </div>
-    ${sorted.length ? `<button class="btn-ghost" onclick="window.navigate('patient-exam-history')" style="font-size:.82rem">${ic('eye','icon-sm')} Exam History</button>` : ''}
   </div>
   <div class="page-body">
     ${sorted.length ? `
@@ -5706,7 +5725,7 @@ function pagePatientPrescriptions() {
     ${renderRxDocumentCard(latest, patient, true)}
 
     <!-- All prescriptions list -->
-    <div class="card">
+    <div class="card" id="rx-hist-card">
       <div class="card-header">
         <div class="card-title">${sorted.length} Prescription${sorted.length !== 1 ? 's' : ''} on Record</div>
         <div class="search-input-wrap">
@@ -5720,8 +5739,7 @@ function pagePatientPrescriptions() {
         expiryDate.setFullYear(expiryDate.getFullYear() + 1)
         const isExpired = expiryDate < new Date()
         return `
-      <div class="rx-hist-row" data-search="${(rx.doctor||'').toLowerCase()} ${(rx.lensType||'').toLowerCase()} ${rx.id.toLowerCase()}"
-           style="display:flex;align-items:center;gap:12px;padding:13px 20px;border-bottom:1px solid #F3F4F6;${i===0 ? 'background:#FAFAF8;' : ''}">
+      <div class="rx-hist-row hist-row${i===0 ? ' hist-row-featured' : ''}" data-search="${(rx.doctor||'').toLowerCase()} ${(rx.lensType||'').toLowerCase()} ${rx.id.toLowerCase()}">
         <!-- Date block -->
         <div style="text-align:center;min-width:38px;flex-shrink:0">
           <div style="font-size:1.05rem;font-weight:800;color:#1C1C1C;line-height:1">${d.getDate()}</div>
@@ -5826,9 +5844,6 @@ function pagePatientSettings() {
 
   const regDate = patient?.registeredDate
     ? new Date(patient.registeredDate).toLocaleDateString('en-PH', { month: 'long', year: 'numeric' })
-    : '—'
-  const dob = patient?.dob
-    ? new Date(patient.dob).toLocaleDateString('en-PH', { month: 'long', day: 'numeric', year: 'numeric' })
     : '—'
 
   const pwField = (id, placeholder, extra='') => `
@@ -5940,32 +5955,26 @@ function pagePatientSettings() {
           </div>
           <div class="form-row-2">
             <div class="form-group">
-              <label class="form-label" style="display:flex;align-items:center;gap:4px;color:#9CA3AF">
-                ${ic('lock','icon-sm')} Date of Birth
-              </label>
-              <input type="text" class="form-input" value="${dob}" disabled
-                     style="background:#F9FAFB;color:#9CA3AF;cursor:not-allowed">
+              <label class="form-label">Date of Birth</label>
+              ${window.dobFieldHtml('sett-dob', { value: patient?.dob || '', max: window.maxDobFor18(), onchange: 'window._syncSettAge()' })}
             </div>
             <div class="form-group">
               <label class="form-label" style="display:flex;align-items:center;gap:4px;color:#9CA3AF">
-                ${ic('lock','icon-sm')} Age
+                ${ic('info','icon-sm')} Age
               </label>
-              <input type="text" class="form-input" value="${patient?.age ? patient.age + ' years old' : '—'}" disabled
+              <input type="text" class="form-input" id="sett-age-display" value="${patient?.age ? patient.age + ' years old' : '—'}" disabled
                      style="background:#F9FAFB;color:#9CA3AF;cursor:not-allowed">
             </div>
           </div>
           <div class="form-row-2">
             <div class="form-group">
-              <label class="form-label" style="display:flex;align-items:center;gap:4px;color:#9CA3AF">
-                ${ic('lock','icon-sm')} Gender
-              </label>
-              <input type="text" class="form-input" value="${patient?.gender || '—'}" disabled
-                     style="background:#F9FAFB;color:#9CA3AF;cursor:not-allowed">
+              <label class="form-label">Gender</label>
+              ${window.selectFieldHtml('sett-gender', { value: patient?.gender || '', options: ['Male','Female','Other'] })}
             </div>
             <div class="form-group"></div>
           </div>
-          <div style="background:#FFF7ED;border-left:3px solid #E8760A;border-radius:0 6px 6px 0;padding:10px 14px;display:flex;align-items:flex-start;gap:8px;font-size:.8rem;color:#92400E">
-            <span style="flex-shrink:0;display:flex">${ic('info','icon-sm')}</span> Contact the clinic to update your date of birth, gender, or medical history.
+          <div style="background:#FFF7ED;border-left:3px solid #E8760A;border-radius:8px;padding:10px 14px;display:flex;align-items:flex-start;gap:8px;font-size:.8rem;color:#92400E">
+            <span style="flex-shrink:0;display:flex">${ic('info','icon-sm')}</span> Age is calculated automatically from your date of birth.
           </div>
           <div style="display:flex;justify-content:flex-end">
             <button class="btn-primary" onclick="window.savePatientSettings()">

@@ -141,7 +141,12 @@ try {
             offerNextWaitlistSlot($pdo, $appt['doctor_id'], $appt['date'], $appt['time']);
         }
 
-        // Notify patient when status changes (not for patient-initiated cancel)
+        // Notify patient when status changes (not for patient-initiated cancel).
+        // Cancelled/disapproved get email too, same as rescheduled below —
+        // all three mean "don't come at the time you were expecting to,"
+        // which is a real, tangible consequence to miss, not just a status
+        // update. Approved/no-show stay in-app-only: approved has no wrong
+        // action to guard against, and no-show has already happened.
         if ($role !== 'patient' && $patientUid = $getPatientUserId()) {
             $fmtDate = date('M j, Y', strtotime($appt['date']));
             $doctor  = $appt['doctor_name'] ?? 'your doctor';
@@ -151,17 +156,15 @@ try {
                     "Your appointment with {$doctor} on {$fmtDate} at {$appt['time']} has been approved."
                 );
             } elseif ($newStatus === 'cancelled') {
-                createNotification($pdo, $patientUid, 'cancelled',
-                    'Appointment Cancelled',
-                    "Your appointment with {$doctor} on {$fmtDate} has been cancelled by the clinic."
-                    . ($cancelReason ? " Reason: {$cancelReason}" : '')
-                );
+                $cancelMsg = "Your appointment with {$doctor} on {$fmtDate} has been cancelled by the clinic."
+                    . ($cancelReason ? " Reason: {$cancelReason}" : '');
+                createNotification($pdo, $patientUid, 'cancelled', 'Appointment Cancelled', $cancelMsg);
+                _emailPatientNotice($pdo, $patientUid, 'Appointment Cancelled', $cancelMsg);
             } elseif ($newStatus === 'disapproved') {
-                createNotification($pdo, $patientUid, 'disapproved',
-                    'Appointment Not Approved',
-                    "Your appointment request with {$doctor} on {$fmtDate} could not be approved."
-                    . ($disapprovalReason ? " Reason: {$disapprovalReason}" : '')
-                );
+                $disapproveMsg = "Your appointment request with {$doctor} on {$fmtDate} could not be approved."
+                    . ($disapprovalReason ? " Reason: {$disapprovalReason}" : '');
+                createNotification($pdo, $patientUid, 'disapproved', 'Appointment Not Approved', $disapproveMsg);
+                _emailPatientNotice($pdo, $patientUid, 'Appointment Not Approved', $disapproveMsg);
             } elseif ($newStatus === 'no-show') {
                 $msg = "You were marked as a no-show for your appointment with {$doctor} on {$fmtDate} at {$appt['time']}.";
                 if ($justRestricted) {
