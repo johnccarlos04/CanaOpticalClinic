@@ -5679,14 +5679,14 @@ function openContactMessageModal(id) {
         <p style="margin:0 0 6px;font-size:.72rem;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:#9CA3AF">
           Replied by ${m.repliedBy || 'Clinic Staff'} &bull; ${rDate}
         </p>
-        <div style="background:#FFF8F0;border:1.5px solid #FFD9A8;border-radius:10px;padding:16px;font-size:.88rem;color:#1C1C1C;line-height:1.6;white-space:pre-wrap">${m.reply}</div>
+        <div style="background:#FFF8F0;border:1.5px solid #FFD9A8;border-radius:10px;padding:16px;font-size:.88rem;color:#1C1C1C;line-height:1.6;white-space:pre-wrap;overflow-wrap:anywhere;word-break:break-word">${m.reply}</div>
       </div>`
   })() : ''
 
   showModal(`
     <div class="modal-header">
       <div class="modal-title" style="display:flex;align-items:center;gap:10px">
-        ${avatar(m.name, 'patient-avatar')}
+        ${avatar(m.name, 'patient-avatar', _accountPhotoForEmail(m.email))}
         <div>
           <div>${m.name}</div>
           <div style="font-size:.72rem;font-weight:500;color:#9CA3AF">${m.email}</div>
@@ -5699,7 +5699,7 @@ function openContactMessageModal(id) {
         ${m.service ? `<span><strong style="color:#374151">Service:</strong> ${m.service}</span>` : ''}
         <span><strong style="color:#374151">Received:</strong> ${fullDate}</span>
       </div>
-      <div style="background:#F9FAFB;border:1px solid #E5E7EB;border-radius:10px;padding:16px;font-size:.88rem;color:#374151;line-height:1.6;white-space:pre-wrap">${m.message}</div>
+      <div style="background:#F9FAFB;border:1px solid #E5E7EB;border-radius:10px;padding:16px;font-size:.88rem;color:#374151;line-height:1.6;white-space:pre-wrap;overflow-wrap:anywhere;word-break:break-word">${m.message}</div>
       ${replyHtml}
     </div>
     <div class="modal-footer" style="justify-content:space-between;flex-wrap:wrap;gap:8px">
@@ -5719,7 +5719,7 @@ function openContactMessageModal(id) {
           ${icon('mail', 'icon-sm')} ${m.reply ? 'Edit Reply' : 'Reply'}
         </button>
       </div>
-    </div>`)
+    </div>`, 'modal-lg')
 }
 window.openContactMessageModal = openContactMessageModal
 

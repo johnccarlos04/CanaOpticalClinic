@@ -50,6 +50,19 @@ function avatar(name, cls = 'patient-avatar', photoUrl = null) {
 }
 window.avatarFallbackAttr = avatarFallbackAttr
 
+// Looks up a real account (patient/doctor/staff/admin) by email — used for
+// contact-form submissions, which are freeform and not tied to a login.
+// When the submitted email happens to match a real account, we can show
+// that account's actual profile photo instead of a generic initials circle
+// built from whatever name they typed into the form.
+function _accountPhotoForEmail(email) {
+  const e = (email || '').trim().toLowerCase()
+  if (!e) return null
+  const match = [...patients, ...doctors, ...staff, ...admins].find(u => (u.email || '').trim().toLowerCase() === e)
+  return match?.photoUrl || null
+}
+window._accountPhotoForEmail = _accountPhotoForEmail
+
 function dayPills(days, size = 'md') {
   if (!days || !days.length) return ''
   const gap  = size === 'sm' ? '3px' : '5px'
@@ -1078,7 +1091,7 @@ function pageContactMessages() {
                         onclick="window.openContactMessageModal(${m.id})">
               <td data-label="From"><div class="patient-name-cell">
                 ${!m.isRead ? '<span class="msg-dot" title="Unread"></span>' : ''}
-                ${avatar(m.name, 'patient-avatar')}
+                ${avatar(m.name, 'patient-avatar', _accountPhotoForEmail(m.email))}
                 <div class="patient-name-info"><strong>${m.name}</strong><span>${m.email}</span></div>
               </div></td>
               <td data-label="Service" style="font-size:.82rem">${m.service || '—'}</td>
