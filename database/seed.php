@@ -109,9 +109,9 @@ log_msg('Doctors seeded (D001–D007).');
 $insP = $pdo->prepare(
     'INSERT INTO patients
      (id,user_id,first_name,last_name,gender,dob,age,contact,address,
-      blood_type,occupation,medical_history,optical_history,
+      occupation,
       qr_data,registered_date,last_visit,status)
-     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)'
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)'
 );
 
 $patRows = [
@@ -210,17 +210,23 @@ $patRows = [
 ];
 
 foreach ($patRows as $r) {
-    [$pid,$email,$pass,$fn,$ln,$gender,$dob,$age,$contact,$address,$blood,$occ,$medHx,$optHx,$regDate,$lastVisit,$status] = $r;
+    // The blood-type and medical/optical-history positions (right after
+    // $address and $occ respectively) are intentionally skipped —
+    // patients no longer has blood_type/medical_history/optical_history
+    // columns, but the row literals above weren't rewritten to drop those
+    // fields (26 rows of hand-formatted seed data isn't worth the churn
+    // just to delete already-unused strings), so they're destructured and
+    // discarded here.
+    [$pid,$email,$pass,$fn,$ln,$gender,$dob,$age,$contact,$address,,$occ,,,$regDate,$lastVisit,$status] = $r;
     $uid = addUser($pdo, $email, $pass, 'patient');
     $qr  = 'CANA-' . $pid . '-' . strtoupper($fn . $ln);
-    $insP->execute([$pid,$uid,$fn,$ln,$gender,$dob,$age,$contact,$address,$blood,$occ,$medHx,$optHx,$qr,$regDate,$lastVisit,$status]);
+    $insP->execute([$pid,$uid,$fn,$ln,$gender,$dob,$age,$contact,$address,$occ,$qr,$regDate,$lastVisit,$status]);
 }
 
 // Shortcut alias — maps to Maria Santos (P001)
 $aliasUid = addUser($pdo, 'patient@gmail.com', 'patient123', 'patient');
 $insP->execute(['P026',$aliasUid,'Maria','Santos','Female','1990-03-15',35,'09171234567',
-    '123 Rizal St, Bacoor, Cavite','O+','Accountant',
-    'Hypertension (controlled).','Myopia since age 12.',
+    '123 Rizal St, Bacoor, Cavite','Accountant',
     'CANA-P026-MARIASANTOS',date('Y-m-d'),null,'active']);
 
 log_msg('Patients seeded (P001–P026).');

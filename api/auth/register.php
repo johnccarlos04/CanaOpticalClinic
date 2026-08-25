@@ -2,7 +2,7 @@
 // ================================================================
 //  CANAOPTICALCLINIC — api/auth/register.php
 //  POST { firstName, lastName, dob, gender, address, contact,
-//         bloodType, email, password }
+//         email, password }
 //  → 200 { success:true, pendingVerification:true, email }
 //  → 200 { success:false, message }
 //
@@ -26,7 +26,6 @@ $dob     = trim($b['dob']       ?? '');
 $gender  = trim($b['gender']    ?? '');
 $address = trim($b['address']   ?? '');
 $contact = trim($b['contact']   ?? '');
-$blood   = trim($b['bloodType'] ?? '') ?: 'Unknown';
 $email   = trim($b['email']     ?? '');
 $pass    = $b['password']       ?? '';
 
@@ -62,8 +61,8 @@ try {
     $pdo->prepare(
         'INSERT INTO pending_registrations
            (email, first_name, middle_name, last_name, dob, gender, address, contact,
-            blood_type, password_hash, otp, expires_at)
-         VALUES (?,?,?,?,?,?,?,?,?,?,?, NOW() + INTERVAL 5 MINUTE)
+            password_hash, otp, expires_at)
+         VALUES (?,?,?,?,?,?,?,?,?,?, NOW() + INTERVAL 5 MINUTE)
          ON DUPLICATE KEY UPDATE
            first_name    = VALUES(first_name),
            middle_name   = VALUES(middle_name),
@@ -72,17 +71,19 @@ try {
            gender        = VALUES(gender),
            address       = VALUES(address),
            contact       = VALUES(contact),
-           blood_type    = VALUES(blood_type),
            password_hash = VALUES(password_hash),
            otp           = VALUES(otp),
            attempts      = 0,
            expires_at    = VALUES(expires_at)'
-    )->execute([$email, $first, $middle ?: null, $last, $dob, $gender, $address, $contact, $blood, $hash, $otp]);
+    )->execute([$email, $first, $middle ?: null, $last, $dob, $gender, $address, $contact, $hash, $otp]);
 
     try {
         sendVerificationEmail($email, $otp, $first);
     } catch (Exception $e) {
-        // Non-fatal — user can resend from the verify screen
+        // Non-fatal — user can resend from the verify screen. Logged so a
+        // real delivery failure (bad sender config, Brevo rejection, etc.)
+        // is actually visible somewhere instead of silently vanishing.
+        error_log('[email] Verification code failed to send to ' . $email . ': ' . $e->getMessage());
     }
 
     jsonResponse(['success' => true, 'pendingVerification' => true, 'email' => $email]);

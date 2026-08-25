@@ -408,10 +408,7 @@ function buildUserObject(string $role, array $p, string $email, array $days = []
             'dob'            => $p['dob']              ?? '',
             'age'            => (int)($p['age']        ?? 0),
             'address'        => $p['address']          ?? '',
-            'bloodType'      => $p['blood_type']       ?? '',
             'occupation'     => $p['occupation']       ?? '',
-            'medicalHistory' => $p['medical_history']  ?? '',
-            'opticalHistory' => $p['optical_history']  ?? '',
             'qrData'         => $p['qr_data']          ?? '',
             'registeredDate' => $p['registered_date']  ?? '',
             'lastVisit'      => $p['last_visit'] ?: '—',
@@ -500,6 +497,44 @@ function confirmDeadlineTimeSetting(PDO $pdo): string {
 function settingTimeTo24h(string $t): string {
     $ts = strtotime($t);
     return $ts !== false ? date('H:i:s', $ts) : '00:00:00';
+}
+
+// Builds a Google Calendar "add event" link for an approved appointment —
+// Google's own URL-based /calendar/render?action=TEMPLATE endpoint, not
+// the OAuth Calendar API, so no account connection or credentials are
+// needed on either side; it just opens Google Calendar pre-filled and the
+// patient hits Save. From there Google's own reminder options (popup/
+// email, however far in advance) apply on top of this app's own email/
+// in-app reminders — more choices, not a replacement for them. Only
+// surfaced in emails (the approval email + the day-before reminder
+// email), never inside the app itself.
+// Times are sent as plain local wall-clock numbers with an explicit
+// ctz=Asia/Manila (the timezone this whole app already runs in — see
+// date_default_timezone_set above) so Google renders them at the correct
+// local time regardless of the recipient's own device timezone, instead
+// of us having to convert to UTC ourselves.
+function googleCalendarUrl(PDO $pdo, string $date, string $time, ?string $doctorName, ?string $apptType): string {
+    $durStr = $pdo->query('SELECT default_duration FROM clinic_settings WHERE id = 1 LIMIT 1')->fetchColumn();
+    preg_match('/(\d+)/', $durStr ?: '40', $dm);
+    $durationMin = isset($dm[1]) ? (int)$dm[1] : 40;
+
+    $startTs = strtotime("$date $time");
+    if ($startTs === false) $startTs = strtotime($date) ?: time();
+    $endTs = $startTs + $durationMin * 60;
+    $stamp = fn(int $ts): string => date('Ymd\THis', $ts);
+
+    $address = $pdo->query('SELECT address FROM clinic_settings WHERE id = 1 LIMIT 1')->fetchColumn();
+    $details = trim(($doctorName ? "Doctor: {$doctorName}\n" : '') . 'Booked through the Cana Optical Clinic patient portal.');
+
+    $params = http_build_query([
+        'action'   => 'TEMPLATE',
+        'text'     => ($apptType ?: 'Eye Consultation') . ' — Cana Optical Clinic',
+        'dates'    => $stamp($startTs) . '/' . $stamp($endTs),
+        'details'  => $details,
+        'location' => $address ?: '',
+        'ctz'      => 'Asia/Manila',
+    ]);
+    return "https://calendar.google.com/calendar/render?{$params}";
 }
 
 // How long a waitlist offer stays claimable — admin-configurable (Clinic
@@ -710,12 +745,19 @@ function createNotification(PDO $pdo, int $userId, string $type, string $title, 
     }
 }
 
-function notifyAdminStaff(PDO $pdo, string $type, string $title, string $body): void {
+// $relatedId (optional) lets a click-through on this notification jump
+// straight to the specific record it's about — e.g. reschedule_request
+// notifications pass the appointment id, so clicking one opens that exact
+// appointment's details instead of just a filtered list to scan (see
+// openRescheduleRequestNotif() in main.js / _markNotifDropdown() in
+// router.js). Every other caller today omits it and behaves exactly as
+// before.
+function notifyAdminStaff(PDO $pdo, string $type, string $title, string $body, ?string $relatedId = null): void {
     try {
         $ids  = $pdo->query("SELECT id FROM users WHERE role IN ('admin','staff') AND is_active = 1")->fetchAll();
-        $stmt = $pdo->prepare('INSERT INTO notifications (user_id, type, title, body) VALUES (?, ?, ?, ?)');
+        $stmt = $pdo->prepare('INSERT INTO notifications (user_id, type, title, body, related_id) VALUES (?, ?, ?, ?, ?)');
         foreach ($ids as $row) {
-            $stmt->execute([(int)$row['id'], $type, $title, $body]);
+            $stmt->execute([(int)$row['id'], $type, $title, $body, $relatedId]);
         }
     } catch (PDOException) {
         // Non-critical — silent fail
@@ -728,7 +770,19 @@ function notifyAdminStaff(PDO $pdo, string $type, string $title, string $body): 
 // here rather than duplicated per call site (originally lived only in
 // api/cron/appointment_reminders.php). Its own try/catch so one failed
 // delivery never interrupts whatever loop is calling it in a batch.
-function _emailPatientNotice(PDO $pdo, int $userId, string $subject, string $message): void {
+// $ctaUrl/$ctaLabel are optional (e.g. the "Add to Google Calendar" link
+// on the approval/reminder emails) and passed straight through to
+// systemEmailBody() for the HTML button; the plain-text fallback gets the
+// same link as a plain line since it can't render a styled button.
+// $ctaDate ('Y-m-d', optional) drives that button's small calendar-icon
+// preview — see systemEmailBody().
+// $reasonLabel/$reasonText (optional) put a staff-entered reason (a
+// cancellation or disapproval) in its own visually separate box instead
+// of run into the same paragraph as the main sentence — mirrors how the
+// in-app Appointment Details modal already shows a Cancellation/
+// Disapproval Reason as its own highlighted block, not just appended
+// text.
+function _emailPatientNotice(PDO $pdo, int $userId, string $subject, string $message, string $ctaUrl = '', string $ctaLabel = '', string $ctaDate = '', string $reasonLabel = '', string $reasonText = ''): void {
     try {
         $s = $pdo->prepare(
             'SELECT u.email, p.first_name, p.last_name
@@ -739,8 +793,13 @@ function _emailPatientNotice(PDO $pdo, int $userId, string $subject, string $mes
         $row = $s->fetch();
         if (!$row || empty($row['email'])) return;
         $name = trim($row['first_name'] . ' ' . $row['last_name']) ?: 'there';
-        sendEmail($row['email'], $name, $subject, systemEmailBody($name, $subject, $message), "$subject\n\n$message");
-    } catch (\Throwable $e) { /* non-critical */ }
+        $text = "$subject\n\n$message"
+            . ($reasonText ? "\n\n" . ($reasonLabel ?: 'Reason') . ": $reasonText" : '')
+            . ($ctaUrl ? "\n\n" . ($ctaLabel ?: 'View Details') . ": $ctaUrl" : '');
+        sendEmail($row['email'], $name, $subject, systemEmailBody($name, $subject, $message, $ctaUrl, $ctaLabel, $ctaDate, $reasonLabel, $reasonText), $text);
+    } catch (\Throwable $e) {
+        error_log('[email] Notice "' . $subject . '" failed for user ' . $userId . ': ' . $e->getMessage());
+    }
 }
 
 // ── Fetch profile row + build user object for a given user_id ────
@@ -795,4 +854,26 @@ function loadUserProfile(PDO $pdo, int $userId, string $role): ?array {
     }
 
     return $profile ? ['profile' => $profile, 'days' => $days] : null;
+}
+
+// Shared next-record-id generator (max existing id of this prefix, +1,
+// with a collision-check loop) — used by api/examinations/create.php and
+// update.php for consultations/examinations/prescriptions ids ('C001',
+// 'E001', 'RX001'). Kept here rather than duplicated per file so all
+// three id sequences get the same collision protection consistently.
+function nextRecordId(PDO $pdo, string $table, string $prefix): string {
+    $last = $pdo->query("SELECT id FROM `$table` ORDER BY id DESC LIMIT 1")->fetchColumn();
+    $next = 1;
+    if ($last && preg_match('/^' . preg_quote($prefix, '/') . '(\d+)$/i', $last, $m)) {
+        $next = (int)$m[1] + 1;
+    }
+    $id  = $prefix . str_pad($next, 3, '0', STR_PAD_LEFT);
+    $dup = $pdo->prepare("SELECT id FROM `$table` WHERE id = ?");
+    while (true) {
+        $dup->execute([$id]);
+        if (!$dup->fetch()) break;
+        $next++;
+        $id = $prefix . str_pad($next, 3, '0', STR_PAD_LEFT);
+    }
+    return $id;
 }

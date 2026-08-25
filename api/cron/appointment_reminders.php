@@ -22,6 +22,9 @@
 //      realistically be offered, and let the patient know — instead of
 //      leaving them waiting indefinitely for something that's become
 //      impossible.
+//   5. Auto-disapprove appointment requests still stuck at "pending" once
+//      their date has fully passed — staff/admin never acted on them at
+//      all, so nothing else in the app was ever going to resolve them.
 // ================================================================
 
 require_once '../../config/db.php';
@@ -40,7 +43,7 @@ if (!$providedKey || !hash_equals($cronSecret, $providedKey)) {
 // just find it auto-cancelled later with no warning. _emailPatientNotice()
 // (api/helpers.php) sends the same notice by email too — also used by
 // api/waitlist/leave.php's manual-removal path for the same reason.
-$result = ['success' => true, 'remindersSent' => 0, 'autoCancelled' => 0, 'offersExpired' => 0, 'staleWaitlistRemoved' => 0];
+$result = ['success' => true, 'remindersSent' => 0, 'autoCancelled' => 0, 'offersExpired' => 0, 'staleWaitlistRemoved' => 0, 'pendingAutoDisapproved' => 0];
 
 try {
     $pdo = getDB();
@@ -50,7 +53,7 @@ try {
 
     // ── Job 1: send day-before reminder ─────────────────────────────
     $dueReminders = $pdo->prepare(
-        "SELECT id, patient_id, doctor_name, date, time FROM appointments
+        "SELECT id, patient_id, doctor_name, date, time, type FROM appointments
          WHERE status = 'approved' AND date = CURDATE() + INTERVAL 1 DAY
            AND reminder_sent_at IS NULL AND CURTIME() >= ?"
     );
@@ -70,7 +73,8 @@ try {
             $noticeMsg = "You have an appointment with {$r['doctor_name']} tomorrow ({$fmtDate}) at {$r['time']}. "
               . "Please confirm by " . date('g:i A', strtotime($deadlineHourStr)) . " today or it will be automatically cancelled.";
             createNotification($pdo, (int)$userId, 'reminder', 'Confirm Your Appointment', $noticeMsg, $r['id']);
-            _emailPatientNotice($pdo, (int)$userId, 'Confirm Your Appointment', $noticeMsg);
+            $calUrl = googleCalendarUrl($pdo, $r['date'], $r['time'], $r['doctor_name'], $r['type'] ?? null);
+            _emailPatientNotice($pdo, (int)$userId, 'Confirm Your Appointment', $noticeMsg, $calUrl, 'Add to Google Calendar', $r['date']);
         }
     }
     $result['remindersSent'] = count($reminderRows);
@@ -166,6 +170,44 @@ try {
         }
     }
     $result['staleWaitlistRemoved'] = $staleRemoved;
+
+    // ── Job 5: auto-disapprove pending requests whose date has passed ──
+    // Mirrors Job 2 (approved → auto-cancel past its confirm deadline)
+    // exactly, just for the "staff never responded at all" case instead
+    // of "patient never confirmed": same terminal-status update, same
+    // waitlist hand-off (checkApptConflict() treats 'pending' as
+    // occupying the slot, same as 'approved' — see api/helpers.php — so
+    // resolving it here genuinely frees that slot up), same in-app +
+    // email notice. Uses date < CURDATE() (not <=) so a same-day request
+    // still gets its full day for staff to act on before this takes over.
+    $duePending = $pdo->query(
+        "SELECT id, patient_id, doctor_id, doctor_name, date, time FROM appointments
+         WHERE status = 'pending' AND date < CURDATE()"
+    )->fetchAll();
+
+    foreach ($duePending as $r) {
+        $upd = $pdo->prepare(
+            "UPDATE appointments SET status = 'disapproved', disapproval_reason = ?
+             WHERE id = ? AND status = 'pending'"
+        );
+        $upd->execute(['Automatically declined. This request was never responded to before its appointment date.', $r['id']]);
+        if ($upd->rowCount() === 0) continue; // acted on by staff in the meantime
+
+        if ($r['doctor_id']) {
+            offerNextWaitlistSlot($pdo, $r['doctor_id'], $r['date'], $r['time']);
+        }
+        if (!$r['patient_id']) continue;
+        $ps = $pdo->prepare('SELECT user_id FROM patients WHERE id = ? LIMIT 1');
+        $ps->execute([$r['patient_id']]);
+        $userId = $ps->fetchColumn();
+        if ($userId) {
+            $fmtDate = date('M j, Y', strtotime($r['date']));
+            $noticeMsg = "Your appointment request with {$r['doctor_name']} on {$fmtDate} at {$r['time']} was never responded to in time and has been automatically declined. Please book a new appointment if you'd still like to be seen.";
+            createNotification($pdo, (int)$userId, 'disapproved', 'Appointment Request Expired', $noticeMsg);
+            _emailPatientNotice($pdo, (int)$userId, 'Appointment Request Expired', $noticeMsg);
+        }
+    }
+    $result['pendingAutoDisapproved'] = count($duePending);
 
     jsonResponse($result);
 

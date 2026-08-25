@@ -66,7 +66,12 @@ try {
 // excludeId lets the reschedule picker omit the appointment being moved
 // so its own current slot does not show as taken.
 function _takenTimesForDoctor(PDO $pdo, string $doctorId, string $date, int $defaultDuration, string $excludeId): array {
-    $sql = "SELECT a.time, COALESCE(cs.duration, :def) AS duration
+    // patient_id rides along so the picker can tell "taken by someone
+    // else" (still waitlist-able) apart from "taken by this same patient's
+    // own other appointment" (see wizBuildTimeSlots() in main.js) — offering
+    // a waitlist join for a slot the patient already holds themselves
+    // doesn't make sense.
+    $sql = "SELECT a.time, a.patient_id, COALESCE(cs.duration, :def) AS duration
             FROM appointments a
             LEFT JOIN clinic_services cs ON cs.name = a.type
             WHERE a.doctor_id = :doc AND a.date = :date
@@ -79,8 +84,9 @@ function _takenTimesForDoctor(PDO $pdo, string $doctorId, string $date, int $def
     $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
     $taken = array_map(fn($r) => [
-        'time'     => $r['time'],
-        'duration' => (int)$r['duration'],
+        'time'      => $r['time'],
+        'duration'  => (int)$r['duration'],
+        'patientId' => $r['patient_id'],
     ], $rows);
 
     // Slots currently held by an active (unexpired) waitlist offer to

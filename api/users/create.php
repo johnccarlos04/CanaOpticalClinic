@@ -115,7 +115,9 @@ try {
             welcomeEmailBody($fullName, strtolower($role), $email, $pass),
             "Welcome, $fullName!\n\nYour $role account at Cana Optical Clinic has been created.\n\nLogin email: $email\nTemporary password: $pass\n\nPlease sign in and change this password as soon as possible."
         );
-    } catch (\Throwable $e) { /* non-critical */ }
+    } catch (\Throwable $e) {
+        error_log('[email] Welcome email failed for new ' . $role . ' ' . $email . ': ' . $e->getMessage());
+    }
 
     $userObj = [
         'id'         => $newId,

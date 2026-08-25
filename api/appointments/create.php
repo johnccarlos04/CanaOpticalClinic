@@ -241,7 +241,8 @@ try {
             : "on {$fmtDate} at {$time} with no preferred doctor — please assign one.";
         notifyAdminStaff($pdo, 'new_appointment',
             'New Appointment Request',
-            "{$patientName} has requested an appointment {$withWho}"
+            "{$patientName} has requested an appointment {$withWho}",
+            $newId
         );
     } else {
         // Admin/staff booked — notify patient

@@ -50,15 +50,63 @@ function avatar(name, cls = 'patient-avatar', photoUrl = null) {
 }
 window.avatarFallbackAttr = avatarFallbackAttr
 
+// Case/whitespace/honorific-insensitive compare — forgiving of how the same
+// person's name is typed (extra spaces, casing, a doctor's "Dr." prefix),
+// but not a fuzzy/partial match: two genuinely different names never pass.
+function _normalizeNameForMatch(name) {
+  return (name || '').trim().toLowerCase().replace(/^dr\.?\s+/, '').replace(/\s+/g, ' ')
+}
+
+// Every reasonable way an account's real name could legitimately be typed
+// into a freeform field — full middle name spelled out ("John Christian
+// Canteras Carlos"), middle initial only (the app's own display convention
+// everywhere else, "John Christian C. Carlos"), initial with no period, or
+// no middle name at all. A genuinely two-word first name ("John Christian")
+// is also accepted as just its first word ("John Carlos") — the same
+// leniency reasoning as the middle name, scoped only to two-word first
+// names so a single-word first name still has to match in full. Last name
+// always has to match exactly in every variant — that's the one part with
+// no legitimate reason to ever be partial.
+function _nameVariantsForAccount(u) {
+  const first = (u.firstName  || '').trim()
+  const last  = (u.lastName   || '').trim()
+  const mid   = (u.middleName || '').trim()
+  const firstWords    = first.split(' ').filter(Boolean)
+  const firstVariants = firstWords.length === 2 ? [first, firstWords[0]] : [first]
+
+  const variants = []
+  firstVariants.forEach(f => {
+    variants.push(`${f} ${last}`)
+    if (mid) {
+      variants.push(`${f} ${mid} ${last}`)
+      variants.push(`${f} ${mid[0]}. ${last}`)
+      variants.push(`${f} ${mid[0]} ${last}`)
+    }
+  })
+  if (u.name) variants.push(u.name.replace(/^Dr\.\s+/, ''))
+  return variants.map(_normalizeNameForMatch)
+}
+
 // Looks up a real account (patient/doctor/staff/admin) by email — used for
 // contact-form submissions, which are freeform and not tied to a login.
-// When the submitted email happens to match a real account, we can show
+// When the submitted email AND name both match a real account, we can show
 // that account's actual profile photo instead of a generic initials circle
-// built from whatever name they typed into the form.
-function _accountPhotoForEmail(email) {
+// built from whatever the submitter typed into the form.
+//
+// Email alone isn't enough to prove it's really that account — a shared
+// inbox (family, front desk, a business email several people use) or
+// someone simply typing in a different real patient's email would let a
+// stranger's contact message wear that patient's actual photo. Requiring
+// the typed name to also match closes that off: only a "real" match on
+// both fields gets the real photo.
+function _accountPhotoForEmail(email, name) {
   const e = (email || '').trim().toLowerCase()
   if (!e) return null
-  const match = [...patients, ...doctors, ...staff, ...admins].find(u => (u.email || '').trim().toLowerCase() === e)
+  const nameNorm = _normalizeNameForMatch(name)
+  if (!nameNorm) return null
+  const match = [...patients, ...doctors, ...staff, ...admins].find(u =>
+    (u.email || '').trim().toLowerCase() === e && _nameVariantsForAccount(u).includes(nameNorm)
+  )
   return match?.photoUrl || null
 }
 window._accountPhotoForEmail = _accountPhotoForEmail
@@ -304,7 +352,13 @@ function pageAdminDashboard() {
       <p class="page-subtitle">Welcome back, ${st().user?.firstName}. Here's your clinic overview.</p>
     </div>
     <div style="display:flex;flex-direction:column;align-items:flex-end;gap:6px">
-      <button class="btn-primary" onclick="window.navigate('create-appointment')">${ic('plus','icon-sm')} New Appointment</button>
+      <div class="page-header-btn-group" style="display:flex;gap:10px">
+        <button class="btn-secondary" onclick="window.navigate('waitlist')">
+          ${ic('clock','icon-sm')} Waitlist
+          ${window._waitlistCount > 0 ? `<span class="nav-badge">${window._waitlistCount > 99 ? '99+' : window._waitlistCount}</span>` : ''}
+        </button>
+        <button class="btn-primary" onclick="window.navigate('create-appointment')">${ic('plus','icon-sm')} New Appointment</button>
+      </div>
       <span style="font-size:.78rem;color:#9CA3AF">${new Date().toLocaleDateString('en-PH',{weekday:'long',year:'numeric',month:'long',day:'numeric'})}</span>
     </div>
   </div>
@@ -627,7 +681,14 @@ function pageAppointments() {
       <h1 class="page-title">${title}</h1>
       <p class="page-subtitle">${subtitle}</p>
     </div>
-    ${role !== 'doctor' ? `<button class="btn-primary" onclick="window.navigate('create-appointment')">${ic('plus','icon-sm')} New Appointment</button>` : ''}
+    ${role !== 'doctor' ? `
+    <div class="page-header-btn-group" style="display:flex;gap:10px">
+      <button class="btn-secondary" onclick="window.navigate('waitlist')">
+        ${ic('clock','icon-sm')} Waitlist
+        ${window._waitlistCount > 0 ? `<span class="nav-badge">${window._waitlistCount > 99 ? '99+' : window._waitlistCount}</span>` : ''}
+      </button>
+      <button class="btn-primary" onclick="window.navigate('create-appointment')">${ic('plus','icon-sm')} New Appointment</button>
+    </div>` : ''}
   </div>
   <div class="page-body">
     <div class="table-wrap">
@@ -771,7 +832,7 @@ function pagePatientView() {
         </div>
         <div style="width:1px;height:36px;background:#F3F4F6;flex-shrink:0"></div>
         <div style="flex:1;min-width:0">
-          <div style="font-size:.87rem;font-weight:700;color:#1C1C1C;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${c.diagnosis || 'No diagnosis recorded'}</div>
+          <div style="font-size:.87rem;font-weight:700;color:#1C1C1C;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${c.chiefComplaint || 'No chief complaint recorded'}</div>
           <div style="font-size:.72rem;color:#6B7280;margin-top:2px">${c.doctor}${c.type ? ' &bull; ' + c.type : ''}</div>
         </div>
         ${i===0 ? `<span style="background:#FFF7ED;color:#E8760A;font-size:.63rem;font-weight:700;padding:2px 8px;border-radius:20px;border:1px solid #FDE68A;flex-shrink:0;white-space:nowrap">Latest</span>` : ''}
@@ -787,9 +848,9 @@ function pagePatientView() {
     ${window.renderRxDocumentCard(latestRx, p, true)}
     <div class="table-wrap" style="box-shadow:none;border:1px solid #f3f4f6">
       ${sortedRx.map((rx,i) => {
-        const expDate = new Date(rx.date.includes('T') ? rx.date : rx.date+'T00:00:00')
-        expDate.setFullYear(expDate.getFullYear()+1)
-        const isExpired = expDate < new Date()
+        const expDate = rx.expiryDate ? new Date(rx.expiryDate.includes('T') ? rx.expiryDate : rx.expiryDate+'T00:00:00')
+          : (() => { const d = new Date(rx.date.includes('T') ? rx.date : rx.date+'T00:00:00'); d.setFullYear(d.getFullYear()+1); return d })()
+        const isExpired = rx.status === 'expired' || (rx.status !== 'superseded' && expDate < new Date())
         return `
       <div style="display:flex;align-items:center;gap:12px;padding:13px 20px;${i!==sortedRx.length-1?'border-bottom:1px solid #F3F4F6;':''}${i===0?'background:#FAFAF8;':''}">
         <div style="text-align:center;min-width:38px;flex-shrink:0">
@@ -899,7 +960,6 @@ function pagePatientView() {
               [ic('mail','icon-sm'), 'Email',          p.email],
               [ic('calendar','icon-sm'),'Last Visit',  fmtDate(p.lastVisit)],
               [ic('map-pin','icon-sm'),'Address',      p.address],
-              [ic('activity','icon-sm'),'Blood Type',  p.bloodType],
             ].map(([icn,lbl,val]) => `
               <div style="background:#F9FAFB;border-radius:8px;padding:10px 12px">
                 <div style="display:flex;align-items:center;gap:5px;font-size:.65rem;color:#9CA3AF;margin-bottom:3px;text-transform:uppercase;letter-spacing:.04em;white-space:nowrap">
@@ -933,8 +993,8 @@ function pagePatientView() {
       <div class="filter-tabs" style="padding:0 16px">
         ${[
           ['personal',      'Personal Info'],
-          ['history',       'Medical History'],
           ['prescriptions', 'Prescriptions'],
+          ['history',       'Examination History'],
           ['consultations', 'Consultations'],
           ['appointments',  'Appointments']
         ].map(([key, lbl], i) => `
@@ -951,7 +1011,6 @@ function pagePatientView() {
               ['Date of Birth',   fmtDate(p.dob)],
               ['Age',             `${p.age} years old`],
               ['Gender',          p.gender],
-              ['Blood Type',      p.bloodType],
               ['Contact Number',  p.contact],
               ['Email Address',   p.email],
               ['Address',         p.address],
@@ -978,40 +1037,20 @@ function pagePatientView() {
           </div>`, true)}
 
         ${panel('history', `
-          <div class="profile-two-col">
-            <div>
-              <div class="patient-section-label">${ic('activity','icon-sm')} Medical History</div>
-              <div style="background:#FFFBF5;border:1px solid #FFE4C0;border-radius:8px;padding:14px;font-size:.85rem;line-height:1.7;color:#374151">
-                ${p.medicalHistory || 'No medical history on record.'}
-              </div>
-            </div>
-            <div>
-              <div class="patient-section-label">${ic('eye','icon-sm')} Optical History</div>
-              <div style="background:#FFFBF5;border:1px solid #FFE4C0;border-radius:8px;padding:14px;font-size:.85rem;line-height:1.7;color:#374151">
-                ${p.opticalHistory || 'No optical history on record.'}
-              </div>
-            </div>
-          </div>
-          <div style="margin-top:20px">
-            <div class="patient-section-label muted">Optical Examination Records (${p.examinations.length})</div>
-            ${examsContent}
-          </div>`)}
+          <div class="patient-section-label muted">Optical Examination Records (${p.examinations.length})</div>
+          ${examsContent}`)}
 
         ${panel('consultations', `
-          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
-            <div style="font-size:.88rem;color:#6B7280">${p.consultations.length} consultation record${p.consultations.length!==1?'s':''}</div>
-          </div>
+          <div class="patient-section-label muted">Consultation Records (${p.consultations.length})</div>
           ${consultationsPanel}`)}
 
         ${panel('prescriptions', `
-          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
-            <div style="font-size:.88rem;color:#6B7280">${rxList.length} prescription record${rxList.length!==1?'s':''}</div>
-          </div>
+          <div class="patient-section-label muted">Prescription Records (${rxList.length})</div>
           ${prescriptionsPanel}`)}
 
         ${panel('appointments', `
-          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
-            <div style="font-size:.88rem;color:#6B7280">${patientAppts.length} appointment${patientAppts.length!==1?'s':''} total</div>
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;flex-wrap:wrap;gap:10px">
+            <div class="patient-section-label muted" style="margin-bottom:0">Appointments (${patientAppts.length})</div>
             ${canEdit ? `<button class="btn-primary" onclick="window.navigate('create-appointment',{patientId:'${p.id}',patientName:'${(p.name||'').replace(/'/g,"\\'")}'})">
               ${ic('plus','icon-sm')} New Appointment
             </button>` : ''}
@@ -1091,7 +1130,7 @@ function pageContactMessages() {
                         onclick="window.openContactMessageModal(${m.id})">
               <td data-label="From"><div class="patient-name-cell">
                 ${!m.isRead ? '<span class="msg-dot" title="Unread"></span>' : ''}
-                ${avatar(m.name, 'patient-avatar', _accountPhotoForEmail(m.email))}
+                ${avatar(m.name, 'patient-avatar', _accountPhotoForEmail(m.email, m.name))}
                 <div class="patient-name-info"><strong>${m.name}</strong><span>${m.email}</span></div>
               </div></td>
               <td data-label="Service" style="font-size:.82rem">${m.service || '—'}</td>
@@ -1338,12 +1377,12 @@ function pageQRScanner() {
                ondragleave="this.style.borderColor='#E5E7EB';this.style.background='#FAFAFA'"
                ondrop="event.preventDefault();this.style.borderColor='#E5E7EB';this.style.background='#FAFAFA';window.processQRImageFile(event.dataTransfer.files[0])">
             <div id="qr-upload-idle">
-              <div style="color:#9CA3AF;margin-bottom:8px">${ic('upload-cloud','icon-lg')}</div>
+              <div style="color:#9CA3AF;margin-bottom:8px">${ic('upload','icon-lg')}</div>
               <div style="font-size:.85rem;font-weight:600;color:#374151;margin-bottom:3px">Click to upload or drag &amp; drop</div>
-              <div style="font-size:.74rem;color:#9CA3AF">PNG, JPG, WEBP — any QR code image</div>
+              <div style="font-size:.74rem;color:#9CA3AF">Any QR code image in PNG, JPG, or WEBP</div>
             </div>
-            <img id="qr-upload-preview" style="display:none;max-width:100%;max-height:160px;border-radius:8px;margin:0 auto;object-fit:contain">
-            <div id="qr-upload-status" style="display:none;margin-top:8px;font-size:.8rem"></div>
+            <img id="qr-upload-preview" style="display:none;width:88px;height:88px;border-radius:8px;margin:0 auto;object-fit:contain;background:#fff;border:1px solid #E5E7EB;padding:6px">
+            <div id="qr-upload-status" style="display:none;margin-top:10px"></div>
           </div>
           <input type="file" id="qr-file-input" accept="image/*" style="display:none"
                  onchange="window.processQRImageFile(this.files[0]);this.value=''">
@@ -1527,7 +1566,7 @@ function pageSchedule() {
             <div class="calendar-grid" id="sched-cal-${doctor.id}">${calCells}</div>
             <div style="display:flex;gap:14px;margin-top:16px;flex-wrap:wrap">
               <div style="display:flex;align-items:center;gap:6px;font-size:.75rem;color:#6B7280">
-                <div style="width:10px;height:10px;background:#E8760A;border-radius:50%"></div>Today
+                <div style="width:10px;height:10px;background:#fff;border:2px solid #E8760A;box-sizing:border-box;border-radius:2px"></div>Today
               </div>
               <div style="display:flex;align-items:center;gap:6px;font-size:.72rem;color:#6B7280">
                 <div style="width:10px;height:10px;background:#ECFDF5;border:1.5px solid #10B981;border-radius:2px"></div>Available
@@ -1567,7 +1606,6 @@ function pageSchedule() {
       <h1 class="page-title">Doctor Schedule</h1>
       <p class="page-subtitle">View and manage doctor availability</p>
     </div>
-    ${canEdit ? `<button class="btn-primary" onclick="window.openSetScheduleModal()">${ic('plus','icon-sm')} Set Availability</button>` : ''}
   </div>
   <div class="page-body">
 
@@ -1578,8 +1616,12 @@ function pageSchedule() {
           ${allDocs.map(d => `
           <button class="doctor-sel-card sched-tab" data-doc="${d.id}"
                   onclick="window.switchScheduleDoctor('${d.id}')">
-            <div class="doc-card-avatar" ${d.photoUrl ? 'style="overflow:hidden;padding:0"' : ''}>
-              ${d.photoUrl ? `<img src="${d.photoUrl}" alt="${d.name}" style="width:100%;height:100%;object-fit:cover;object-position:top;border-radius:50%;display:block" onerror="${avatarFallbackAttr(d.name)}">` : initials(d.name)}
+            <div class="doc-avatar-wrap">
+              <div class="doc-card-avatar" ${d.photoUrl ? 'style="overflow:hidden;padding:0"' : ''}>
+                ${d.photoUrl ? `<img src="${d.photoUrl}" alt="${d.name}" style="width:100%;height:100%;object-fit:cover;object-position:top;border-radius:50%;display:block" onerror="${avatarFallbackAttr(d.name)}">` : initials(d.name)}
+              </div>
+              <span class="doc-avail-badge ${d.available ? 'doc-avail-badge--yes' : 'doc-avail-badge--no'}"
+                    title="${d.available ? 'Available' : 'Not available'}">${ic(d.available ? 'check' : 'x', 'icon-xs')}</span>
             </div>
             <div>
               <div class="doc-card-name">${d.name.replace('Dr. ','')}</div>
@@ -1907,7 +1949,7 @@ function pageAdminSettings() {
 
     const pwField = (id, placeholder, extra='') => `
       <div style="position:relative">
-        <input type="password" class="form-input" id="${id}" placeholder="${placeholder}" style="padding-right:40px" ${extra}>
+        <input type="password" class="form-input" id="${id}" placeholder="${placeholder}" style="padding-right:40px" autocomplete="off" readonly onfocus="this.removeAttribute('readonly')" ${extra}>
         <button type="button" onclick="window.togglePwVisibility('${id}',this)"
                 style="position:absolute;right:10px;top:50%;transform:translateY(-50%);background:none;border:none;cursor:pointer;color:#9CA3AF;padding:2px;display:flex;align-items:center">
           ${ic('eye-off','icon-sm')}
@@ -1967,7 +2009,7 @@ function pageAdminSettings() {
             <div style="font-size:1.05rem;font-weight:700;color:#1C1C1C">Personal Information</div>
           </div>
           <div style="display:flex;flex-direction:column;gap:14px">
-            <div class="form-row-3">
+            <div class="form-row-2">
               <div class="form-group">
                 <label class="form-label">First Name</label>
                 <input class="form-input" id="ad-fname" value="${adm.firstName || ''}">
@@ -1976,10 +2018,10 @@ function pageAdminSettings() {
                 <label class="form-label">Middle Name</label>
                 <input class="form-input" id="ad-mname" value="${adm.middleName || ''}">
               </div>
-              <div class="form-group">
-                <label class="form-label">Last Name</label>
-                <input class="form-input" id="ad-lname" value="${adm.lastName || ''}">
-              </div>
+            </div>
+            <div class="form-group">
+              <label class="form-label">Last Name</label>
+              <input class="form-input" id="ad-lname" value="${adm.lastName || ''}">
             </div>
             <div class="form-row-2">
               <div class="form-group">
@@ -2273,16 +2315,13 @@ function pageAdminSettings() {
     // Returns a plain array of "h:mm AM/PM" labels for timeFieldHtml()'s
     // popover list (not <option> HTML — the native <select> these used to
     // build for was swallowing most of the viewport height with 30+ options).
+    // Now just the shared window.clinicTimeOpts() (main.js) — also used by
+    // openSetScheduleModal()'s per-doctor Start/End Time pickers, so a
+    // doctor's own schedule always offers the exact same selectable times
+    // as the clinic's own hours setup here, with one definition to keep
+    // them in sync instead of two that could drift apart.
     function timeOpts() {
-      const slots = []
-      for (let h = 7; h <= 21; h++) {
-        for (const m of [0, 30]) {
-          const hh   = h % 12 === 0 ? 12 : h % 12
-          const ampm = h < 12 ? 'AM' : 'PM'
-          slots.push(`${hh}:${m === 0 ? '00' : '30'} ${ampm}`)
-        }
-      }
-      return slots
+      return window.clinicTimeOpts()
     }
     // Reminder Send Time / Confirmation Deadline aren't clinic operating
     // hours — they're just "when does a notification fire" — so unlike
@@ -2518,7 +2557,7 @@ function pageAdminSettings() {
           </div>
         </div>
         ${list.length ? `
-        <table class="tbl" style="table-layout:fixed;min-width:700px">
+        <table class="tbl archives-tbl">
           <colgroup>
             <col style="width:10%"><col style="width:26%"><col style="width:13%"><col style="width:27%"><col style="width:12%"><col style="width:12%">
           </colgroup>
@@ -2731,7 +2770,13 @@ function pageStaffDashboard() {
       <h1 class="page-title">Staff Dashboard</h1>
       <p class="page-subtitle">Welcome, ${st().user?.firstName}. Manage today's clinic operations.</p>
     </div>
-    <button class="btn-primary" onclick="window.navigate('create-appointment')">${ic('plus','icon-sm')} New Appointment</button>
+    <div class="page-header-btn-group" style="display:flex;gap:10px">
+      <button class="btn-secondary" onclick="window.navigate('waitlist')">
+        ${ic('clock','icon-sm')} Waitlist
+        ${window._waitlistCount > 0 ? `<span class="nav-badge">${window._waitlistCount > 99 ? '99+' : window._waitlistCount}</span>` : ''}
+      </button>
+      <button class="btn-primary" onclick="window.navigate('create-appointment')">${ic('plus','icon-sm')} New Appointment</button>
+    </div>
   </div>
   <div class="page-body">
     <div class="stats-grid">
@@ -3035,23 +3080,9 @@ function pageDoctorSchedule() {
   // Must be set BEFORE the return
   window.state.afterRender = () => {
     window.docSchedGoMonth(todayY, todayM)
-    window.renderDoctorUpcoming('week')
   }
 
   return `
-  <style>
-    .doc-upcoming-scope { display:flex; gap:4px; background:#F3F4F6; padding:3px; border-radius:8px; flex-shrink:0; }
-    .doc-upcoming-scope-btn { border:none; background:transparent; padding:6px 16px; border-radius:6px;
-      font-family:'Poppins',sans-serif; font-size:.78rem; font-weight:600; color:#6B7280; cursor:pointer;
-      transition:background .15s,color .15s,box-shadow .15s; }
-    .doc-upcoming-scope-btn:hover:not(.active) { color:#374151; }
-    .doc-upcoming-scope-btn.active { background:#fff; color:#E8760A; box-shadow:0 1px 3px rgba(0,0,0,.1); }
-    .doc-upcoming-day { padding:9px 20px; background:#FAFAFA; display:flex; align-items:center; gap:8px;
-      border-top:1px solid #F3F4F6; border-bottom:1px solid #F3F4F6; }
-    .doc-upcoming-row { display:flex; align-items:center; gap:12px; padding:11px 20px; border-bottom:1px solid #F3F4F6; transition:background .15s; }
-    .doc-upcoming-row:hover { background:#FFFBF5; }
-    .doc-upcoming-row:last-child { border-bottom:none; }
-  </style>
   <div class="page-header">
     <div class="page-header-left">
       <h1 class="page-title">My Schedule</h1>
@@ -3111,7 +3142,7 @@ function pageDoctorSchedule() {
               <div style="width:12px;height:12px;border-radius:3px;background:#ECFDF5;border:1px solid #6EE7B7"></div> Available
             </div>
             <div style="display:flex;align-items:center;gap:5px;font-size:.72rem;color:#6B7280">
-              <div style="width:12px;height:12px;border-radius:3px;background:#E8760A"></div> Today
+              <div style="width:12px;height:12px;border-radius:3px;background:#ECFDF5;outline:2px solid #E8760A;outline-offset:-1px"></div> Today
             </div>
             <div style="display:flex;align-items:center;gap:5px;font-size:.72rem;color:#6B7280">
               <div style="width:12px;height:12px;border-radius:3px;background:#F3F4F6"></div> Not Scheduled
@@ -3123,7 +3154,11 @@ function pageDoctorSchedule() {
               <div style="width:12px;height:12px;border-radius:3px;background:#FFF1F2;border:1px solid #fda4af"></div> PH Holiday
             </div>
             <div style="display:flex;align-items:center;gap:5px;font-size:.72rem;color:#6B7280">
-              <div style="width:6px;height:6px;border-radius:50%;background:#E8760A;margin:3px"></div> Has Appointments
+              <div style="width:6px;height:6px;border-radius:50%;background:#065F46;opacity:.6;margin:3px"></div> Has Appointments
+              <!-- The real dot (.has-appts::before, global.css) uses
+                   currentColor, so it actually takes on whatever text
+                   color the day already has (green on Available, red on
+                   Blocked/Holiday) — this swatch shows the common case. -->
             </div>
           </div>
         </div>
@@ -3137,21 +3172,6 @@ function pageDoctorSchedule() {
         <div id="doc-sched-list" style="padding:0"></div>
       </div>
 
-    </div>
-
-    <!-- Upcoming Appointments — adjustable scope, like the dashboard charts -->
-    <div class="card" style="margin-top:24px">
-      <div class="card-header">
-        <div>
-          <div class="card-title">${ic('calendar','icon-sm')} Upcoming Appointments</div>
-          <div class="card-subtitle" id="doc-upcoming-sub">Loading…</div>
-        </div>
-        <div class="doc-upcoming-scope">
-          <button class="doc-upcoming-scope-btn active" data-scope="week" onclick="window.renderDoctorUpcoming('week')">This Week</button>
-          <button class="doc-upcoming-scope-btn" data-scope="month" onclick="window.renderDoctorUpcoming('month')">This Month</button>
-        </div>
-      </div>
-      <div id="doc-upcoming-list"></div>
     </div>
 
   </div>`
@@ -3168,7 +3188,7 @@ function pageDoctorSettings() {
 
   const pwField = (id, placeholder, extra='') => `
     <div style="position:relative">
-      <input type="password" class="form-input" id="${id}" placeholder="${placeholder}" style="padding-right:40px" ${extra}>
+      <input type="password" class="form-input" id="${id}" placeholder="${placeholder}" style="padding-right:40px" autocomplete="off" readonly onfocus="this.removeAttribute('readonly')" ${extra}>
       <button type="button" onclick="window.togglePwVisibility('${id}',this)"
               style="position:absolute;right:10px;top:50%;transform:translateY(-50%);background:none;border:none;cursor:pointer;color:#9CA3AF;padding:2px;display:flex;align-items:center">
         ${ic('eye-off','icon-sm')}
@@ -3231,7 +3251,7 @@ function pageDoctorSettings() {
           <div style="font-size:1.05rem;font-weight:700;color:#1C1C1C">Personal Information</div>
         </div>
         <div style="display:flex;flex-direction:column;gap:14px">
-          <div class="form-row-3">
+          <div class="form-row-2">
             <div class="form-group">
               <label class="form-label">First Name</label>
               <input class="form-input" id="doc-fname" value="${doc.firstName || ''}">
@@ -3240,10 +3260,10 @@ function pageDoctorSettings() {
               <label class="form-label">Middle Name</label>
               <input class="form-input" id="doc-mname" value="${doc.middleName || ''}">
             </div>
-            <div class="form-group">
-              <label class="form-label">Last Name</label>
-              <input class="form-input" id="doc-lname" value="${doc.lastName || ''}">
-            </div>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Last Name</label>
+            <input class="form-input" id="doc-lname" value="${doc.lastName || ''}">
           </div>
           <div class="form-row-2">
             <div class="form-group">
@@ -3328,8 +3348,8 @@ function pageExamination() {
   const lastExam = p && p.examinations.length ? p.examinations[p.examinations.length - 1] : null
   const _p = (obj, key) => (obj && obj[key]) || ''
   const pre = lastExam ? lastExam : {
-    od: {sph:'',cyl:'',axis:'',va:'',add:''}, os: {sph:'',cyl:'',axis:'',va:'',add:''},
-    iop: {od:'',os:''}, pd:'', lensType:'', diagnosis:'', recommendation:'', testResults:'', remarks:''
+    od: {vaUncorrected:'',sph:'',cyl:'',axis:'',va:'',add:''}, os: {vaUncorrected:'',sph:'',cyl:'',axis:'',va:'',add:''},
+    iop: {od:'',os:''}, pd:'', externalFindings:'', diagnosis:'', testResults:'', remarks:''
   }
 
   if (role !== 'doctor') {
@@ -3354,7 +3374,7 @@ function pageExamination() {
       </div>
     </div>
     <div style="display:flex;align-items:center;gap:8px">
-      <span style="font-size:.75rem;background:#FFF7ED;color:#C2410C;padding:4px 12px;border-radius:20px;font-weight:600">View Only — Doctor access required to edit</span>
+      <span style="font-size:.75rem;background:#FFF7ED;color:#C2410C;padding:4px 12px;border-radius:20px;font-weight:600">View Only (Doctor access required to edit)</span>
     </div>
   </div>
   <div class="page-body">
@@ -3365,183 +3385,56 @@ function pageExamination() {
           <div style="border:1.5px solid #86EFAC;border-radius:10px;overflow:hidden">
             <div style="background:#F0FDF4;padding:8px 12px;border-bottom:1px solid #86EFAC;display:flex;align-items:center;gap:6px">
               <div style="width:7px;height:7px;border-radius:50%;background:#22C55E;flex-shrink:0"></div>
-              <span style="font-size:.65rem;font-weight:800;text-transform:uppercase;letter-spacing:.07em;color:#059669">OD — Right Eye</span>
+              <span style="font-size:.65rem;font-weight:800;text-transform:uppercase;letter-spacing:.07em;color:#059669">OD (Right Eye)</span>
             </div>
             <div style="display:flex;background:#fff">
+              ${eyeField('VA (Un.)', exam.od?.vaUncorrected, false)}
+              ${eyeField('VA (Cor.)', exam.od?.va, false)}
               ${eyeField('SPH', exam.od?.sph, false)}
               ${eyeField('CYL', exam.od?.cyl, false)}
-              ${eyeField('AXIS', exam.od?.axis, false)}
-              ${eyeField('VA', exam.od?.va, true)}
+              ${eyeField('AXIS', exam.od?.axis, true)}
             </div>
-            ${exam.od?.add ? `<div style="padding:7px 12px;border-top:1px solid #BBF7D0;background:#F0FDF4;display:flex;align-items:center;justify-content:space-between"><span style="font-size:.6rem;color:#9CA3AF;font-weight:700;text-transform:uppercase">Add Power</span><span style="font-size:.88rem;font-weight:800;font-family:monospace;color:#059669">${exam.od.add}</span></div>` : ''}
           </div>
           <div style="border:1.5px solid #FDE68A;border-radius:10px;overflow:hidden">
             <div style="background:#FFF7ED;padding:8px 12px;border-bottom:1px solid #FDE68A;display:flex;align-items:center;gap:6px">
               <div style="width:7px;height:7px;border-radius:50%;background:#E8760A;flex-shrink:0"></div>
-              <span style="font-size:.65rem;font-weight:800;text-transform:uppercase;letter-spacing:.07em;color:#B45309">OS — Left Eye</span>
+              <span style="font-size:.65rem;font-weight:800;text-transform:uppercase;letter-spacing:.07em;color:#B45309">OS (Left Eye)</span>
             </div>
             <div style="display:flex;background:#fff">
+              ${eyeField('VA (Un.)', exam.os?.vaUncorrected, false)}
+              ${eyeField('VA (Cor.)', exam.os?.va, false)}
               ${eyeField('SPH', exam.os?.sph, false)}
               ${eyeField('CYL', exam.os?.cyl, false)}
-              ${eyeField('AXIS', exam.os?.axis, false)}
-              ${eyeField('VA', exam.os?.va, true)}
+              ${eyeField('AXIS', exam.os?.axis, true)}
             </div>
-            ${exam.os?.add ? `<div style="padding:7px 12px;border-top:1px solid #FDE68A;background:#FFF7ED;display:flex;align-items:center;justify-content:space-between"><span style="font-size:.6rem;color:#9CA3AF;font-weight:700;text-transform:uppercase">Add Power</span><span style="font-size:.88rem;font-weight:800;font-family:monospace;color:#B45309">${exam.os.add}</span></div>` : ''}
           </div>
         </div>
         ${hasIopOrPd ? `<div style="display:flex;gap:10px;flex-wrap:wrap">
-          ${exam.iop?.od ? `<div style="flex:1;min-width:120px;background:#f9fafb;border:1px solid #eee;border-radius:8px;padding:8px 12px"><div style="font-size:.6rem;text-transform:uppercase;letter-spacing:.05em;color:#9CA3AF;margin-bottom:2px">IOP — OD</div><div style="font-size:.88rem;font-weight:700;color:#1C1C1C">${exam.iop.od} <span style="font-size:.7rem;font-weight:400;color:#9CA3AF">mmHg</span></div></div>` : ''}
-          ${exam.iop?.os ? `<div style="flex:1;min-width:120px;background:#f9fafb;border:1px solid #eee;border-radius:8px;padding:8px 12px"><div style="font-size:.6rem;text-transform:uppercase;letter-spacing:.05em;color:#9CA3AF;margin-bottom:2px">IOP — OS</div><div style="font-size:.88rem;font-weight:700;color:#1C1C1C">${exam.iop.os} <span style="font-size:.7rem;font-weight:400;color:#9CA3AF">mmHg</span></div></div>` : ''}
+          ${exam.iop?.od ? `<div style="flex:1;min-width:120px;background:#f9fafb;border:1px solid #eee;border-radius:8px;padding:8px 12px"><div style="font-size:.6rem;text-transform:uppercase;letter-spacing:.05em;color:#9CA3AF;margin-bottom:2px">IOP (OD)</div><div style="font-size:.88rem;font-weight:700;color:#1C1C1C">${exam.iop.od} <span style="font-size:.7rem;font-weight:400;color:#9CA3AF">mmHg</span></div></div>` : ''}
+          ${exam.iop?.os ? `<div style="flex:1;min-width:120px;background:#f9fafb;border:1px solid #eee;border-radius:8px;padding:8px 12px"><div style="font-size:.6rem;text-transform:uppercase;letter-spacing:.05em;color:#9CA3AF;margin-bottom:2px">IOP (OS)</div><div style="font-size:.88rem;font-weight:700;color:#1C1C1C">${exam.iop.os} <span style="font-size:.7rem;font-weight:400;color:#9CA3AF">mmHg</span></div></div>` : ''}
           ${exam.pd ? `<div style="flex:1;min-width:120px;background:#f9fafb;border:1px solid #eee;border-radius:8px;padding:8px 12px"><div style="font-size:.6rem;text-transform:uppercase;letter-spacing:.05em;color:#9CA3AF;margin-bottom:2px">PD</div><div style="font-size:.88rem;font-weight:700;color:#1C1C1C">${exam.pd} <span style="font-size:.7rem;font-weight:400;color:#9CA3AF">mm</span></div></div>` : ''}
         </div>` : ''}
       </div>
     </div>
     <div class="card">
-      <div class="card-header"><div class="card-title">Clinical Assessment &amp; Prescription</div></div>
+      <div class="card-header"><div class="card-title">Clinical Findings</div></div>
       <div class="card-body">
         <div class="form-group" style="margin-bottom:14px"><label class="form-label">Diagnosis</label>${ro(exam.diagnosis)}</div>
-        ${(exam.lensType || exam.lensMaterial || (exam.lensCoating && exam.lensCoating.length) || exam.frameSelection) ? `
-        <div class="form-group" style="margin-bottom:14px">
-          <label class="form-label">Lens Prescription</label>
-          <div style="padding:10px 12px;background:#f9fafb;border:1px solid #e5e7eb;border-radius:8px">
-            <div style="display:flex;align-items:center;gap:7px;flex-wrap:wrap;font-size:.87rem;font-weight:600;color:#1f2937">
-              ${exam.lensType || '—'}
-              ${exam.lensMaterial && exam.lensMaterial !== 'N/A' ? `<span style="color:#D1D5DB;font-weight:400">/</span><span style="font-weight:400;color:#6B7280">${exam.lensMaterial}</span>` : ''}
-            </div>
-            ${exam.lensCoating && exam.lensCoating.length ? `<div style="display:flex;flex-wrap:wrap;gap:5px;margin-top:7px">${exam.lensCoating.map(c=>`<span style="background:#FFF7ED;color:#C2410C;font-size:.7rem;font-weight:600;padding:2px 9px;border-radius:20px;border:1px solid #FDE68A">${c}</span>`).join('')}</div>` : ''}
-            ${exam.frameSelection && exam.frameSelection !== 'N/A — monitoring only' ? `<div style="font-size:.78rem;color:#6B7280;margin-top:7px">Frame: ${exam.frameSelection}</div>` : ''}
-          </div>
-        </div>` : ''}
-        ${exam.recommendation ? `<div class="form-group" style="margin-bottom:14px"><label class="form-label">Prescription / Lens Recommendation</label>${ro(exam.recommendation)}</div>` : ''}
-        ${exam.prescriptionDetails ? `<div class="form-group" style="margin-bottom:14px"><label class="form-label">Prescription Notes</label>${ro(exam.prescriptionDetails)}</div>` : ''}
+        ${exam.externalFindings ? `<div class="form-group" style="margin-bottom:14px"><label class="form-label">External / Internal Findings</label>${ro(exam.externalFindings)}</div>` : ''}
         ${exam.testResults ? `<div class="form-group" style="margin-bottom:14px"><label class="form-label">Test Results</label>${ro(exam.testResults)}</div>` : ''}
-        ${exam.remarks ? `<div class="form-group"><label class="form-label">Remarks / Additional Notes</label>${ro(exam.remarks)}</div>` : ''}
+        ${exam.remarks ? `<div class="form-group"><label class="form-label">Clinical Remarks</label>${ro(exam.remarks)}</div>` : ''}
       </div>
     </div>
   </div>`
   }
 
-  return `
-  <div class="page-header">
-    <div class="page-header-left" style="display:flex;align-items:center;gap:12px">
-      <button class="btn-icon" onclick="window.navigate('patient-list')">${ic('chevron-left','icon')}</button>
-      <div>
-        <h1 class="page-title">Optical Examination</h1>
-        <p class="page-subtitle">${p ? p.name + ' · ' + p.id : 'Select a patient'}</p>
-      </div>
-    </div>
-    ${p ? `<div style="display:flex;gap:8px">
-      <button class="btn-secondary" onclick="window.printExaminationForm('${p.id}')">${ic('printer','icon-sm')} Print</button>
-      <button class="btn-primary exam-save-btn" onclick="window.saveExamination('${p.id}')">${ic('check','icon-sm')} Save Changes</button>
-    </div>` : ''}
-  </div>
-  <div class="page-body">
-  ${!p ? `
-    <div class="card"><div class="card-body">
-      <div class="alert-info">${ic('info','icon-sm')} Select a patient from Patient Records to begin an examination.</div>
-      <div style="margin-top:16px">
-        <button class="btn-primary" onclick="window.navigate('patient-list')">${ic('users','icon-sm')} Go to Patient List</button>
-      </div>
-    </div></div>` : `
-    <div class="card" style="margin-bottom:20px">
-      <div class="profile-hero" style="padding:20px 24px">
-        <div class="profile-avatar-lg" style="width:56px;height:56px;font-size:1.3rem">${p.photoUrl ? `<img src="${p.photoUrl}" alt="${p.name}" style="width:100%;height:100%;object-fit:cover;border-radius:50%;display:block" onerror="${avatarFallbackAttr(p.name)}">` : initials(p.name)}</div>
-        <div>
-          <div class="profile-info-name" style="font-size:1.2rem">${p.name}</div>
-          <div class="profile-info-meta">
-            <span class="profile-meta-item">${ic('user','icon-sm')} ${p.gender}, ${p.age} yrs</span>
-            <span class="profile-meta-item">${ic('phone','icon-sm')} ${p.contact}</span>
-            <span class="profile-meta-item">${ic('calendar','icon-sm')} Last Visit: ${fmtDate(p.lastVisit)}</span>
-          </div>
-        </div>
-      </div>
-    </div>
-
-    <div class="card" style="margin-bottom:20px">
-      <div class="card-header"><div class="card-title">Visual Acuity &amp; Refraction</div><div class="card-subtitle">Enter OD (right eye) and OS (left eye) values</div></div>
-      <div class="card-body">
-        <div class="eye-grid" style="margin-bottom:12px">
-          <div></div>
-          <div class="eye-header">SPH</div>
-          <div class="eye-header">CYL</div>
-          <div class="eye-header">AXIS</div>
-          <div class="eye-header">VA</div>
-
-          <div class="eye-label">OD (Right)</div>
-          <input id="ex-od-sph"  class="form-input" value="${_p(pre.od,'sph')}"  placeholder="e.g. -1.25">
-          <input id="ex-od-cyl"  class="form-input" value="${_p(pre.od,'cyl')}"  placeholder="e.g. -0.50">
-          <input id="ex-od-axis" class="form-input" value="${_p(pre.od,'axis')}" placeholder="e.g. 90">
-          <input id="ex-od-va"   class="form-input" value="${_p(pre.od,'va')}"   placeholder="e.g. 20/40">
-
-          <div class="eye-label">OS (Left)</div>
-          <input id="ex-os-sph"  class="form-input" value="${_p(pre.os,'sph')}"  placeholder="e.g. -1.00">
-          <input id="ex-os-cyl"  class="form-input" value="${_p(pre.os,'cyl')}"  placeholder="e.g. 0.00">
-          <input id="ex-os-axis" class="form-input" value="${_p(pre.os,'axis')}" placeholder="e.g. 0">
-          <input id="ex-os-va"   class="form-input" value="${_p(pre.os,'va')}"   placeholder="e.g. 20/30">
-        </div>
-        <div class="form-row-3" style="margin-top:12px">
-          <div class="form-group">
-            <label class="form-label">ADD — OD</label>
-            <input id="ex-od-add" class="form-input" value="${_p(pre.od,'add')}" placeholder="e.g. +1.50">
-          </div>
-          <div class="form-group">
-            <label class="form-label">ADD — OS</label>
-            <input id="ex-os-add" class="form-input" value="${_p(pre.os,'add')}" placeholder="e.g. +1.50">
-          </div>
-          <div class="form-group">
-            <label class="form-label">PD (mm)</label>
-            <input id="ex-pd" class="form-input" value="${pre.pd||''}" placeholder="e.g. 62/60">
-          </div>
-        </div>
-        <div class="form-row-3" style="margin-top:12px">
-          <div class="form-group">
-            <label class="form-label">IOP — OD (mmHg)</label>
-            <input id="ex-iop-od" class="form-input" value="${_p(pre.iop,'od')}" placeholder="Normal: 10–21">
-          </div>
-          <div class="form-group">
-            <label class="form-label">IOP — OS (mmHg)</label>
-            <input id="ex-iop-os" class="form-input" value="${_p(pre.iop,'os')}" placeholder="Normal: 10–21">
-          </div>
-          <div class="form-group"></div>
-        </div>
-      </div>
-    </div>
-
-    <div class="card">
-      <div class="card-header"><div class="card-title">Clinical Assessment &amp; Prescription</div></div>
-      <div class="card-body" style="display:flex;flex-direction:column;gap:16px">
-        <div class="form-row-2">
-          <div class="form-group">
-            <label class="form-label">Diagnosis</label>
-            <input id="ex-diagnosis" class="form-input" value="${pre.diagnosis||''}" placeholder="e.g. Myopia, Mild Astigmatism">
-          </div>
-          <div class="form-group">
-            <label class="form-label">Lens Type</label>
-            ${window.selectFieldHtml('ex-lens-type', {
-              value: pre.lensType || '—',
-              options: ['—','Single Vision','Bifocal','Progressive','Contact Lens','Reading Glasses','Safety Glasses','Computer Lenses']
-            })}
-          </div>
-        </div>
-        <div class="form-group">
-          <label class="form-label">Prescription / Lens Recommendation</label>
-          <input id="ex-recommendation" class="form-input" value="${pre.recommendation||''}" placeholder="e.g. Single Vision Lenses, Anti-Reflective Coating">
-        </div>
-        <div class="form-group">
-          <label class="form-label">Test Results</label>
-          <input id="ex-test-results" class="form-input" value="${pre.testResults||''}" placeholder="e.g. Visual fields: Normal. Color vision: Normal.">
-        </div>
-        <div class="form-group">
-          <label class="form-label">Remarks / Additional Notes</label>
-          <textarea id="ex-remarks" class="form-textarea" placeholder="Clinical observations, follow-up instructions…">${pre.remarks||''}</textarea>
-        </div>
-        <div style="display:flex;gap:10px;justify-content:flex-end">
-          <button class="btn-secondary" onclick="window.printExaminationForm('${p.id}')">${ic('printer','icon-sm')} Print Form</button>
-          <button class="btn-primary exam-save-btn" onclick="window.saveExamination('${p.id}')">${ic('check','icon-sm')} Save Changes</button>
-        </div>
-      </div>
-    </div>`}
-  </div>`
+  // Doctors editing/creating an exam always go through the wizard now
+  // (new-examination/edit-examination) — this route used to carry its own
+  // parallel single-form editor with a stale field set (lens type,
+  // recommendation, etc. that no longer belong to `examinations`).
+  // Redirect rather than maintain a second implementation.
+  window.state.afterRender = () => window.navigate('new-examination', p ? { patientId: p.id } : {})
+  return `<div class="page-body"><div class="alert-info">${ic('info','icon-sm')} Redirecting to the examination wizard…</div></div>`
 }
 
 // ════════════════════════════════════════════════════════════════
@@ -3619,15 +3512,15 @@ function pageExamRecords() {
       </div>
       ${filtered.length ? `<table class="tbl">
         <colgroup>
-          <col style="width:8%"><col style="width:18%"><col style="width:16%"><col style="width:10%">
-          <col style="width:14%"><col style="width:12%"><col style="width:8%"><col style="width:14%">
+          <col style="width:8%"><col style="width:20%"><col style="width:16%"><col style="width:10%">
+          <col style="width:22%"><col style="width:10%"><col style="width:14%">
         </colgroup>
         <thead><tr>
           <th>Exam ID</th>
           <th data-sort-key="patient" data-sort-type="text">Patient</th>
           <th>Doctor</th>
           <th data-sort-key="date" data-sort-type="date">Date</th>
-          <th>Diagnosis</th><th>Lens type</th><th>Status</th><th>Actions</th>
+          <th>Diagnosis</th><th>Status</th><th>Actions</th>
         </tr></thead>
         <tbody id="exam-records-tbody">
           ${filtered.map(e => `<tr data-search="${e.patientName.toLowerCase()} ${(e.diagnosis||'').toLowerCase()} ${e.doctor.toLowerCase()}" data-sort-patient="${e.patientName.toLowerCase()}" data-sort-date="${e.date}">
@@ -3638,8 +3531,7 @@ function pageExamRecords() {
             </div></td>
             <td data-label="Doctor" style="font-size:.82rem">${e.doctor}</td>
             <td data-label="Date" style="font-size:.82rem;white-space:nowrap">${fmtDate(e.date)}</td>
-            <td data-label="Diagnosis" style="font-size:.82rem;max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${e.diagnosis}">${e.diagnosis}</td>
-            <td data-label="Lens Type" style="font-size:.78rem;color:#6B7280">${e.lensType || '—'}</td>
+            <td data-label="Diagnosis" style="font-size:.82rem;max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${e.diagnosis}">${e.diagnosis}</td>
             <td data-label="Status">${badge(e.status || 'completed')}</td>
             <td data-label="Actions" style="white-space:nowrap">
               <div style="display:flex;gap:4px;align-items:center">
@@ -3791,13 +3683,23 @@ function pageNewExamination() {
 
   const today      = localDateStr()
   const specificExam = params?.examId ? (p.examinations || []).find(e => e.id === params.examId) : null
-  const lastExam   = specificExam || (p.examinations.length ? p.examinations[0] : null)
-  const pre        = lastExam || { od:{sph:'',cyl:'',axis:'',va:'',add:''}, os:{sph:'',cyl:'',axis:'',va:'',add:''}, iop:{od:'',os:''}, pd:'' }
+  // Only prefill from a real record when actually editing THAT exam — a
+  // brand-new consultation must always start blank, never carrying over
+  // SPH/CYL/AXIS/diagnosis/remarks from whatever the patient's last visit
+  // happened to be (that was the bug: falling back to p.examinations[0]
+  // here silently reused old data for every new patient encounter).
+  const lastExam   = specificExam
+  const pre        = lastExam || { od:{vaUncorrected:'',sph:'',cyl:'',axis:'',va:'',add:''}, os:{vaUncorrected:'',sph:'',cyl:'',axis:'',va:'',add:''}, iop:{od:'',os:''}, pd:'' }
   const isEdit     = !!params?.examId
   const saveLabel  = isEdit ? 'Save Changes' : 'Save Examination'
 
   // Schedule wizard init after DOM is ready
-  state.afterRender = () => { window._examPatientId = p.id; examWizInit() }
+  // syncIssuePrescription() applies the actual `disabled` attribute to
+  // every field in ne-rx-fields/ne-dispensing-fields to match their
+  // initial inline opacity/pointer-events (set server-side above from the
+  // same linkedRx check) — pointer-events:none alone doesn't block
+  // keyboard Tab-focus into them.
+  state.afterRender = () => { window._examPatientId = p.id; examWizInit(); window.syncIssuePrescription?.() }
 
   const fl = (label, req=false) =>
     `<label style="font-size:.68rem;text-transform:uppercase;letter-spacing:.05em;color:#6b7280;font-weight:600;display:block;margin-bottom:6px">${label}${req ? ' <span style="color:#ef4444">*</span>' : ''}</label>`
@@ -3807,21 +3709,22 @@ function pageNewExamination() {
     { n:1, icon:'user',      label:'Patient Info',    sub:'Basic details'        },
     { n:2, icon:'eye',       label:'Visual Exam',     sub:'Measurements'         },
     { n:3, icon:'activity',  label:'Diagnosis',       sub:'Clinical findings'    },
-    { n:4, icon:'clipboard', label:'Results',         sub:'Recommendations'      },
+    { n:4, icon:'clipboard', label:'Prescription',    sub:'Lens & frame'         },
     { n:5, icon:'package',   label:'Dispensing',      sub:'Payment & release'    },
-    { n:6, icon:'file-text', label:'Review',          sub:'Prescription preview' },
+    { n:6, icon:'message-square', label:'Consultation', sub:'Visit narrative'    },
+    { n:7, icon:'file-text', label:'Review',          sub:'Prescription preview' },
   ]
 
   const stepperHTML = `
   <div id="wiz-stepper" style="display:flex;align-items:center;background:white;border-radius:12px;border:1px solid #e5e7eb;padding:20px 24px;margin-bottom:8px;overflow-x:auto;gap:0">
     ${STEPS.map((s, i) => `
-      <div class="wiz-step-wrap" style="display:flex;align-items:center;${i < STEPS.length - 1 ? 'flex:1;' : ''}min-width:0">
+      <div class="wiz-step-wrap" style="display:flex;align-items:center;flex:1 1 100px;min-width:100px">
         <div id="wiz-pill-${s.n}" class="wiz-pill" onclick="examWizJump(${s.n})"
              style="display:flex;align-items:center;gap:8px;cursor:pointer;min-width:0;padding:4px 4px;border-radius:8px;transition:background 0.2s;overflow:hidden"
              onmouseover="this.style.background='#f9fafb'" onmouseout="this.style.background='transparent'">
           <div id="wiz-circle-${s.n}"
                style="width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:.78rem;font-weight:700;flex-shrink:0;transition:all 0.3s;${s.n === 1 ? 'background:#E8760A;color:white' : 'background:#f3f4f6;color:#9ca3af;border:2px solid #e5e7eb'}">${s.n}</div>
-          <div class="wiz-pill-text" style="min-width:0;overflow:hidden">
+          <div class="wiz-pill-text" style="min-width:60px;overflow:hidden">
             <div class="wiz-pill-label" style="font-size:.72rem;font-weight:${s.n === 1 ? '700' : '500'};color:${s.n === 1 ? '#1f2937' : '#9ca3af'};white-space:nowrap;overflow:hidden;text-overflow:ellipsis;transition:color 0.3s">${s.label}</div>
             <div class="wiz-pill-sub" style="font-size:.62rem;color:${s.n === 1 ? '#6b7280' : '#d1d5db'};white-space:nowrap;overflow:hidden;text-overflow:ellipsis;transition:color 0.3s">${s.sub}</div>
           </div>
@@ -3829,7 +3732,7 @@ function pageNewExamination() {
         ${i < STEPS.length - 1 ? `<div id="wiz-line-${s.n}" class="wiz-step-line" style="flex:1;height:2px;background:#e5e7eb;margin:0 4px;border-radius:2px;transition:background 0.3s;min-width:6px"></div>` : ''}
       </div>`).join('')}
   </div>
-  <div id="wiz-step-label" style="display:none;font-size:.8rem;font-weight:600;color:#6b7280;text-align:center;padding:6px 0 12px">Step 1 of 6: Patient Info</div>`
+  <div id="wiz-step-label" style="display:none;font-size:.8rem;font-weight:600;color:#6b7280;text-align:center;padding:6px 0 12px">Step 1 of 7: Patient Info</div>`
 
   // ── Step 1: Patient Information ──────────────────────────────
   const step1 = `
@@ -3848,7 +3751,7 @@ function pageNewExamination() {
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:16px">
       <div class="form-group" style="margin:0">
         ${fl('Examination Date')}
-        ${window.dateFieldHtml('ne-date', { value: pre.date || today, style: inp })}
+        ${window.dateFieldHtml('ne-date', { value: pre.date || today, style: inp, max: 'none' })}
       </div>
       <div class="form-group" style="margin:0">
         ${fl('Patient ID')}
@@ -3865,22 +3768,73 @@ function pageNewExamination() {
         <input id="ne-contact" class="form-input" style="${inp}" inputmode="numeric" oninput="this.value=this.value.replace(/\\D/g,'')" value="${p.contact || ''}" placeholder="09XX XXX XXXX">
       </div>
     </div>
-    <div class="form-group" style="margin-bottom:16px">
+    <div class="form-group" style="margin:0">
       ${fl('Company / Employer')}
       <input id="ne-employer" class="form-input" style="${inp}" value="${p.occupation || ''}" placeholder="Optional">
     </div>
+  </div>`
+
+  // ── Step 2: Consultation ──────────────────────────────────────
+  // The narrative of the visit — must never carry SPH/CYL/AXIS or any
+  // refraction data (that's the Visual Exam step's job). Prefill from the
+  // consultation already linked to this exam when editing.
+  const linkedConsultation = specificExam?.consultationId
+    ? (p.consultations || []).find(c => c.id === specificExam.consultationId) : null
+  const preCon = linkedConsultation || { type:'Eye Examination', chiefComplaint:'', historyPresentIllness:'', assessment:'', recommendation:'', followUpDate:'', status:'completed' }
+
+  const step2 = `
+  <div style="background:white;border-radius:12px;border:1px solid #e5e7eb;padding:28px">
+    <div style="display:flex;align-items:center;gap:12px;margin-bottom:24px">
+      <div style="width:36px;height:36px;border-radius:50%;background:#E8760A;color:white;display:flex;align-items:center;justify-content:center;flex-shrink:0">${ic('message-square','icon-sm')}</div>
+      <div>
+        <div style="font-size:.95rem;font-weight:700;color:#1f2937">Consultation</div>
+        <div style="font-size:.75rem;color:#6b7280;margin-top:1px">The narrative of this visit, in the patient's and doctor's own words</div>
+      </div>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:14px;margin-bottom:16px">
+      <div class="form-group" style="margin:0">
+        ${fl('Appointment Type')}
+        ${window.selectFieldHtml('ne-con-type', {
+          value: preCon.type || 'Eye Examination',
+          placeholder: 'Select type',
+          options: ['Eye Examination','Follow-up','Frame Fitting','Complaint'],
+          style: inp
+        })}
+      </div>
+      <div class="form-group" style="margin:0">
+        ${fl('Status')}
+        ${window.selectFieldHtml('ne-con-status', {
+          value: preCon.status || 'completed',
+          placeholder: 'Select status',
+          options: [{value:'completed',label:'Completed'},{value:'cancelled',label:'Cancelled'},{value:'no-show',label:'No-show'}],
+          style: inp
+        })}
+      </div>
+      <div class="form-group" style="margin:0">
+        ${fl('Follow-up Date')}
+        ${window.dateFieldHtml('ne-con-followup', { value: preCon.followUpDate || '', style: inp, max: 'none' })}
+      </div>
+    </div>
     <div class="form-group" style="margin-bottom:16px">
-      ${fl('Medical History')}
-      <textarea id="ne-medical" class="form-textarea" style="${inp};resize:vertical;width:100%;min-height:70px" placeholder="Known conditions, allergies, medications…">${p.medicalHistory || ''}</textarea>
+      ${fl('Chief Complaint')}
+      <textarea id="ne-con-complaint" class="form-textarea" style="${inp};resize:vertical;width:100%;min-height:70px" placeholder="In the patient's own words: why they came in...">${preCon.chiefComplaint || ''}</textarea>
+    </div>
+    <div class="form-group" style="margin-bottom:16px">
+      ${fl('History of Present Illness')}
+      <textarea id="ne-con-history" class="form-textarea" style="${inp};resize:vertical;width:100%;min-height:70px" placeholder="Onset, duration, associated symptoms...">${preCon.historyPresentIllness || ''}</textarea>
+    </div>
+    <div class="form-group" style="margin-bottom:16px">
+      ${fl("Doctor's Assessment")}
+      <textarea id="ne-con-assessment" class="form-textarea" style="${inp};resize:vertical;width:100%;min-height:70px" placeholder="Clinical reasoning behind the diagnosis...">${preCon.assessment || ''}</textarea>
     </div>
     <div class="form-group" style="margin:0">
-      ${fl('Optical History')}
-      <textarea id="ne-optical" class="form-textarea" style="${inp};resize:vertical;width:100%;min-height:70px" placeholder="Prior eye conditions, prescriptions, surgeries…">${p.opticalHistory || ''}</textarea>
+      ${fl('Recommendation / Plan')}
+      <textarea id="ne-con-recommendation" class="form-textarea" style="${inp};resize:vertical;width:100%;min-height:70px" placeholder="What happens next...">${preCon.recommendation || ''}</textarea>
     </div>
   </div>`
 
-  // ── Step 2: Visual Examination ───────────────────────────────
-  const step2 = `
+  // ── Step 3: Visual Examination ───────────────────────────────
+  const step3 = `
   <div style="background:white;border-radius:12px;border:1px solid #e5e7eb;padding:28px">
     <div style="display:flex;align-items:center;gap:12px;margin-bottom:24px">
       <div style="width:36px;height:36px;border-radius:50%;background:#E8760A;color:white;display:flex;align-items:center;justify-content:center;flex-shrink:0">${ic('eye','icon-sm')}</div>
@@ -3889,57 +3843,46 @@ function pageNewExamination() {
         <div style="font-size:.75rem;color:#6b7280;margin-top:1px">Enter optical measurements for both eyes</div>
       </div>
     </div>
-    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:14px;margin-bottom:20px">
-      <div class="form-group" style="margin:0">
-        ${fl('NVA')}
-        <input id="ne-nva" class="form-input" style="${inp}" placeholder="e.g. 20/20">
-      </div>
-      <div class="form-group" style="margin:0">
-        ${fl('NNVA')}
-        <input id="ne-nnva" class="form-input" style="${inp}" placeholder="e.g. 20/30">
-      </div>
-      <div class="form-group" style="margin:0">
-        ${fl('RX')}
-        <input id="ne-rx" class="form-input" style="${inp}" placeholder="e.g. -2.00">
-      </div>
-    </div>
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
       <div style="border:1px solid #e5e7eb;border-left:4px solid #22c55e;border-radius:12px;padding:20px">
         <div style="display:flex;align-items:center;gap:8px;margin-bottom:16px">
           <div style="width:24px;height:24px;border-radius:50%;background:#dcfce7;display:flex;align-items:center;justify-content:center"><div style="width:8px;height:8px;border-radius:50%;background:#10B981"></div></div>
-          <div><div style="font-size:.88rem;font-weight:700;color:#1f2937">Right Eye</div><div style="font-size:.7rem;color:#6b7280">OD — Oculus Dexter</div></div>
+          <div><div style="font-size:.88rem;font-weight:700;color:#1f2937">Right Eye</div><div style="font-size:.7rem;color:#6b7280">OD (Oculus Dexter)</div></div>
         </div>
         <div class="wiz-eye-fields">
+          <div class="form-group" style="margin:0">${fl('VA Uncorrected')}<input id="ne-od-va-un" class="form-input" style="${inp}" value="${pre.od.vaUncorrected || ''}" placeholder="20/40"></div>
+          <div class="form-group" style="margin:0">${fl('VA Corrected')}<input id="ne-od-va" class="form-input" style="${inp}" value="${pre.od.va}" placeholder="20/20"></div>
           <div class="form-group" style="margin:0">${fl('Sphere')}<input id="ne-od-sph" class="form-input" style="${inp}" value="${pre.od.sph}" placeholder="+/- 0.00"></div>
           <div class="form-group" style="margin:0">${fl('Cylinder')}<input id="ne-od-cyl" class="form-input" style="${inp}" value="${pre.od.cyl}" placeholder="+/- 0.00"></div>
           <div class="form-group" style="margin:0">${fl('Axis')}<input id="ne-od-axis" class="form-input" style="${inp}" value="${pre.od.axis}" placeholder="0-180"></div>
-          <div class="form-group" style="margin:0">${fl('VA')}<input id="ne-od-va" class="form-input" style="${inp}" value="${pre.od.va}" placeholder="20/20"></div>
         </div>
-        <input id="ne-od-add" type="hidden" value="${pre.od.add || ''}">
       </div>
       <div style="border:1px solid #e5e7eb;border-left:4px solid #E8891C;border-radius:12px;padding:20px">
         <div style="display:flex;align-items:center;gap:8px;margin-bottom:16px">
           <div style="width:24px;height:24px;border-radius:50%;background:#fff8f0;display:flex;align-items:center;justify-content:center"><div style="width:8px;height:8px;border-radius:50%;background:#E8760A"></div></div>
-          <div><div style="font-size:.88rem;font-weight:700;color:#1f2937">Left Eye</div><div style="font-size:.7rem;color:#6b7280">OS — Oculus Sinister</div></div>
+          <div><div style="font-size:.88rem;font-weight:700;color:#1f2937">Left Eye</div><div style="font-size:.7rem;color:#6b7280">OS (Oculus Sinister)</div></div>
         </div>
         <div class="wiz-eye-fields">
+          <div class="form-group" style="margin:0">${fl('VA Uncorrected')}<input id="ne-os-va-un" class="form-input" style="${inp}" value="${pre.os.vaUncorrected || ''}" placeholder="20/40"></div>
+          <div class="form-group" style="margin:0">${fl('VA Corrected')}<input id="ne-os-va" class="form-input" style="${inp}" value="${pre.os.va}" placeholder="20/20"></div>
           <div class="form-group" style="margin:0">${fl('Sphere')}<input id="ne-os-sph" class="form-input" style="${inp}" value="${pre.os.sph}" placeholder="+/- 0.00"></div>
           <div class="form-group" style="margin:0">${fl('Cylinder')}<input id="ne-os-cyl" class="form-input" style="${inp}" value="${pre.os.cyl}" placeholder="+/- 0.00"></div>
           <div class="form-group" style="margin:0">${fl('Axis')}<input id="ne-os-axis" class="form-input" style="${inp}" value="${pre.os.axis}" placeholder="0-180"></div>
-          <div class="form-group" style="margin:0">${fl('VA')}<input id="ne-os-va" class="form-input" style="${inp}" value="${pre.os.va}" placeholder="20/20"></div>
         </div>
-        <input id="ne-os-add" type="hidden" value="${pre.os.add || ''}">
       </div>
+    </div>
+    <div class="form-group" style="margin-top:18px">
+      ${fl('External / Internal Findings')}
+      <textarea id="ne-ext-findings" class="form-textarea" style="${inp};resize:vertical;width:100%;min-height:70px" placeholder="Lids, conjunctiva, cornea, pupils...">${lastExam?.externalFindings || ''}</textarea>
     </div>
     <div style="display:none">
       <input id="ne-iop-od" value="${pre.iop?.od || ''}">
       <input id="ne-iop-os" value="${pre.iop?.os || ''}">
-      <input id="ne-pd" value="${pre.pd || ''}">
     </div>
   </div>`
 
-  // ── Step 3: Diagnosis ────────────────────────────────────────
-  const step3 = `
+  // ── Step 4: Diagnosis ────────────────────────────────────────
+  const step4 = `
   <div style="background:white;border-radius:12px;border:1px solid #e5e7eb;padding:28px">
     <div style="display:flex;align-items:center;gap:12px;margin-bottom:24px">
       <div style="width:36px;height:36px;border-radius:50%;background:#E8760A;color:white;display:flex;align-items:center;justify-content:center;flex-shrink:0">${ic('activity','icon-sm')}</div>
@@ -3948,35 +3891,9 @@ function pageNewExamination() {
         <div style="font-size:.75rem;color:#6b7280;margin-top:1px">Final clinical findings</div>
       </div>
     </div>
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:16px">
-      <div class="form-group" style="margin:0">
-        ${fl('Final Visual Acuity (Final VA)')}
-        <input id="ne-final-va" class="form-input" style="${inp}" placeholder="e.g. 20/20">
-      </div>
-      <div class="form-group" style="margin:0">
-        ${fl('Diagnosis', true)}
-        <input id="ne-diagnosis" class="form-input" style="${inp}" value="${lastExam?.diagnosis || ''}" placeholder="e.g. Myopia with mild astigmatism">
-      </div>
-    </div>
     <div class="form-group" style="margin-bottom:16px">
-      ${fl('Test Results')}
-      <textarea id="ne-test-results" class="form-textarea" style="${inp};resize:vertical;width:100%;min-height:80px" placeholder="Additional test findings...">${lastExam?.testResults || ''}</textarea>
-    </div>
-    <div class="form-group" style="margin:0">
-      ${fl('Prescription Details')}
-      <textarea id="ne-rx-details" class="form-textarea" style="${inp};resize:vertical;width:100%;min-height:80px" placeholder="Prescription notes and details...">${lastExam?.prescriptionDetails || ''}</textarea>
-    </div>
-  </div>`
-
-  // ── Step 4: Results and Recommendations ─────────────────────
-  const step4 = `
-  <div style="background:white;border-radius:12px;border:1px solid #e5e7eb;padding:28px">
-    <div style="display:flex;align-items:center;gap:12px;margin-bottom:24px">
-      <div style="width:36px;height:36px;border-radius:50%;background:#E8760A;color:white;display:flex;align-items:center;justify-content:center;flex-shrink:0">${ic('clipboard','icon-sm')}</div>
-      <div>
-        <div style="font-size:.95rem;font-weight:700;color:#1f2937">Results and Recommendations</div>
-        <div style="font-size:.75rem;color:#6b7280;margin-top:1px">Clinical recommendations for the patient</div>
-      </div>
+      ${fl('Diagnosis', true)}
+      <input id="ne-diagnosis" class="form-input" style="${inp}" value="${lastExam?.diagnosis || ''}" placeholder="e.g. Myopia with mild astigmatism">
     </div>
     <div class="form-group" style="margin-bottom:18px">
       ${fl('Ishihara Test Result')}
@@ -3997,36 +3914,112 @@ function pageNewExamination() {
           </span>Deficient</label>
       </div>
     </div>
-    <div class="form-group" style="margin-bottom:18px">
-      ${fl('Eyeglass Recommendation')}
-      <div style="display:flex;gap:8px;margin-top:8px">
-        <input type="radio" name="ne-eyeglass" id="r-eg-y" value="Yes" checked style="display:none"
-               onchange="window._syncRadioPills('ne-eyeglass')">
-        <input type="radio" name="ne-eyeglass" id="r-eg-n" value="No" style="display:none"
-               onchange="window._syncRadioPills('ne-eyeglass')">
-        <label for="r-eg-y" id="rb-eg-y"
-               style="display:inline-flex;align-items:center;gap:7px;padding:7px 18px;border-radius:8px;font-size:.85rem;font-weight:600;border:1.5px solid #E8891C;background:#FFF7ED;color:#C4720E;cursor:pointer;user-select:none;transition:background .2s,border-color .2s,color .2s,box-shadow .2s;transform:translateZ(0)">
-          <span style="width:14px;height:14px;border-radius:50%;border:2px solid #E8891C;display:inline-flex;align-items:center;justify-content:center;flex-shrink:0;transition:border-color .2s">
-            <span style="width:7px;height:7px;border-radius:50%;background:#E8760A;display:block;transition:background .2s,transform .2s cubic-bezier(.34,1.56,.64,1);transform:scale(1)"></span>
+    <div class="form-group" style="margin-bottom:16px">
+      ${fl('Test Results')}
+      <textarea id="ne-test-results" class="form-textarea" style="${inp};resize:vertical;width:100%;min-height:80px" placeholder="Additional test findings...">${lastExam?.testResults || ''}</textarea>
+    </div>
+    <div class="form-group" style="margin:0">
+      ${fl('Clinical Remarks')}
+      <textarea id="ne-remarks" class="form-textarea" style="${inp};resize:vertical;width:100%;min-height:80px" placeholder="Additional clinical notes...">${lastExam?.remarks || ''}</textarea>
+    </div>
+  </div>`
+
+  // ── Step 5: Prescription ─────────────────────────────────────
+  // Only issued when the doctor explicitly toggles it on — never inferred
+  // from "a sphere value happens to be filled in" (see api/examinations/
+  // create.php). Lens/frame/coating fields belong to the issued document,
+  // not the exam or consultation.
+  const linkedRx = specificExam ? (p.prescriptions || []).find(rx => rx.examId === specificExam.id) : null
+  const preRx = linkedRx || { od:{add:''}, os:{add:''}, pd:'', lensType:'', lensMaterial:'', lensCoating:[], frameSelection:'' }
+  // Default to Yes on a brand-new exam (issuing a prescription is the more
+  // common outcome, so this is the lower-friction default) — but when
+  // editing an exam that already exists, respect whatever was actually
+  // decided for it rather than silently flipping a "No" record to "Yes".
+  const issuingByDefault = specificExam ? !!linkedRx : true
+  // Eyeglass vs Contact Lens determines which Lens Type/Material options
+  // apply (see syncCorrectionType(), main.js) and whether Frame Selection
+  // is relevant at all — inferred from a linked Rx's existing lens type
+  // when editing, defaulting to Eyeglass otherwise.
+  const CONTACT_LENS_TYPES = ['Hard Lenses','Soft Lenses','Hybrid Lenses','Multifocal Lenses','Scleral Lenses']
+  const isContactRx = CONTACT_LENS_TYPES.includes(preRx.lensType)
+  const step5 = `
+  <div style="background:white;border-radius:12px;border:1px solid #e5e7eb;padding:28px">
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap;margin-bottom:24px;padding-bottom:20px;border-bottom:1px solid #f3f4f6">
+      <div style="display:flex;align-items:center;gap:12px">
+        <div style="width:36px;height:36px;border-radius:50%;background:#E8760A;color:white;display:flex;align-items:center;justify-content:center;flex-shrink:0">${ic('clipboard','icon-sm')}</div>
+        <div>
+          <div style="font-size:.95rem;font-weight:700;color:#1f2937">Prescription</div>
+          <div style="font-size:.75rem;color:#6b7280;margin-top:1px">Only fill this in if you're issuing a prescription today</div>
+        </div>
+      </div>
+      <div style="display:flex;align-items:center;gap:10px;flex-shrink:0">
+        <span style="font-size:.68rem;text-transform:uppercase;letter-spacing:.05em;color:#6b7280;font-weight:600;white-space:nowrap">Issue Prescription?</span>
+        <div style="display:flex;align-items:center;gap:8px">
+        <input type="radio" name="ne-issue-choice" id="r-issue-yes" value="Yes" ${issuingByDefault ? 'checked' : ''} style="display:none"
+               onchange="window.syncIssuePrescription()">
+        <input type="radio" name="ne-issue-choice" id="r-issue-no" value="No" ${issuingByDefault ? '' : 'checked'} style="display:none"
+               onchange="window.syncIssuePrescription()">
+        <label for="r-issue-yes" id="rb-issue-yes"
+               style="display:inline-flex;align-items:center;gap:7px;padding:6px 16px;border-radius:8px;font-size:.82rem;font-weight:600;border:1.5px solid ${issuingByDefault ? '#E8891C' : '#e5e7eb'};background:${issuingByDefault ? '#FFF7ED' : '#f9fafb'};color:${issuingByDefault ? '#C4720E' : '#6b7280'};cursor:pointer;user-select:none;transition:background .2s,border-color .2s,color .2s,box-shadow .2s;transform:translateZ(0)">
+          <span style="width:13px;height:13px;border-radius:50%;border:2px solid ${issuingByDefault ? '#E8891C' : '#d1d5db'};display:inline-flex;align-items:center;justify-content:center;flex-shrink:0;transition:border-color .2s">
+            <span style="width:6px;height:6px;border-radius:50%;background:${issuingByDefault ? '#E8760A' : 'transparent'};display:block;transition:background .2s,transform .2s cubic-bezier(.34,1.56,.64,1);transform:scale(${issuingByDefault ? '1' : '0'})"></span>
           </span>Yes</label>
-        <label for="r-eg-n" id="rb-eg-n"
-               style="display:inline-flex;align-items:center;gap:7px;padding:7px 18px;border-radius:8px;font-size:.85rem;font-weight:600;border:1.5px solid #e5e7eb;background:#f9fafb;color:#6b7280;cursor:pointer;user-select:none;transition:background .2s,border-color .2s,color .2s,box-shadow .2s;transform:translateZ(0)">
-          <span style="width:14px;height:14px;border-radius:50%;border:2px solid #d1d5db;display:inline-flex;align-items:center;justify-content:center;flex-shrink:0;transition:border-color .2s">
-            <span style="width:7px;height:7px;border-radius:50%;background:transparent;display:block;transition:background .2s,transform .2s cubic-bezier(.34,1.56,.64,1);transform:scale(0)"></span>
+        <label for="r-issue-no" id="rb-issue-no"
+               style="display:inline-flex;align-items:center;gap:7px;padding:6px 16px;border-radius:8px;font-size:.82rem;font-weight:600;border:1.5px solid ${issuingByDefault ? '#e5e7eb' : '#E8891C'};background:${issuingByDefault ? '#f9fafb' : '#FFF7ED'};color:${issuingByDefault ? '#6b7280' : '#C4720E'};cursor:pointer;user-select:none;transition:background .2s,border-color .2s,color .2s,box-shadow .2s;transform:translateZ(0)">
+          <span style="width:13px;height:13px;border-radius:50%;border:2px solid ${issuingByDefault ? '#d1d5db' : '#E8891C'};display:inline-flex;align-items:center;justify-content:center;flex-shrink:0;transition:border-color .2s">
+            <span style="width:6px;height:6px;border-radius:50%;background:${issuingByDefault ? 'transparent' : '#E8760A'};display:block;transition:background .2s,transform .2s cubic-bezier(.34,1.56,.64,1);transform:scale(${issuingByDefault ? '0' : '1'})"></span>
           </span>No</label>
+        </div>
       </div>
     </div>
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:16px">
-      <div class="form-group" style="margin:0">
+    <!-- Everything below is only meaningful when a prescription is actually
+         being issued — syncIssuePrescription() (main.js) shows this overlay
+         (and the Dispensing step's, id="ne-dispensing-fields") and disables
+         every field underneath it the moment "No" is picked, instead of
+         leaving fields that don't apply sitting there editable. -->
+    <div id="ne-rx-fields" style="position:relative">
+      <div id="ne-rx-overlay" style="position:absolute;inset:0;z-index:5;align-items:center;justify-content:center;background:rgba(255,255,255,.94);border-radius:8px;padding:24px;text-align:center;display:${issuingByDefault ? 'none' : 'flex'}">
+        <div>
+          <div style="width:44px;height:44px;border-radius:50%;background:#FFF7ED;display:flex;align-items:center;justify-content:center;margin:0 auto 12px;color:#E8891C">${ic('file-text','icon')}</div>
+          <div style="font-size:.92rem;font-weight:700;color:#1f2937;margin-bottom:4px">No Prescription Being Issued</div>
+          <div style="font-size:.8rem;color:#6b7280;max-width:320px;margin:0 auto;line-height:1.5">These fields don't apply to this visit. Toggle "Yes" above to issue a prescription.</div>
+        </div>
+      </div>
+    <div class="form-group" style="margin-bottom:18px">
+      ${fl('Correction Type')}
+      <div style="display:flex;gap:8px;margin-top:8px">
+        <input type="radio" name="ne-correction" id="r-corr-eg" value="Eyeglass" ${isContactRx ? '' : 'checked'} style="display:none"
+               onchange="window.syncCorrectionType()">
+        <input type="radio" name="ne-correction" id="r-corr-cl" value="Contact Lens" ${isContactRx ? 'checked' : ''} style="display:none"
+               onchange="window.syncCorrectionType()">
+        <label for="r-corr-eg" id="rb-corr-eg"
+               style="display:inline-flex;align-items:center;gap:7px;padding:7px 18px;border-radius:8px;font-size:.85rem;font-weight:600;border:1.5px solid ${isContactRx ? '#e5e7eb' : '#E8891C'};background:${isContactRx ? '#f9fafb' : '#FFF7ED'};color:${isContactRx ? '#6b7280' : '#C4720E'};cursor:pointer;user-select:none;transition:background .2s,border-color .2s,color .2s,box-shadow .2s;transform:translateZ(0)">
+          <span style="width:14px;height:14px;border-radius:50%;border:2px solid ${isContactRx ? '#d1d5db' : '#E8891C'};display:inline-flex;align-items:center;justify-content:center;flex-shrink:0;transition:border-color .2s">
+            <span style="width:7px;height:7px;border-radius:50%;background:${isContactRx ? 'transparent' : '#E8760A'};display:block;transition:background .2s,transform .2s cubic-bezier(.34,1.56,.64,1);transform:scale(${isContactRx ? '0' : '1'})"></span>
+          </span>Eyeglass</label>
+        <label for="r-corr-cl" id="rb-corr-cl"
+               style="display:inline-flex;align-items:center;gap:7px;padding:7px 18px;border-radius:8px;font-size:.85rem;font-weight:600;border:1.5px solid ${isContactRx ? '#E8891C' : '#e5e7eb'};background:${isContactRx ? '#FFF7ED' : '#f9fafb'};color:${isContactRx ? '#C4720E' : '#6b7280'};cursor:pointer;user-select:none;transition:background .2s,border-color .2s,color .2s,box-shadow .2s;transform:translateZ(0)">
+          <span style="width:14px;height:14px;border-radius:50%;border:2px solid ${isContactRx ? '#E8891C' : '#d1d5db'};display:inline-flex;align-items:center;justify-content:center;flex-shrink:0;transition:border-color .2s">
+            <span style="width:7px;height:7px;border-radius:50%;background:${isContactRx ? '#E8760A' : 'transparent'};display:block;transition:background .2s,transform .2s cubic-bezier(.34,1.56,.64,1);transform:scale(${isContactRx ? '1' : '0'})"></span>
+          </span>Contact Lens</label>
+      </div>
+    </div>
+    <div id="ne-add-pd-row" style="display:grid;grid-template-columns:${isContactRx ? '1fr 1fr' : '1fr 1fr 1fr'};gap:14px;margin-bottom:16px">
+      <div class="form-group" style="margin:0">${fl('ADD (OD)')}<input id="ne-od-add" class="form-input" style="${inp}" value="${preRx.od?.add || pre.od.add || ''}" placeholder="+/- 0.00"></div>
+      <div class="form-group" style="margin:0">${fl('ADD (OS)')}<input id="ne-os-add" class="form-input" style="${inp}" value="${preRx.os?.add || pre.os.add || ''}" placeholder="+/- 0.00"></div>
+      <div class="form-group" id="ne-pd-group" style="margin:0;${isContactRx ? 'display:none' : ''}">${fl('Pupillary Distance (PD)')}<input id="ne-pd" class="form-input" style="${inp}" value="${preRx.pd || pre.pd || ''}" placeholder="e.g. 62mm"></div>
+    </div>
+    <div id="ne-frame-lens-row" style="display:grid;grid-template-columns:${isContactRx ? '1fr' : '1fr 1fr'};gap:14px;margin-bottom:16px">
+      <div class="form-group" id="ne-frame-group" style="margin:0;${isContactRx ? 'display:none' : ''}">
         ${fl('Frame Selection')}
-        <input id="ne-frame" class="form-input" style="${inp}" value="${lastExam?.frameSelection || ''}" placeholder="e.g. Ray-Ban Classic">
+        <input id="ne-frame" class="form-input" style="${inp}" value="${preRx.frameSelection || ''}" placeholder="e.g. Ray-Ban Classic">
       </div>
       <div class="form-group" style="margin:0">
-        ${fl('Lens Type / Contact Lens')}
+        ${fl('Lens Type')}
         ${window.selectFieldHtml('ne-lens-type', {
-          value: lastExam?.lensType || '',
+          value: preRx.lensType || '',
           placeholder: 'Select lens type',
-          options: ['Single Vision','Bifocal','Progressive','Contact Lens','Photochromic'],
+          options: isContactRx ? CONTACT_LENS_TYPES : ['Single Vision','Bifocal','Progressive'],
           style: inp
         })}
       </div>
@@ -4034,28 +4027,32 @@ function pageNewExamination() {
     <div class="form-group" style="margin-bottom:16px">
       ${fl('Lens Material')}
       ${window.selectFieldHtml('ne-lens-material', {
-        value: lastExam?.lensMaterial || '',
+        value: preRx.lensMaterial || '',
         placeholder: 'Select lens material',
-        options: ['CR-39','Polycarbonate','High Index','Trivex'],
+        options: isContactRx ? ['Silicone Hydrogel','Hydrogel','Rigid Gas Permeable (RGP)'] : ['CR-39','Polycarbonate','High Index','Trivex'],
         style: inp
       })}
     </div>
-    <div class="form-group" style="margin-bottom:18px">
+    <div class="form-group" style="margin:0">
       ${fl('Lens Coatings')}
+      <!-- Anti-Reflective, Blue Light Filter, and Scratch Resistant are all
+           lens-surface treatments — an eyeglass-specific concept, since a
+           contact lens sits directly on the eye rather than in a frame
+           people can see reflections off or wipe with a cloth.
+           Photochromic is the one coating with real contact lens products
+           (e.g. Transitions-brand contacts), so it's the only one that
+           stays for Contact Lens — hidden/shown by syncCorrectionType(). -->
       <div style="display:flex;gap:16px;flex-wrap:wrap;margin-top:8px">
-        ${[['Anti-Reflective','ar'],['Blue Light Filter','bl'],['Photochromic','ph'],['Scratch Resistant','sr']].map(([lbl, key]) =>
-          `<label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:.88rem;font-weight:500"><input type="checkbox" class="chk" id="ne-coat-${key}" value="${lbl}" ${(lastExam?.lensCoating || []).includes(lbl) ? 'checked' : ''}> ${lbl}</label>`
+        ${[['Anti-Reflective','ar',false],['Blue Light Filter','bl',false],['Photochromic','ph',true],['Scratch Resistant','sr',false]].map(([lbl, key, contactOk]) =>
+          `<label id="ne-coat-group-${key}" style="display:${(!contactOk && isContactRx) ? 'none' : 'flex'};align-items:center;gap:8px;cursor:pointer;font-size:.88rem;font-weight:500"><input type="checkbox" class="chk" id="ne-coat-${key}" value="${lbl}" ${(preRx.lensCoating || []).includes(lbl) ? 'checked' : ''}> ${lbl}</label>`
         ).join('')}
       </div>
     </div>
-    <div class="form-group" style="margin:0">
-      ${fl('Remarks')}
-      <textarea id="ne-remarks" class="form-textarea" style="${inp};resize:vertical;width:100%;min-height:80px" placeholder="Additional clinical notes and recommendations...">${lastExam?.remarks || ''}</textarea>
-    </div>
+    </div><!-- end ne-rx-fields -->
   </div>`
 
-  // ── Step 5: Dispensing Information ──────────────────────────
-  const step5 = `
+  // ── Step 6: Dispensing Information ──────────────────────────
+  const step6 = `
   <div style="background:white;border-radius:12px;border:1px solid #e5e7eb;padding:28px">
     <div style="display:flex;align-items:center;gap:12px;margin-bottom:24px">
       <div style="width:36px;height:36px;border-radius:50%;background:#E8760A;color:white;display:flex;align-items:center;justify-content:center;flex-shrink:0">${ic('package','icon-sm')}</div>
@@ -4064,30 +4061,36 @@ function pageNewExamination() {
         <div style="font-size:.75rem;color:#6b7280;margin-top:1px">Eyeglass release and payment details</div>
       </div>
     </div>
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px">
-      <div class="form-group" style="margin:0">
-        ${fl('Total Amount (PHP)')}
-        <input id="ne-total" type="number" class="form-input" style="${inp}" value="0.00" placeholder="0.00">
+    <!-- Nothing to dispense if no prescription is being issued this visit —
+         overlaid/disabled together with the Prescription step's own fields
+         by syncIssuePrescription() (main.js). -->
+    <div id="ne-dispensing-fields" style="position:relative">
+      <div id="ne-dispensing-overlay" style="position:absolute;inset:0;z-index:5;align-items:center;justify-content:center;background:rgba(255,255,255,.94);border-radius:8px;padding:24px;text-align:center;display:${issuingByDefault ? 'none' : 'flex'}">
+        <div>
+          <div style="width:44px;height:44px;border-radius:50%;background:#FFF7ED;display:flex;align-items:center;justify-content:center;margin:0 auto 12px;color:#E8891C">${ic('package','icon')}</div>
+          <div style="font-size:.92rem;font-weight:700;color:#1f2937;margin-bottom:4px">Nothing to Dispense</div>
+          <div style="font-size:.8rem;color:#6b7280;max-width:320px;margin:0 auto;line-height:1.5">No prescription is being issued for this visit. Toggle "Yes" on the Prescription step to enable dispensing.</div>
+        </div>
       </div>
-      <div class="form-group" style="margin:0">
-        ${fl('Account Number')}
-        <input id="ne-account" class="form-input" style="${inp}" placeholder="Account #">
-      </div>
+    <div class="form-group" style="margin-bottom:14px">
+      ${fl('Total Amount (PHP)')}
+      <input id="ne-total" type="number" class="form-input" style="${inp}" value="0.00" placeholder="0.00">
     </div>
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px">
       <div class="form-group" style="margin:0">
         ${fl('Dispensed Date')}
-        ${window.dateFieldHtml('ne-dispensed-date', { value: today, style: inp })}
+        ${window.dateFieldHtml('ne-dispensed-date', { value: today, style: inp, max: 'none' })}
       </div>
       <div class="form-group" style="margin:0">
         ${fl('Received By')}
         <input id="ne-received-by" class="form-input" style="${inp}" placeholder="e.g. Juan Dela Cruz">
       </div>
     </div>
+    </div><!-- end ne-dispensing-fields -->
   </div>`
 
-  // ── Step 6: Prescription Review ──────────────────────────────
-  const step6 = `
+  // ── Step 7: Prescription Review ──────────────────────────────
+  const step7 = `
   <div style="background:white;border-radius:12px;border:1px solid #e5e7eb;padding:28px" id="rx-preview-wrapper">
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px">
       <div style="display:flex;align-items:center;gap:12px">
@@ -4107,7 +4110,12 @@ function pageNewExamination() {
     </div>
   </div>`
 
-  const stepsHTML = [step1, step2, step3, step4, step5, step6]
+  // Assembled in the user-facing order (Patient Info, Visual Exam, Diagnosis,
+  // Prescription, Dispensing, Consultation, Review) rather than declaration
+  // order above — the wiz-step-N div ids come from position in this array,
+  // not from the step2/step3/etc. variable names, so reordering here is all
+  // that's needed to move Consultation to just before Review.
+  const stepsHTML = [step1, step3, step4, step5, step6, step2, step7]
     .map((html, i) => `<div id="wiz-step-${i + 1}" style="${i === 0 ? '' : 'display:none'}">${html}</div>`).join('')
 
   const navHTML = `
@@ -4149,8 +4157,6 @@ function pageNewExamination() {
         [ic('calendar','icon-sm'), 'Date of Birth',   _dob],
         [ic('phone','icon-sm'),    'Contact Number',  p.contact || '—'],
         [ic('calendar','icon-sm'), 'Last Visit',      (p.lastVisit && p.lastVisit !== '—') ? new Date(p.lastVisit+'T00:00:00').toLocaleDateString('en-PH',{year:'numeric',month:'short',day:'numeric'}) : '—'],
-        [ic('activity','icon-sm'), 'Blood Type',      p.bloodType || '—'],
-        [ic('activity','icon-sm'), 'Known Condition', p.medicalHistory ? p.medicalHistory.split('.')[0] : 'None on record'],
       ].map(([iconHtml, label, val]) => `
         <div style="display:flex;align-items:flex-start;gap:10px">
           <span style="color:#9ca3af;flex-shrink:0;margin-top:2px">${iconHtml}</span>
@@ -4213,12 +4219,73 @@ function pageNewExamination() {
       display: flex;
       flex-direction: column;
       gap: 16px;
-      position: sticky;
-      top: 24px;
+      /* Was position:sticky — that's exactly what caused the visible
+         offset: a stuck sidebar stays pinned near the viewport top while
+         the non-sticky left column keeps scrolling normally past it, so
+         the two only ever lined up exactly at scrollY:0. Plain flow keeps
+         both columns moving together, staying grid-aligned at every
+         scroll position instead of just the top. */
+      align-self: start;
+      margin: 0;
       min-width: 0;
       width: 300px;
       max-width: 300px;
     }
+    /* Stepper — the same compact, vertical (icon-over-label) style at
+       every viewport width, desktop included, instead of switching layouts
+       at the 768px breakpoint. Each step owns a fixed 100px column so
+       labels never need clipping; #wiz-stepper still scrolls horizontally
+       if 7 columns genuinely don't fit the available width. */
+    #wiz-stepper { padding: 16px 12px; gap: 0; overflow-x: auto; width: 100%; box-sizing: border-box; }
+    .wiz-step-wrap {
+      position: relative !important;
+      flex-direction: column !important;
+      align-items: center !important;
+      flex: 1 1 100px !important;
+      min-width: 100px !important;
+    }
+    /* Pill: fills column width, text visible without clipping */
+    .wiz-pill {
+      flex-direction: column !important;
+      align-items: center !important;
+      gap: 8px !important;
+      padding: 0 !important;
+      overflow: visible !important;
+      position: relative;
+      width: 100% !important;
+    }
+    /* Circle: z-index 2 so it renders above the connector lines */
+    .wiz-pill > div:first-child {
+      position: relative;
+      z-index: 2;
+      width: 30px !important;
+      height: 30px !important;
+    }
+    .wiz-pill-text { text-align: center; overflow: visible !important; min-width: 0; width: 100%; }
+    .wiz-pill-label {
+      font-size: .62rem !important;
+      white-space: nowrap !important;
+      overflow: visible !important;
+      text-overflow: clip !important;
+      text-align: center;
+      line-height: 1.3;
+    }
+    .wiz-pill-sub { display: block !important; font-size: .56rem !important; white-space: nowrap !important; overflow: hidden !important; text-overflow: ellipsis !important; }
+    /* Line: spans only between circle edges with a 4px white gap on each side */
+    .wiz-step-line {
+      position: absolute !important;
+      top: 15px !important;
+      left: calc(50% + 19px) !important;
+      width: calc(100% - 38px) !important;
+      height: 2px !important;
+      margin: 0 !important;
+      flex: none !important;
+      z-index: 1;
+      min-width: unset !important;
+    }
+    #wiz-nav { padding: 12px 14px; }
+    #wiz-btn-back { padding: 9px 16px !important; font-size: .84rem !important; }
+    #wiz-btn-next, #wiz-btn-save { padding: 9px 20px !important; font-size: .84rem !important; }
     @media (max-width: 768px) {
       .exam-layout {
         grid-template-columns: 1fr;
@@ -4227,68 +4294,6 @@ function pageNewExamination() {
         width: 100%;
         max-width: 100%;
         position: static;
-      }
-      /* Stepper: each step owns fixed 76px so labels never need clipping */
-      #wiz-stepper { padding: 16px 12px; gap: 0; overflow-x: auto; width: 100%; box-sizing: border-box; }
-      .wiz-step-wrap {
-        position: relative !important;
-        flex-direction: column !important;
-        align-items: center !important;
-        flex: 0 0 100px !important;
-        min-width: 100px !important;
-      }
-      /* Pill: fills column width, text visible without clipping */
-      .wiz-pill {
-        flex-direction: column !important;
-        align-items: center !important;
-        gap: 8px !important;
-        padding: 0 !important;
-        overflow: visible !important;
-        position: relative;
-        width: 100% !important;
-      }
-      /* Circle: z-index 2 so it renders above the connector lines */
-      .wiz-pill > div:first-child {
-        position: relative;
-        z-index: 2;
-        width: 30px !important;
-        height: 30px !important;
-      }
-      .wiz-pill-text { text-align: center; overflow: visible !important; min-width: 0; width: 100%; }
-      .wiz-pill-label {
-        font-size: .62rem !important;
-        white-space: nowrap !important;
-        overflow: visible !important;
-        text-overflow: clip !important;
-        text-align: center;
-        line-height: 1.3;
-      }
-      .wiz-pill-sub { display: block !important; font-size: .56rem !important; white-space: nowrap !important; overflow: hidden !important; text-overflow: ellipsis !important; }
-      /* Line: spans only between circle edges with a 4px white gap on each side */
-      .wiz-step-line {
-        position: absolute !important;
-        top: 15px !important;
-        left: calc(50% + 19px) !important;
-        width: calc(100% - 38px) !important;
-        height: 2px !important;
-        margin: 0 !important;
-        flex: none !important;
-        z-index: 1;
-        min-width: unset !important;
-      }
-      /* Nav: compact padding on mobile, buttons keep natural size */
-      #wiz-nav { padding: 12px 14px; }
-      #wiz-btn-back { padding: 9px 16px !important; font-size: .84rem !important; }
-      #wiz-btn-next, #wiz-btn-save { padding: 9px 20px !important; font-size: .84rem !important; }
-    }
-    @media (min-width: 769px) {
-      /* Desktop: give text block enough room so sub-labels show in full; stepper scrolls if needed */
-      .wiz-pill-text { min-width: 110px !important; overflow: visible !important; }
-      .wiz-pill { overflow: visible !important; }
-      .wiz-pill-label, .wiz-pill-sub {
-        overflow: visible !important;
-        text-overflow: clip !important;
-        white-space: nowrap !important;
       }
     }
     @media print {
@@ -4343,7 +4348,7 @@ function pagePatientExamHistory() {
       <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:14px;flex-wrap:wrap;margin-bottom:16px">
         <div>
           <div style="font-size:1.1rem;font-weight:800;color:#fff;margin-bottom:3px">${latest.diagnosis}</div>
-          <div style="font-size:.77rem;color:rgba(255,255,255,.55)">${fmtDate(latest.date)} &bull; ${latest.doctor}${latest.lensType && latest.lensType !== '—' ? ' &bull; ' + latest.lensType : ''}</div>
+          <div style="font-size:.77rem;color:rgba(255,255,255,.55)">${fmtDate(latest.date)} &bull; ${latest.doctor}</div>
         </div>
         <div style="display:flex;gap:8px;flex-wrap:wrap;flex-shrink:0">
           <button onclick="window.viewExamDetail('${user.id}','${latest.id}')"
@@ -4362,7 +4367,7 @@ function pagePatientExamHistory() {
       <!-- OD/OS snapshot -->
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
         <div style="background:rgba(34,197,94,.1);border:1px solid rgba(34,197,94,.22);border-radius:8px;padding:10px 14px">
-          <div style="font-size:.58rem;font-weight:800;text-transform:uppercase;letter-spacing:.08em;color:#4ADE80;margin-bottom:7px">OD — Right Eye</div>
+          <div style="font-size:.58rem;font-weight:800;text-transform:uppercase;letter-spacing:.08em;color:#4ADE80;margin-bottom:7px">OD (Right Eye)</div>
           <div style="display:flex;gap:16px;flex-wrap:wrap">
             <span><span style="font-size:.58rem;color:rgba(255,255,255,.38)">SPH</span> <strong style="font-family:monospace;font-size:.88rem;color:#fff">${latest.od?.sph || '—'}</strong></span>
             <span><span style="font-size:.58rem;color:rgba(255,255,255,.38)">CYL</span> <strong style="font-family:monospace;font-size:.88rem;color:#fff">${latest.od?.cyl || '—'}</strong></span>
@@ -4370,7 +4375,7 @@ function pagePatientExamHistory() {
           </div>
         </div>
         <div style="background:rgba(232,118,10,.1);border:1px solid rgba(232,118,10,.22);border-radius:8px;padding:10px 14px">
-          <div style="font-size:.58rem;font-weight:800;text-transform:uppercase;letter-spacing:.08em;color:#FBBF24;margin-bottom:7px">OS — Left Eye</div>
+          <div style="font-size:.58rem;font-weight:800;text-transform:uppercase;letter-spacing:.08em;color:#FBBF24;margin-bottom:7px">OS (Left Eye)</div>
           <div style="display:flex;gap:16px;flex-wrap:wrap">
             <span><span style="font-size:.58rem;color:rgba(255,255,255,.38)">SPH</span> <strong style="font-family:monospace;font-size:.88rem;color:#fff">${latest.os?.sph || '—'}</strong></span>
             <span><span style="font-size:.58rem;color:rgba(255,255,255,.38)">CYL</span> <strong style="font-family:monospace;font-size:.88rem;color:#fff">${latest.os?.cyl || '—'}</strong></span>
@@ -4401,7 +4406,7 @@ function pagePatientExamHistory() {
         <!-- Info -->
         <div style="flex:1;min-width:0">
           <div style="font-size:.87rem;font-weight:700;color:#1C1C1C;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${e.diagnosis}</div>
-          <div style="font-size:.72rem;color:#6B7280;margin-top:2px">${e.doctor}${e.lensType && e.lensType !== '—' ? ' &bull; ' + e.lensType : ''}</div>
+          <div style="font-size:.72rem;color:#6B7280;margin-top:2px">${e.doctor}</div>
         </div>
         ${i===0 ? `<span style="background:#FFF7ED;color:#E8760A;font-size:.63rem;font-weight:700;padding:2px 8px;border-radius:20px;border:1px solid #FDE68A;flex-shrink:0;white-space:nowrap">Latest</span>` : ''}
         ${badge(e.status || 'completed')}
@@ -4681,11 +4686,19 @@ function appointmentWizardHtml(mode) {
       .appt-type-card:hover { border-color:#E8760A; background:#FFFBF5; }
       .appt-type-card.selected { border-color:#E8760A; background:#FFF7ED; }
       /* ── Time slots ── */
+      /* These are real <button> elements — iOS Safari applies its own
+         default (system blue) text color to an unstyled native button
+         unless both appearance is reset AND color is stated explicitly.
+         Desktop Chrome/Firefox happened to render the intended dark text
+         anyway (inherited from body), which is exactly what let this ship
+         without anyone noticing until an actual iPad showed the real
+         default. */
       .time-slot { padding:9px 14px; border-radius:8px; border:1.5px solid #e5e7eb; background:#fff;
+        -webkit-appearance:none; appearance:none; color:#1C1C1C;
         font-family:'Poppins',sans-serif; font-size:.82rem; cursor:pointer; transition:all .15s; white-space:nowrap; }
-      .time-slot:hover:not(.taken) { border-color:#E8760A; }
+      .time-slot:hover:not(.taken):not(.mine) { border-color:#E8760A; }
       .time-slot.selected { background:#E8760A; color:#fff; border-color:#E8760A; }
-      .time-slot.taken { background:#F3F4F6; color:#9CA3AF; cursor:default; text-decoration:line-through; }
+      .time-slot.taken { background:#F3F4F6; color:#9CA3AF; cursor:not-allowed; text-decoration:line-through; }
       .time-slot.full { background:#FFF7ED; color:#C2410C; border-color:#FDBA74; }
       .time-slot.full:hover { background:#FFEDD5; border-color:#E8760A; }
       /* A full/waitlist slot that's also the current pick — .selected and
@@ -4693,6 +4706,13 @@ function appointmentWizardHtml(mode) {
          is declared later in the file silently wins; this 3-class rule
          out-specifies both so the orange "selected" look always wins. */
       .time-slot.selected.full { background:#E8760A; color:#fff; border-color:#E8760A; }
+      /* A slot that's full specifically because the patient viewing this
+         already has their own appointment there (see wizBuildTimeSlots(),
+         main.js) — same grayed-out/crossed-out treatment as .taken (its
+         own class rather than reusing .taken directly, since the tooltip
+         text still needs to say something different: "you already have
+         an appointment" rather than "this time has passed"). */
+      .time-slot.mine { background:#F3F4F6; color:#9CA3AF; cursor:not-allowed; text-decoration:line-through; }
       .time-slot-legend { display:flex; flex-wrap:wrap; gap:12px; margin-top:10px; font-family:'Poppins',sans-serif; font-size:.72rem; color:#6B7280; }
       .time-slot-legend-item { display:flex; align-items:center; gap:6px; }
       .time-slot-legend-swatch { width:10px; height:10px; border-radius:3px; display:inline-block; flex-shrink:0; }
@@ -4830,13 +4850,6 @@ function appointmentWizardHtml(mode) {
                 ${clinicHoursNotice}
               </div>
             </div>
-            ${isStaff ? '' : `
-            <div style="background:#FFF7ED;border-left:3px solid #E8760A;border-radius:8px;padding:12px 16px;margin-bottom:16px;display:flex;align-items:flex-start;gap:10px">
-              <span style="flex-shrink:0;display:flex;margin-top:2px"><svg viewBox="0 0 24 24" fill="none" stroke="#E8760A" stroke-width="2" stroke-linecap="round" width="16" height="16"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12" y2="16"/></svg></span>
-              <div style="font-size:.82rem;color:#92400E;line-height:1.5">
-                <strong>Before you book:</strong> Approved appointments get a reminder at ${consultationSettings.reminderTime || '12:00 PM'} the day before your visit. Confirm by ${consultationSettings.confirmDeadlineTime || '9:00 PM'} that same day or the slot is automatically released to the next patient. See the <a href="#" class="appt-policy-link" onclick="event.preventDefault();window.openAppointmentPolicyModal()">Appointment Policy</a> for full details.
-              </div>
-            </div>`}
             <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
               <button class="btn-icon" id="amc-prev" onclick="window.amcGoMonth(-1)">${ic('chevron-left','icon-sm')}</button>
               <span id="amc-month-label" style="font-size:.88rem;font-weight:700;color:#1C1C1C"></span>
@@ -4848,7 +4861,8 @@ function appointmentWizardHtml(mode) {
             <div class="appt-mini-cal" id="amc-cells"></div>
             <div style="display:flex;gap:12px;margin-top:12px;flex-wrap:wrap">
               <span style="display:flex;align-items:center;gap:5px;font-size:.7rem;color:#6B7280"><span style="width:10px;height:10px;border-radius:3px;background:#ECFDF5;border:1px solid #6EE7B7;display:inline-block"></span>Available</span>
-              <span style="display:flex;align-items:center;gap:5px;font-size:.7rem;color:#6B7280"><span style="width:10px;height:10px;border-radius:3px;background:#E8760A;display:inline-block"></span>Today / Selected</span>
+              <span style="display:flex;align-items:center;gap:5px;font-size:.7rem;color:#6B7280"><span style="width:10px;height:10px;border-radius:3px;background:#fff;border:2px solid #E8760A;box-sizing:border-box;display:inline-block"></span>Today</span>
+              <span style="display:flex;align-items:center;gap:5px;font-size:.7rem;color:#6B7280"><span style="width:10px;height:10px;border-radius:3px;background:#E8760A;display:inline-block"></span>Selected</span>
               <span style="display:flex;align-items:center;gap:5px;font-size:.7rem;color:#6B7280"><span style="width:10px;height:10px;border-radius:3px;background:#F3F4F6;display:inline-block"></span>Unavailable</span>
               <span style="display:flex;align-items:center;gap:5px;font-size:.7rem;color:#6B7280"><span style="width:10px;height:10px;border-radius:3px;background:#F3F4F6;display:inline-block"></span>No Doctor Available <span style="color:#9CA3AF">(clinic open)</span></span>
               <span style="display:flex;align-items:center;gap:5px;font-size:.7rem;color:#6B7280"><span style="width:10px;height:10px;border-radius:3px;background:#FFF1F2;border:1px solid #fda4af;display:inline-block"></span>PH Holiday</span>
@@ -4893,6 +4907,7 @@ function appointmentWizardHtml(mode) {
               <div class="time-slot-legend-item"><span class="time-slot-legend-swatch" style="background:#fff;border:1.5px solid #e5e7eb"></span>Available</div>
               <div class="time-slot-legend-item" id="tsl-full-item"><span class="time-slot-legend-swatch" id="tsl-full-swatch" style="background:#FFF7ED;border:1.5px solid #FDBA74"></span><span id="tsl-full-txt">Fully booked (waitlist available)</span></div>
               <div class="time-slot-legend-item"><span class="time-slot-legend-swatch" style="background:#E8760A"></span>Selected</div>
+              ${!isStaff ? `<div class="time-slot-legend-item"><span class="time-slot-legend-swatch" style="background:#F3F4F6;border:1.5px solid #e5e7eb"></span>Booked by you</div>` : ''}
               ${_minAdv === 0 ? `<div class="time-slot-legend-item"><span class="time-slot-legend-swatch" style="background:#F3F4F6;border:1.5px solid #e5e7eb"></span>Past</div>` : ''}
             </div>
             <input type="hidden" id="appt-time" value="">
@@ -5231,7 +5246,6 @@ function pagePatientConsultations() {
   const { user } = st()
   const sorted = [...(user.consultations||[])].sort((a,b)=>b.date.localeCompare(a.date))
   const latest = sorted[0] || null
-  const latestRx = latest ? window._splitRxSummary(latest.prescription) : { od:'', os:'' }
 
   window.state.afterRender = () => {
     window._filterConsultHistory = function(q) {
@@ -5260,10 +5274,10 @@ function pagePatientConsultations() {
     <!-- Latest consultation — featured card -->
     <div style="background:linear-gradient(135deg,#1C1C1C 0%,#252525 100%);border-radius:14px;padding:22px 26px;margin-bottom:20px">
       <div style="font-size:.6rem;text-transform:uppercase;letter-spacing:.14em;color:#E8760A;font-weight:800;margin-bottom:10px">Latest Consultation</div>
-      <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:14px;flex-wrap:wrap;margin-bottom:${(latest.prescription || latest.remarks) ? '16px' : '0'}">
+      <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:14px;flex-wrap:wrap;margin-bottom:${latest.chiefComplaint ? '16px' : '0'}">
         <div>
-          <div style="font-size:1.1rem;font-weight:800;color:#fff;margin-bottom:3px">${latest.diagnosis || 'No diagnosis recorded'}</div>
-          <div style="font-size:.77rem;color:rgba(255,255,255,.55)">${fmtDate(latest.date)} &bull; ${latest.doctor}${latest.type ? ' &bull; ' + latest.type : ''}</div>
+          <div style="font-size:1.1rem;font-weight:800;color:#fff;margin-bottom:3px">${latest.type || 'Consultation'}</div>
+          <div style="font-size:.77rem;color:rgba(255,255,255,.55)">${fmtDate(latest.date)} &bull; ${latest.doctor}</div>
         </div>
         <button onclick="window.viewConsultationDetail('${user.id}','${latest.id}')"
           style="display:flex;align-items:center;gap:5px;padding:7px 14px;border-radius:8px;border:1px solid rgba(255,255,255,.18);background:rgba(255,255,255,.08);color:rgba(255,255,255,.85);font-family:inherit;font-size:.8rem;font-weight:500;cursor:pointer;flex-shrink:0;transition:background .15s,border-color .15s"
@@ -5272,21 +5286,7 @@ function pagePatientConsultations() {
           ${ic('eye','icon-sm')} View Details
         </button>
       </div>
-      ${latest.prescription ? `
-      <div style="margin-bottom:${latest.remarks ? '14px' : '0'}">
-        <div style="font-size:.58rem;font-weight:800;text-transform:uppercase;letter-spacing:.08em;color:#9CA3AF;margin-bottom:6px">Prescription</div>
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
-          <div style="background:rgba(34,197,94,.1);border:1px solid rgba(34,197,94,.22);border-radius:8px;padding:10px 14px">
-            <div style="font-size:.58rem;font-weight:800;text-transform:uppercase;letter-spacing:.08em;color:#4ADE80;margin-bottom:5px">OD — Right Eye</div>
-            <div style="font-family:monospace;font-size:.82rem;color:#fff">${latestRx.od || '—'}</div>
-          </div>
-          <div style="background:rgba(232,118,10,.1);border:1px solid rgba(232,118,10,.22);border-radius:8px;padding:10px 14px">
-            <div style="font-size:.58rem;font-weight:800;text-transform:uppercase;letter-spacing:.08em;color:#FBBF24;margin-bottom:5px">OS — Left Eye</div>
-            <div style="font-family:monospace;font-size:.82rem;color:#fff">${latestRx.os || '—'}</div>
-          </div>
-        </div>
-      </div>` : ''}
-      ${latest.remarks ? `<div style="font-size:.8rem;color:rgba(255,255,255,.7);font-style:italic;line-height:1.6">"${latest.remarks}"</div>` : ''}
+      ${latest.chiefComplaint ? `<div style="font-size:.8rem;color:rgba(255,255,255,.7);line-height:1.6">"${latest.chiefComplaint}"</div>` : ''}
     </div>
 
     <!-- All consultations list -->
@@ -5299,7 +5299,7 @@ function pagePatientConsultations() {
         </div>
       </div>
       ${sorted.map((c, i) => `
-      <div class="con-hist-row hist-row${i===0 ? ' hist-row-featured' : ''}" data-search="${(c.diagnosis||'').toLowerCase()} ${(c.doctor||'').toLowerCase()} ${(c.type||'').toLowerCase()}">
+      <div class="con-hist-row hist-row${i===0 ? ' hist-row-featured' : ''}" data-search="${(c.chiefComplaint||'').toLowerCase()} ${(c.doctor||'').toLowerCase()} ${(c.type||'').toLowerCase()}">
         <!-- Date block -->
         <div style="text-align:center;min-width:38px;flex-shrink:0">
           <div style="font-size:1.05rem;font-weight:800;color:#1C1C1C;line-height:1">${new Date(c.date+'T00:00:00').getDate()}</div>
@@ -5309,7 +5309,7 @@ function pagePatientConsultations() {
         <div style="width:1px;height:36px;background:#F3F4F6;flex-shrink:0"></div>
         <!-- Info -->
         <div style="flex:1;min-width:0">
-          <div style="font-size:.87rem;font-weight:700;color:#1C1C1C;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${c.diagnosis || 'No diagnosis recorded'}</div>
+          <div style="font-size:.87rem;font-weight:700;color:#1C1C1C;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${c.chiefComplaint || 'No chief complaint recorded'}</div>
           <div style="font-size:.72rem;color:#6B7280;margin-top:2px">${c.doctor}${c.type ? ' &bull; ' + c.type : ''}</div>
         </div>
         ${i===0 ? `<span style="background:#FFF7ED;color:#E8760A;font-size:.63rem;font-weight:700;padding:2px 8px;border-radius:20px;border:1px solid #FDE68A;flex-shrink:0;white-space:nowrap">Latest</span>` : ''}
@@ -5435,7 +5435,7 @@ function pageStaffSettings() {
 
   const pwField = (id, placeholder, extra='') => `
     <div style="position:relative">
-      <input type="password" class="form-input" id="${id}" placeholder="${placeholder}" style="padding-right:40px" ${extra}>
+      <input type="password" class="form-input" id="${id}" placeholder="${placeholder}" style="padding-right:40px" autocomplete="off" readonly onfocus="this.removeAttribute('readonly')" ${extra}>
       <button type="button" onclick="window.togglePwVisibility('${id}',this)"
               style="position:absolute;right:10px;top:50%;transform:translateY(-50%);background:none;border:none;cursor:pointer;color:#9CA3AF;padding:2px;display:flex;align-items:center">
         ${ic('eye-off','icon-sm')}
@@ -5498,7 +5498,7 @@ function pageStaffSettings() {
           <div style="font-size:1.05rem;font-weight:700;color:#1C1C1C">Personal Information</div>
         </div>
         <div style="display:flex;flex-direction:column;gap:14px">
-          <div class="form-row-3">
+          <div class="form-row-2">
             <div class="form-group">
               <label class="form-label">First Name</label>
               <input class="form-input" id="st-fname" value="${staffMember.firstName || ''}">
@@ -5507,10 +5507,10 @@ function pageStaffSettings() {
               <label class="form-label">Middle Name</label>
               <input class="form-input" id="st-mname" value="${staffMember.middleName || ''}">
             </div>
-            <div class="form-group">
-              <label class="form-label">Last Name</label>
-              <input class="form-input" id="st-lname" value="${staffMember.lastName || ''}">
-            </div>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Last Name</label>
+            <input class="form-input" id="st-lname" value="${staffMember.lastName || ''}">
           </div>
           <div class="form-row-2">
             <div class="form-group">
@@ -5573,17 +5573,18 @@ function pageStaffSettings() {
 // ════════════════════════════════════════════════════════════════
 
 // Full printable "document" card for one prescription — used inline on the
-// patient's own Prescriptions list and Patient Records (viewing a specific
-// Rx now opens viewPrescriptionModal() instead, main.js — see
-// viewPrescriptionDetail()).
+// patient's own Prescriptions list and Patient Records. This is the same
+// canonical rendering viewPrescriptionDetail() (main.js) opens as a modal —
+// exam-keyed callers go through viewPrescriptionModal(), which resolves to
+// that same implementation instead of maintaining a second one.
 function renderRxDocumentCard(rx, patient, isFeatured) {
   if (!rx) return ''
   const rxDate     = new Date(rx.date.includes('T') ? rx.date : rx.date + 'T00:00:00')
   const rxDateStr  = rxDate.toLocaleDateString('en-PH', {year:'numeric',month:'long',day:'numeric'})
-  const expiryDate = new Date(rxDate)
-  expiryDate.setFullYear(expiryDate.getFullYear() + 1)
+  const expiryDate = rx.expiryDate ? new Date(rx.expiryDate.includes('T') ? rx.expiryDate : rx.expiryDate+'T00:00:00')
+                     : (() => { const d = new Date(rxDate); d.setFullYear(d.getFullYear()+1); return d })()
   const expiryStr  = expiryDate.toLocaleDateString('en-PH', {year:'numeric',month:'long',day:'numeric'})
-  const isExpired  = expiryDate < new Date()
+  const statusLabel = rx.status === 'superseded' ? 'Superseded' : (rx.status === 'expired' || expiryDate < new Date() ? 'Expired' : 'Valid')
   const docInits   = (rx.doctor||'Dr').split(' ').slice(0,2).map(w=>w[0]||'').join('').toUpperCase()
   const docRecord  = doctors.find(d => d.name === rx.doctor)
   const docPhoto   = docRecord?.photoUrl || null
@@ -5612,13 +5613,13 @@ function renderRxDocumentCard(rx, patient, isFeatured) {
           }
           <div>
             <div style="font-size:.6rem;color:#9CA3AF;text-transform:uppercase;letter-spacing:.05em">Issued by</div>
-            <div style="font-size:.85rem;font-weight:700;color:#1C1C1C">${rx.doctor}</div>
+            <div style="font-size:.85rem;font-weight:700;color:#1C1C1C">${rx.doctor}${rx.prcLicense ? ` <span style="font-weight:400;color:#9CA3AF">&bull; PRC ${rx.prcLicense}</span>` : ''}</div>
           </div>
         </div>
         <div class="rx-issuer-meta" style="text-align:right;flex-shrink:0">
           <div style="font-size:.72rem;color:#9CA3AF;margin-bottom:4px">${rxDateStr}</div>
-          <span style="font-size:.68rem;font-weight:700;padding:3px 10px;border-radius:20px;${isExpired ? 'background:#FEE2E2;color:#DC2626;border:1px solid #FECACA' : 'background:#ECFDF5;color:#059669;border:1px solid #A7F3D0'}">
-            ${isExpired ? ic('x-circle','icon-sm') + ' Expired' : ic('check-circle','icon-sm') + ' Valid until ' + expiryStr}
+          <span style="font-size:.68rem;font-weight:700;padding:3px 10px;border-radius:20px;${statusLabel === 'Valid' ? 'background:#ECFDF5;color:#059669;border:1px solid #A7F3D0' : (statusLabel === 'Superseded' ? 'background:#F3F4F6;color:#6B7280;border:1px solid #E5E7EB' : 'background:#FEE2E2;color:#DC2626;border:1px solid #FECACA')}">
+            ${statusLabel === 'Valid' ? ic('check-circle','icon-sm') + ' Valid until ' + expiryStr : ic('x-circle','icon-sm') + ' ' + statusLabel}
           </span>
         </div>
       </div>
@@ -5626,7 +5627,7 @@ function renderRxDocumentCard(rx, patient, isFeatured) {
       <!-- Printable prescription body -->
       <div id="rx-card-${rx.id}" style="padding:18px 20px">
 
-        <div style="font-size:.6rem;font-weight:700;text-transform:uppercase;letter-spacing:.1em;color:#9CA3AF;margin-bottom:10px">Refraction Prescription</div>
+        <div style="font-size:.6rem;font-weight:700;text-transform:uppercase;letter-spacing:.1em;color:#9CA3AF;margin-bottom:10px">Final Refraction</div>
 
         <!-- OD / OS bordered cards -->
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:16px">
@@ -5634,7 +5635,7 @@ function renderRxDocumentCard(rx, patient, isFeatured) {
           <div style="border:1.5px solid #86EFAC;border-radius:10px;overflow:hidden">
             <div style="background:#F0FDF4;padding:7px 12px;border-bottom:1px solid #86EFAC;display:flex;align-items:center;gap:5px">
               <div style="width:6px;height:6px;border-radius:50%;background:#22C55E;flex-shrink:0"></div>
-              <span style="font-size:.62rem;font-weight:800;text-transform:uppercase;letter-spacing:.07em;color:#059669">OD — Right Eye</span>
+              <span style="font-size:.62rem;font-weight:800;text-transform:uppercase;letter-spacing:.07em;color:#059669">OD (Right Eye)</span>
             </div>
             <div style="display:grid;grid-template-columns:repeat(3,1fr);background:#fff">
               ${['sph','cyl','axis'].map((k,i) => `
@@ -5643,12 +5644,13 @@ function renderRxDocumentCard(rx, patient, isFeatured) {
                 <div style="font-size:.95rem;font-weight:800;font-family:monospace;color:#1C1C1C">${rx.od?.[k] || '—'}</div>
               </div>`).join('')}
             </div>
+            ${rx.od?.add ? `<div style="padding:7px 12px;border-top:1px solid #BBF7D0;background:#F0FDF4;display:flex;align-items:center;justify-content:space-between"><span style="font-size:.56rem;color:#9CA3AF;font-weight:700;text-transform:uppercase">Add Power</span><span style="font-size:.82rem;font-weight:800;font-family:monospace;color:#059669">${rx.od.add}</span></div>` : ''}
           </div>
           <!-- OS -->
           <div style="border:1.5px solid #FDE68A;border-radius:10px;overflow:hidden">
             <div style="background:#FFF7ED;padding:7px 12px;border-bottom:1px solid #FDE68A;display:flex;align-items:center;gap:5px">
               <div style="width:6px;height:6px;border-radius:50%;background:#E8760A;flex-shrink:0"></div>
-              <span style="font-size:.62rem;font-weight:800;text-transform:uppercase;letter-spacing:.07em;color:#B45309">OS — Left Eye</span>
+              <span style="font-size:.62rem;font-weight:800;text-transform:uppercase;letter-spacing:.07em;color:#B45309">OS (Left Eye)</span>
             </div>
             <div style="display:grid;grid-template-columns:repeat(3,1fr);background:#fff">
               ${['sph','cyl','axis'].map((k,i) => `
@@ -5657,48 +5659,42 @@ function renderRxDocumentCard(rx, patient, isFeatured) {
                 <div style="font-size:.95rem;font-weight:800;font-family:monospace;color:#1C1C1C">${rx.os?.[k] || '—'}</div>
               </div>`).join('')}
             </div>
+            ${rx.os?.add ? `<div style="padding:7px 12px;border-top:1px solid #FEF3C7;background:#FFFBEB;display:flex;align-items:center;justify-content:space-between"><span style="font-size:.56rem;color:#9CA3AF;font-weight:700;text-transform:uppercase">Add Power</span><span style="font-size:.82rem;font-weight:800;font-family:monospace;color:#E8760A">${rx.os.add}</span></div>` : ''}
           </div>
         </div>
 
-        ${rx.lensType && rx.lensType !== '—' ? `
+        ${(rx.pd || rx.lensType || rx.lensMaterial) ? `
+        <div style="display:grid;grid-template-columns:${[rx.pd?'1fr':'',rx.lensType?'1fr':'',rx.lensMaterial?'1fr':''].filter(Boolean).join(' ')};gap:8px;margin-bottom:10px">
+          ${rx.pd ? `<div style="background:#F9FAFB;border:1px solid #F3F4F6;border-radius:8px;padding:9px 12px"><div style="font-size:.58rem;color:#9CA3AF;text-transform:uppercase;letter-spacing:.05em;margin-bottom:3px">PD</div><div style="font-size:.82rem;font-weight:700;color:#1C1C1C">${rx.pd} mm</div></div>` : ''}
+          ${rx.lensType ? `<div style="background:#F9FAFB;border:1px solid #F3F4F6;border-radius:8px;padding:9px 12px"><div style="font-size:.58rem;color:#9CA3AF;text-transform:uppercase;letter-spacing:.05em;margin-bottom:3px">Lens Type</div><div style="font-size:.82rem;font-weight:700;color:#1C1C1C">${rx.lensType}</div></div>` : ''}
+          ${rx.lensMaterial ? `<div style="background:#F9FAFB;border:1px solid #F3F4F6;border-radius:8px;padding:9px 12px"><div style="font-size:.58rem;color:#9CA3AF;text-transform:uppercase;letter-spacing:.05em;margin-bottom:3px">Lens Material</div><div style="font-size:.82rem;font-weight:700;color:#1C1C1C">${rx.lensMaterial}</div></div>` : ''}
+        </div>` : ''}
+
+        ${rx.frameSelection ? `
         <div style="display:flex;align-items:center;gap:8px;padding:9px 12px;background:#F9FAFB;border:1px solid #F3F4F6;border-radius:8px;margin-bottom:10px">
-          <div style="width:6px;height:6px;border-radius:50%;background:#E8760A;flex-shrink:0"></div>
-          <span style="font-size:.62rem;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:#9CA3AF;flex-shrink:0">Lens Type</span>
-          <span style="font-size:.82rem;font-weight:700;color:#1C1C1C">${rx.lensType}</span>
+          <span style="font-size:.62rem;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:#9CA3AF;flex-shrink:0">Frame</span>
+          <span style="font-size:.82rem;font-weight:700;color:#1C1C1C">${rx.frameSelection}</span>
         </div>` : ''}
 
-        ${rx.remarks ? `
-        <div style="padding-top:12px;border-top:1px dashed #E5E7EB">
-          <div style="font-size:.6rem;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:#9CA3AF;margin-bottom:5px">Remarks</div>
-          <div style="font-size:.8rem;color:#374151;font-style:italic;padding-left:10px;border-left:3px solid #E8760A;line-height:1.6">"${rx.remarks}"</div>
+        ${rx.lensCoating && rx.lensCoating.length ? `
+        <div style="display:flex;flex-wrap:wrap;gap:5px;margin-bottom:10px">
+          ${rx.lensCoating.map(c=>`<span style="background:#FFF7ED;color:#C2410C;font-size:.7rem;font-weight:600;padding:2px 9px;border-radius:20px;border:1px solid #FDE68A">${c}</span>`).join('')}
         </div>` : ''}
-
-        <!-- Signature lines (visible when printed) -->
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:24px;padding-top:20px;margin-top:4px;border-top:1px dashed #E5E7EB">
-          <div style="text-align:center">
-            <div style="height:24px"></div>
-            <div style="border-top:1px solid #374151;padding-top:5px;font-size:.75rem;color:#374151;font-weight:600">${rx.doctor}</div>
-            <div style="font-size:.65rem;color:#9CA3AF;margin-top:2px">Optometrist / Examining Doctor</div>
-          </div>
-          <div style="text-align:center">
-            <div style="height:24px"></div>
-            <div style="border-top:1px solid #374151;padding-top:5px;font-size:.75rem;color:#374151;font-weight:600">${patient.name}</div>
-            <div style="font-size:.65rem;color:#9CA3AF;margin-top:2px">Patient Signature &amp; Date</div>
-          </div>
-        </div>
 
       </div><!-- end printable body -->
 
-      <!-- Card footer actions — no Exam History cross-link here anymore,
-           that page is already one click away via the sidebar. -->
+      <!-- Card footer — Print stays admin/staff/doctor-only; the validity
+           note is informational, so it still shows for a patient viewing
+           their own Rx even without a print action next to it. -->
       <div style="padding:10px 20px;border-top:1px solid #F3F4F6;background:#FAFAFA;display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap">
         <div style="font-size:.72rem;color:#9CA3AF">Rx valid for 1 year from date of issue</div>
+        ${window.state?.role !== 'patient' ? `
         <div style="display:flex;gap:8px">
           <button class="btn-secondary" style="font-size:.78rem;padding:5px 12px"
                   onclick="window.printRxRecord('${patient.id}','${rx.id}')">
             ${ic('printer','icon-sm')} Print Rx
           </button>
-        </div>
+        </div>` : ''}
       </div>
 
     </div>`
@@ -5748,9 +5744,9 @@ function pagePatientPrescriptions() {
       </div>
       ${sorted.map((rx, i) => {
         const d = new Date(rx.date.includes('T') ? rx.date : rx.date + 'T00:00:00')
-        const expiryDate = new Date(d)
-        expiryDate.setFullYear(expiryDate.getFullYear() + 1)
-        const isExpired = expiryDate < new Date()
+        const expiryDate = rx.expiryDate ? new Date(rx.expiryDate.includes('T') ? rx.expiryDate : rx.expiryDate+'T00:00:00')
+          : (() => { const e = new Date(d); e.setFullYear(e.getFullYear()+1); return e })()
+        const isExpired = rx.status === 'expired' || (rx.status !== 'superseded' && expiryDate < new Date())
         return `
       <div class="rx-hist-row hist-row${i===0 ? ' hist-row-featured' : ''}" data-search="${(rx.doctor||'').toLowerCase()} ${(rx.lensType||'').toLowerCase()} ${rx.id.toLowerCase()}">
         <!-- Date block -->
@@ -5861,7 +5857,7 @@ function pagePatientSettings() {
 
   const pwField = (id, placeholder, extra='') => `
     <div style="position:relative">
-      <input type="password" class="form-input" id="${id}" placeholder="${placeholder}" style="padding-right:40px" ${extra}>
+      <input type="password" class="form-input" id="${id}" placeholder="${placeholder}" style="padding-right:40px" autocomplete="off" readonly onfocus="this.removeAttribute('readonly')" ${extra}>
       <button type="button" onclick="window.togglePwVisibility('${id}',this)"
               style="position:absolute;right:10px;top:50%;transform:translateY(-50%);background:none;border:none;cursor:pointer;color:#9CA3AF;padding:2px;display:flex;align-items:center">
         ${ic('eye-off','icon-sm')}
@@ -5934,7 +5930,7 @@ function pagePatientSettings() {
           <div style="font-size:1.05rem;font-weight:700;color:#1C1C1C">Personal Information</div>
         </div>
         <div style="display:flex;flex-direction:column;gap:14px">
-          <div class="form-row-3">
+          <div class="form-row-2">
             <div class="form-group">
               <label class="form-label">First Name</label>
               <input type="text" class="form-input" value="${patient?.firstName || user.firstName}" id="sett-first">
@@ -5943,20 +5939,14 @@ function pagePatientSettings() {
               <label class="form-label">Middle Name</label>
               <input type="text" class="form-input" value="${patient?.middleName || user.middleName || ''}" id="sett-middle">
             </div>
-            <div class="form-group">
-              <label class="form-label">Last Name</label>
-              <input type="text" class="form-input" value="${patient?.lastName || user.lastName}" id="sett-last">
-            </div>
           </div>
-          <div class="form-row-2">
-            <div class="form-group">
-              <label class="form-label">Contact Number</label>
-              <input type="text" class="form-input" id="sett-contact" inputmode="numeric" oninput="this.value=this.value.replace(/\\D/g,'')" value="${patient?.contact || ''}">
-            </div>
-            <div class="form-group">
-              <label class="form-label">Email Address</label>
-              <input type="email" class="form-input" value="${patient?.email || user.email}" id="sett-email">
-            </div>
+          <div class="form-group">
+            <label class="form-label">Last Name</label>
+            <input type="text" class="form-input" value="${patient?.lastName || user.lastName}" id="sett-last">
+          </div>
+          <div class="form-group">
+            <label class="form-label">Contact Number</label>
+            <input type="text" class="form-input" id="sett-contact" inputmode="numeric" oninput="this.value=this.value.replace(/\\D/g,'')" value="${patient?.contact || ''}">
           </div>
           <div class="form-group">
             <label class="form-label">Complete Address</label>
@@ -5999,6 +5989,29 @@ function pagePatientSettings() {
 
       <!-- RIGHT column -->
       <div style="display:flex;flex-direction:column;gap:20px">
+
+        <!-- Email Address Card — changing it is a separate, OTP-verified
+             flow (openChangeEmailModal(), main.js) rather than a plain
+             field in the profile form above, so a typo'd or hijacked
+             change can't silently lock the patient out of their own
+             account or notifications. -->
+        <div class="card" style="padding:28px">
+          <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">
+            <div style="color:#E8760A">${ic('mail','icon-sm')}</div>
+            <div style="font-size:1.05rem;font-weight:700;color:#1C1C1C">Email Address</div>
+          </div>
+          <div style="font-size:.82rem;color:#9CA3AF;margin-bottom:20px">Used for login and appointment notifications</div>
+          <div class="form-group">
+            <label class="form-label">Current Email</label>
+            <input type="email" class="form-input" value="${patient?.email || user.email}" disabled
+                   style="background:#F9FAFB;color:#6B7280;cursor:not-allowed">
+          </div>
+          <div style="display:flex;justify-content:flex-end;margin-top:14px">
+            <button class="btn-secondary" onclick="window.openChangeEmailModal()">
+              ${ic('mail','icon-sm')} Change Email
+            </button>
+          </div>
+        </div>
 
         <!-- Security Card -->
         <div class="card" style="padding:28px">

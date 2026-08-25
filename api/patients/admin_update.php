@@ -7,7 +7,7 @@
 //  and intentionally excludes gender/dob for record-accuracy reasons).
 //
 //  POST { id, firstName, middleName?, lastName, gender?, dob?, contact?,
-//         email?, address?, bloodType?, occupation? }
+//         email?, address?, occupation? }
 // ================================================================
 
 require_once '../../config/db.php';
@@ -41,10 +41,7 @@ $dob     = trim($b['dob']     ?? '');
 $contact = trim($b['contact'] ?? '');
 $email   = trim($b['email']   ?? '');
 $address = trim($b['address'] ?? '');
-$blood   = trim($b['bloodType'] ?? '');
 $occupation = isset($b['occupation']) ? trim($b['occupation']) : null;
-$medical = isset($b['medicalHistory']) ? trim($b['medicalHistory']) : null;
-$optical = isset($b['opticalHistory']) ? trim($b['opticalHistory']) : null;
 $status  = isset($b['status']) ? trim($b['status']) : null;
 
 if ($gender && !in_array($gender, ['Male', 'Female', 'Other'], true)) {
@@ -78,10 +75,7 @@ try {
 
     if ($contact !== '') { $sets[] = 'contact = ?'; $values[] = $contact; }
     if ($address !== '') { $sets[] = 'address = ?'; $values[] = $address; }
-    if ($blood   !== '') { $sets[] = 'blood_type = ?'; $values[] = $blood; }
     if ($occupation !== null) { $sets[] = 'occupation = ?'; $values[] = $occupation; }
-    if ($medical !== null) { $sets[] = 'medical_history = ?'; $values[] = $medical; }
-    if ($optical !== null) { $sets[] = 'optical_history = ?'; $values[] = $optical; }
     if ($status)           { $sets[] = 'status = ?'; $values[] = $status; }
 
     $values[] = $id;

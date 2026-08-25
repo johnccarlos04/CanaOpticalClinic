@@ -117,7 +117,6 @@ try {
         $snapshot['dob']        = $row['dob']        ?? '';
         $snapshot['age']        = (int)($row['age']  ?? 0);
         $snapshot['address']    = $row['address']    ?? '';
-        $snapshot['bloodType']  = $row['blood_type'] ?? '';
         $snapshot['occupation'] = $row['occupation'] ?? '';
     }
 

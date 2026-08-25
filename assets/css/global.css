@@ -89,6 +89,16 @@ button { border-radius: unset; }
   flex-direction: column;
   align-items: center;
   justify-content: center;
+  /* justify-content:center alone clips the TOP of the content when it's
+     taller than the viewport — centering distributes the overflow equally
+     above and below, but the page's natural scroll top (scrollY:0) lands
+     at the container's own top edge, which is already past the content's
+     real top. safe center is the CSS-spec fix: falls back to start-
+     alignment specifically when centering would overflow, so scrolling to
+     the top always actually reaches the top. Declared after the plain
+     center above as progressive enhancement — a browser that doesn't
+     recognize "safe" ignores this whole declaration and keeps center. */
+  justify-content: safe center;
   background: #EDE9E0;
   padding: 24px 16px;
   gap: 16px;
@@ -238,9 +248,27 @@ button { border-radius: unset; }
      forgot-password step with unusually tall content would still grow the
      card past the fixed height instead of scrolling internally. */
   overflow-y: auto;
+  /* Plain "center" splits overflow evenly above/below and clips whichever
+     end the scroll container can't reach — on a tall step (registration's
+     password step: title + stepper + password/strength UI + terms + QR
+     notice + buttons) that clips padding-top clean off, so the title reads
+     as jammed against the edge with no space above it. "safe center" falls
+     back to start-alignment once content overflows, so the real
+     padding-top stays visible and the safety net is scrolling down to see
+     the rest, not scrolling up past a clipped top. Same fix already
+     applied to the outer screen wrappers (#register-screen etc.) — this is
+     the same bug one layer deeper, on the inner scrolling panel itself. */
+  justify-content: safe center;
 }
 .auth-form-panel--register {
-  padding-top: 36px; padding-bottom: 36px;
+  /* Equal padding values here don't read as equal — the top edge is
+     text (the "Create Patient Account" title, whose glyphs sit lower
+     than its own line-height box, leaving extra invisible space above
+     the visible letters), while the bottom edge is a solid button
+     (Back/Create Account), which fills its box edge-to-edge with no
+     comparable invisible margin. A few extra px on top compensates for
+     that optical difference so the two ends actually look balanced. */
+  padding-top: 44px; padding-bottom: 36px;
 }
 
 /* Back link inside form panel */
@@ -301,7 +329,7 @@ button { border-radius: unset; }
   .auth-bp-brand-name { font-size: 1rem; margin-bottom: 0; line-height: 1.15; }
   .auth-bp-desc, .auth-bp-divider, .auth-bp-features { display: none; }
   .auth-form-panel { padding: 20px; justify-content: flex-start; }
-  .auth-form-panel--register { padding-top: 16px; padding-bottom: 16px; }
+  .auth-form-panel--register { padding-top: 22px; padding-bottom: 16px; }
   .auth-back-link { margin-bottom: 12px; }
   .login-title { font-size: 1.2rem; margin-bottom: 4px; }
   .login-desc { margin-bottom: 18px; }
@@ -319,7 +347,7 @@ button { border-radius: unset; }
   .reg-row-2 { gap: 8px; }
   .reg-hint { font-size: 0.65rem; margin-top: 2px; }
   .reg-terms { margin: 10px 0 10px; font-size: 0.75rem; }
-  .reg-terms-hint { font-size: 0.62rem; }
+  .reg-terms-hint { font-size: 0.74rem; padding: 7px 11px; margin-bottom: 8px; }
   .qr-notice { margin: 4px 0 8px; padding: 8px 12px; font-size: 0.72rem; }
 }
 
@@ -497,6 +525,8 @@ button { border-radius: unset; }
   flex-direction: column;
   align-items: center;
   justify-content: center;
+  /* See #login-screen's comment above — same overflow-clips-the-top fix. */
+  justify-content: safe center;
   gap: 16px;
   background: #EDE9E0;
   padding: 24px 16px;
@@ -627,6 +657,11 @@ button { border-radius: unset; }
   flex-direction: column;
   align-items: center;
   justify-content: center;
+  /* See #login-screen's comment (above in this file) — same overflow-
+     clips-the-top fix, and the most relevant of the four here: this is
+     the screen most likely to actually exceed one viewport (register's
+     Step 3, on a short/zoomed-in window). */
+  justify-content: safe center;
   gap: 10px;
   background: #EDE9E0;
   /* Trimmed from the previous 32px — the card itself is already sized
@@ -747,7 +782,12 @@ input[type="date"].reg-input::-webkit-datetime-edit-year-field {
   grid-template-columns: 1fr 1fr;
   gap: 12px 16px;
 }
-.reg-form-grid .reg-group { margin-bottom: 0; }
+/* min-width:0 overrides the grid item's default min-width:auto, which
+   otherwise lets a field's intrinsic content size (e.g. a real <input>'s
+   own browser-default min width, wider than a plain <span> ever needed)
+   force its column wider than its 1fr sibling — breaking the equal
+   side-by-side sizing .reg-form-grid is meant to guarantee. */
+.reg-form-grid .reg-group { margin-bottom: 0; min-width: 0; }
 .reg-full { grid-column: 1 / -1; }
 .reg-row-3 {
   display: grid;
@@ -787,22 +827,42 @@ input[type="date"].reg-input::-webkit-datetime-edit-year-field {
 .reg-terms a:hover { color: #C4620A; }
 .appt-policy-link { color: #C2410C; font-weight: 600; text-decoration: underline; cursor: pointer; transition: color 0.2s ease; }
 .appt-policy-link:hover { color: #9A3412; }
+/* Sits as its own block right below the "I have read and agree..." row
+   (previously nested inline at the tail end of that paragraph) and in
+   blue rather than the same muted orange as everything else on this
+   screen — testers said the old version (smaller, orange, buried inside
+   the paragraph text) was easy to miss on first glance. Blue reads as a
+   distinct "read this first" notice rather than blending into the page's
+   own brand-orange accents.
+   Structurally matches .qr-notice below it (same shaded-left-edge pill:
+   flat background + border-left accent instead of a full border, full-
+   width block instead of shrink-wrapped, align-items:flex-start + a
+   small icon margin-top so the icon lines up with the first line of text
+   instead of floating centered across the whole 2-line block) — the two
+   should read as the same visual language, not two different pill styles. */
 .reg-terms-hint {
   display: flex;
-  align-items: center;
-  gap: 4px;
-  margin-top: 5px;
-  font-size: 0.65rem;
-  font-weight: 500;
-  color: #C4620A;
-  background: #FFF7ED;
-  border: 1px solid #FED7AA;
-  border-radius: 5px;
-  padding: 3px 8px;
-  width: fit-content;
-  max-width: 100%;
-  line-height: 1.35;
+  align-items: flex-start;
+  gap: 10px;
+  /* This class also gets reused nested inline right after the "I have
+     read and agree..." paragraph text in the booking wizard's own
+     Appointment Policy checkbox (pages.js, #appt-terms-hint) — unlike
+     registration's own instance, which sits as its own block below a
+     margined row, that one has nothing else providing separation from
+     the text directly above it, so it read as jammed against it without
+     this. Harmless extra breathing room on the registration instance too. */
+  margin-top: 8px;
+  margin-bottom: 8px;
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: #1D4ED8;
+  background: #EFF6FF;
+  border-left: 3px solid #1D4ED8;
+  border-radius: 8px;
+  padding: 7px 12px;
+  line-height: 1.5;
 }
+.reg-terms-hint svg { flex-shrink: 0; margin-top: 2px; }
 
 /* Scrollable Terms & Conditions modal body */
 .terms-body {
@@ -1262,6 +1322,26 @@ input[type="date"].reg-input::-webkit-datetime-edit-year-field {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 12px;
+}
+
+/* Exam wizard stepper — overflow-x:auto only kicks in on a viewport too
+   narrow to fit all 7 steps, and the browser already only renders a
+   scrollbar then; the thin/subtle styling here just keeps that scrollbar
+   from being the thick default OS bar when it does show, without ever
+   hiding it outright — a step scrolled off-screen (e.g. Consultation at
+   phone width) needs to stay discoverable, not disappear silently. */
+#wiz-stepper {
+  scrollbar-width: thin;
+}
+#wiz-stepper::-webkit-scrollbar {
+  height: 5px;
+}
+#wiz-stepper::-webkit-scrollbar-thumb {
+  background: #e5e7eb;
+  border-radius: 4px;
+}
+#wiz-stepper::-webkit-scrollbar-track {
+  background: transparent;
 }
 
 /* Sidebar footer */
@@ -1907,6 +1987,19 @@ input[type="date"].reg-input::-webkit-datetime-edit-year-field {
   border-collapse: collapse;
   table-layout: fixed;
 }
+/* Archives' colgroup needs real room for 6 columns (Type/Name/Archived
+   By/Reason/Date/Actions) to not feel cramped on desktop — this used to
+   be an inline `min-width:700px` on the <table> itself, but an inline
+   style beats any class selector regardless of media query, so the
+   mobile card-stacking reset below (.tbl { min-width:0 } inside its own
+   max-width:767px block) could never actually override it — the table
+   stayed pinned to 700px and forced horizontal overflow on a narrow
+   screen instead of collapsing into cards like every other .tbl already
+   does. Scoping this to min-width:768px (desktop only) instead of an
+   inline style keeps that overflow from ever happening. */
+@media (min-width: 768px) {
+  .archives-tbl { min-width: 700px; }
+}
 .tbl thead tr { background: #f8f9fa; }
 .tbl th {
   padding: 12px 16px;
@@ -2129,17 +2222,26 @@ input[type="date"].reg-input::-webkit-datetime-edit-year-field {
 .btn-danger:active:not(:disabled) { background: #991B1B; }
 .btn-danger:focus-visible { outline: 2px solid #DC2626; outline-offset: 2px; }
 .btn-danger:disabled { opacity: 0.45; cursor: not-allowed; }
-/* .btn-danger is deliberately sized to match .btn-ghost for toolbar pairings
-   (e.g. "Clear Filters" + "Clear All Logs"). But in a modal footer it's
-   instead paired with .btn-secondary, which is a size class up — match that
-   pairing specifically rather than resizing the base class everywhere. */
-.btn-secondary + .btn-danger { padding: 9px 20px; font-size: 0.85rem; border-radius: 8px; }
-/* Same reasoning as .btn-secondary + .btn-danger above: .btn-ghost is a size
-   class down from .btn-primary/.btn-secondary, which reads fine in a compact
-   toolbar but looks visibly undersized/misaligned next to Close/Print inside
-   a modal footer (e.g. the prescription/exam-results modals' "Full Results"/
-   "Prescription" cross-link buttons). Bump it to match its footer siblings. */
-.modal-footer .btn-ghost { padding: 9px 20px; font-size: 0.85rem; border-radius: 8px; }
+/* .btn-danger/.btn-success/.btn-warning/.btn-disapprove/.btn-ghost are all
+   deliberately sized as the smaller "compact toolbar" class for pairings
+   like "Clear Filters" + "Clear All Logs". Inside a modal footer they're
+   instead paired with .btn-primary/.btn-secondary, a size class up —
+   match that pairing everywhere it happens.
+   This used to be a couple of adjacent-sibling selectors (e.g.
+   `.btn-secondary + .btn-danger`), which only matched when that exact
+   button happened to sit immediately next to .btn-secondary in the
+   markup — a modal footer with more than two buttons (e.g. Close,
+   Approve, Cancel, Disapprove) put .btn-danger right after .btn-success
+   instead, so the size-match silently never applied and buttons in the
+   same footer ended up visibly two different sizes. An ancestor selector
+   on .modal-footer itself matches regardless of order/adjacency. */
+.modal-footer .btn-danger,
+.modal-footer .btn-success,
+.modal-footer .btn-warning,
+.modal-footer .btn-disapprove,
+.modal-footer .btn-ghost {
+  padding: 9px 20px; font-size: 0.85rem; border-radius: 8px;
+}
 
 .btn-success {
   display: inline-flex;
@@ -2158,6 +2260,7 @@ input[type="date"].reg-input::-webkit-datetime-edit-year-field {
   white-space: nowrap;
 }
 .btn-success:hover { background: #C8E6C9; }
+.btn-success:disabled { opacity: 0.6; cursor: not-allowed; }
 
 .btn-warning {
   display: inline-flex;
@@ -2194,13 +2297,41 @@ input[type="date"].reg-input::-webkit-datetime-edit-year-field {
   white-space: nowrap;
 }
 .btn-disapprove:hover { background: #fee2e2; border-color: #fca5a5; }
+.btn-disapprove:disabled { opacity: 0.6; cursor: not-allowed; }
 
-/* Live password policy checklist */
-.pw-checklist { display: flex; flex-direction: column; gap: 5px; margin: 8px 0 2px; }
-.pw-check-item { display: flex; align-items: center; gap: 7px; font-size: 0.78rem; color: #9CA3AF; transition: color 0.15s ease; }
-.pw-check-item svg { width: 14px; height: 14px; flex-shrink: 0; }
-.pw-check-item.met { color: #059669; }
-.pw-check-item.unmet { color: #DC2626; }
+/* "Premium password UI" strength meter — live label + bar, then a single
+   compact row of requirement pills, instead of a 5-line checklist. Built
+   to fit inside .auth-form-panel's fixed-height, internally-scrolling
+   register/forgot-password cards (see that class's CSS comment) — the
+   old stacked checklist was the tallest single element on register's
+   Step 3, the tightest-fit screen in the app. */
+.pw-strength-block { margin: 10px 0 2px; }
+.pw-strength-row {
+  display: flex; align-items: center; justify-content: space-between;
+  font-size: 0.78rem; margin-bottom: 6px;
+}
+.pw-strength-label { color: #6B7280; font-weight: 600; }
+.pw-strength-word { font-weight: 700; min-height: 1em; }
+.pw-strength-bar {
+  height: 4px; border-radius: 999px; background: #E5E7EB;
+  overflow: hidden; margin-bottom: 10px;
+}
+.pw-strength-fill {
+  height: 100%; width: 0%; border-radius: inherit;
+  transition: width 0.25s ease, background 0.25s ease;
+}
+.pw-reqs-row { display: flex; flex-wrap: wrap; gap: 6px 14px; }
+.pw-req-pill {
+  display: inline-flex; align-items: center; gap: 5px;
+  font-size: 0.72rem; font-weight: 600; color: #9CA3AF;
+  transition: color 0.15s ease;
+}
+.pw-req-dot {
+  width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0;
+  background: #D1D5DB; transition: background 0.15s ease;
+}
+.pw-req-pill.met { color: #059669; }
+.pw-req-pill.met .pw-req-dot { background: #059669; }
 
 .btn-ghost {
   display: inline-flex;
@@ -2318,6 +2449,13 @@ input[type="date"].form-input::-webkit-datetime-edit-year-field {
    is left to the OS; a same-id hidden <input> still holds the plain
    "YYYY-MM-DD" value so existing code reading `.value` is unaffected. */
 .dob-picker { position: relative; }
+/* Trigger is a <div> now, not a <button> — it hosts a real, typeable
+   <input> (.dob-picker-text) alongside the calendar-icon button, instead
+   of a button+span that could only ever be clicked open, never typed
+   into. The div keeps the same "looks like a form field" role the button
+   used to have (border/padding/background all come from whatever `cls`
+   was passed in, e.g. form-input) — cursor:pointer is dropped since only
+   specific children are actually clickable now, not the whole box. */
 .dob-picker-trigger {
   display: flex;
   align-items: center;
@@ -2325,13 +2463,69 @@ input[type="date"].form-input::-webkit-datetime-edit-year-field {
   gap: 8px;
   width: 100%;
   text-align: left;
-  cursor: pointer;
   font-family: 'Poppins', sans-serif;
 }
 .dob-picker-trigger svg { flex-shrink: 0; color: #9CA3AF; }
 .dob-picker-trigger.open { border-color: #E8891C; box-shadow: 0 0 0 3px rgba(232,137,28,.1); }
-.dob-picker-text { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* Strips the native <input> chrome (border/outline/background) so it reads
+   as plain text sitting inside .dob-picker-trigger's own box, exactly like
+   the old <span> did — but is now a real, focusable, typeable field.
+   .dob-picker-text-wrap (not the input itself) is the flex item now — it
+   hosts the absolutely-positioned mask span (see .dob-picker-mask) behind
+   the real input, so both layers share the exact same box instead of the
+   input needing to be its own positioning context on top of also being a
+   flex/grid child (min-width:0 + width:0 keeps it from ever imposing its
+   native intrinsic width on that shared box or a parent grid track). */
+.dob-picker-text-wrap { position: relative; flex: 1; width: 0; min-width: 0; overflow: hidden; }
+.dob-picker-text {
+  position: relative; z-index: 1;
+  width: 100%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  border: none; outline: none; background: transparent; padding: 0; margin: 0;
+  font: inherit; font-family: 'Poppins', sans-serif;
+  font-variant-numeric: tabular-nums; letter-spacing: inherit;
+  color: inherit; cursor: text;
+}
 .dob-picker-text.placeholder { color: #9CA3AF; }
+.dob-picker-text::placeholder { color: #9CA3AF; }
+/* Hidden twin of the real input's current text, in the exact same font —
+   exists purely so its rendered offsetWidth (read in _dobSyncMask) tells
+   us in real pixels where the typed text actually ends, instead of
+   estimating from a character count (a proportional font's glyphs don't
+   share a single fixed width, which is what made an earlier per-character
+   version of this drift out of alignment or overlap). */
+.dob-mask-mirror {
+  position: absolute; top: 0; left: 0; visibility: hidden;
+  font: inherit; font-family: 'Poppins', sans-serif;
+  font-variant-numeric: tabular-nums; letter-spacing: inherit;
+  white-space: pre;
+}
+/* The still-untyped "mm/dd/yyyy" tail (see dateFieldHtml's mirrorMaskHtml
+   + _dobMaskHtml/_dobSyncMask in main.js) — one plain grey text run, not
+   split into per-character cells, positioned via JS to start exactly
+   where .dob-mask-mirror measured the typed text to end. Same font as
+   the real input so the two runs read as one continuous line. */
+.dob-picker-mask {
+  position: absolute; top: 0; left: 0; height: 100%; z-index: 0;
+  display: flex; align-items: center;
+  pointer-events: none; color: #9CA3AF;
+  font: inherit; font-family: 'Poppins', sans-serif;
+  font-variant-numeric: tabular-nums; letter-spacing: inherit;
+  white-space: nowrap;
+}
+/* Next slot the user's about to type (see _dobMaskHtml) — a light
+   highlight box behind that one character, like a selected/active cell,
+   rather than colouring the letter itself; only while the field actually
+   has focus, so it reads as live typing guidance and not a permanent
+   mark on an idle field. */
+.dob-picker-trigger:focus-within .dob-mask-active {
+  background: rgba(37, 99, 235, .16);
+  border-radius: 3px;
+}
+.dob-picker-icon-btn {
+  display: flex; align-items: center; justify-content: center;
+  flex-shrink: 0; background: none; border: none; padding: 0;
+  color: #9CA3AF; cursor: pointer;
+}
 
 .dob-picker-popover {
   position: fixed;
@@ -3392,6 +3586,32 @@ input[type="date"].form-input::-webkit-datetime-edit-year-field {
   justify-content: center;
   transition: background 0.15s;
 }
+/* Small availability status dot on the avatar corner — a doctor's
+   Available/Not Available state (set in the Edit Schedule modal) was
+   otherwise invisible until you actually opened that doctor's panel and
+   read their day pills, with no way to tell at a glance from the
+   selector row itself.
+   .doc-avatar-wrap (not .doc-card-avatar itself) is the positioning
+   context — a photo avatar sets overflow:hidden on itself to clip the
+   <img> to the circle, which would also clip this badge if it lived
+   inside that same box, since the badge deliberately sits half outside
+   the circle's edge. */
+.doc-avatar-wrap { position: relative; display: inline-flex; }
+.doc-avail-badge {
+  position: absolute;
+  bottom: -2px;
+  right: -2px;
+  width: 17px;
+  height: 17px;
+  border-radius: 50%;
+  border: 2px solid #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+}
+.doc-avail-badge--yes { background: #16A34A; }
+.doc-avail-badge--no  { background: #9CA3AF; }
 .doctor-sel-card.active .doc-card-avatar {
   background: #E8760A;
   color: #fff;
@@ -3820,8 +4040,10 @@ input[type="date"].form-input::-webkit-datetime-edit-year-field {
   #login-screen { padding: 16px; min-height: 100svh; box-sizing: border-box; }
   .register-bg { padding: 24px 16px; }
   .login-card, .register-card { width: 100%; max-width: 420px; padding: 32px 24px; }
-  /* Hint: slightly larger than base so it's legible on mobile, but still subtle */
-  .reg-terms-hint { font-size: 0.68rem; padding: 3px 8px; }
+  /* Hint: kept at the same prominent size/weight as desktop — this is the
+     one thing testers said was too easy to miss, so mobile shouldn't
+     shrink it back down. */
+  .reg-terms-hint { font-size: 0.76rem; padding: 8px 12px; }
 
   /* Filter tabs: scroll horizontally on mobile — one single line, no wrap */
   .filter-tabs { overflow-x: auto; overflow-y: hidden; flex-wrap: nowrap; -webkit-overflow-scrolling: touch; scrollbar-width: thin; scrollbar-color: #D1D5DB transparent; }
@@ -3898,10 +4120,16 @@ input[type="date"].form-input::-webkit-datetime-edit-year-field {
     grid-template-columns: 17% 17% 44% 22% !important;
   }
 
-  /* ── Exam wizard: stepper scrolls on mobile so labels are readable ── */
+  /* ── Exam wizard: compact padding + "Step X of Y" fallback label on
+     mobile — the actual "doesn't fit, scroll instead of squish" behavior
+     (fixed min-width per step, relying on #wiz-stepper's own
+     overflow-x:auto) is now baked into stepperHTML's own inline styles
+     (pages.js) as the universal default, not just a mobile override — a
+     tablet-width viewport (too wide for this max-width:767px block, but
+     not wide enough to fit all 6 steps at their natural size) needs the
+     exact same "stop shrinking, scroll" fallback and was falling through
+     to squished/overlapping labels with only a mobile-scoped fix. */
   #wiz-stepper { padding: 14px 16px; margin-bottom: 0; }
-  .wiz-step-wrap { min-width: 100px; flex-shrink: 0; }
-  .wiz-pill-text { min-width: 60px !important; }
   #wiz-step-label { display: block !important; }
 
   /* ── Exam wizard: keep OD/OS inner field pairs at 2-column ── */
@@ -3923,6 +4151,12 @@ input[type="date"].form-input::-webkit-datetime-edit-year-field {
     width: 100%;
     justify-content: center;
   }
+  /* A page-header with more than one button (e.g. Appointments' Waitlist +
+     New Appointment) would otherwise have both fighting over width:100%
+     inside the same flex row above — each gets shrunk to roughly half,
+     squeezed together instead of the same clean full-width look every
+     single-button page-header already has. Stack them instead. */
+  .page-header-btn-group { flex-direction: column; }
   /* Single-column cards: full width, compact */
   .stat-card { padding: 14px 18px; gap: 12px; align-items: center; min-height: unset; }
   .stat-info { min-width: 0; flex: 1; }

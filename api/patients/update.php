@@ -2,7 +2,7 @@
 // ================================================================
 //  CANAOPTICALCLINIC — api/patients/update.php
 //
-//  POST { action:'profile', firstName, middleName, lastName, phone, email,
+//  POST { action:'profile', firstName, middleName, lastName, phone,
 //         address, occupation, gender?, dob? }
 //
 //  Only authenticated patients may call this endpoint.
@@ -14,6 +14,11 @@
 //  against ID the way a hospital admission would be) that gating patients
 //  from fixing their own typo'd birth year or a wrong gender select wasn't
 //  worth the friction. Same validation/age-derivation as the admin path.
+//
+//  Email is NOT accepted here (even if the client sends it, it's ignored)
+//  — changing it requires proving ownership of the new address first, via
+//  request-email-change.php + verify-email-change.php's OTP flow. Letting
+//  it slip through this endpoint too would make that whole flow pointless.
 // ================================================================
 
 require_once '../../config/db.php';
@@ -43,7 +48,6 @@ try {
         $ln         = trim($b['lastName']   ?? '');
         $phone      = trim($b['phone']      ?? '');
         $address    = trim($b['address']    ?? '');
-        $email      = trim($b['email']      ?? '');
         $occupation = trim($b['occupation'] ?? '');
         $gender     = trim($b['gender']     ?? '');
         $dob        = trim($b['dob']        ?? '');
@@ -68,15 +72,6 @@ try {
 
         $values[] = $userId;
         $pdo->prepare('UPDATE patients SET ' . implode(', ', $sets) . ' WHERE user_id = ?')->execute($values);
-
-        if ($email && filter_var($email, FILTER_VALIDATE_EMAIL)) {
-            $chk = $pdo->prepare('SELECT id FROM users WHERE email = ? AND id != ? LIMIT 1');
-            $chk->execute([$email, $userId]);
-            if ($chk->fetch()) {
-                jsonResponse(['success' => false, 'message' => 'An account with this email already exists.']);
-            }
-            $pdo->prepare('UPDATE users SET email = ? WHERE id = ?')->execute([$email, $userId]);
-        }
 
         jsonResponse(['success' => true, 'message' => 'Profile updated successfully.']);
     }

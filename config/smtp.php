@@ -73,6 +73,13 @@ function _brevoSend(string $to, string $toName, string $subject, string $html, s
 function _smtpSend(string $to, string $toName, string $subject, string $html, string $text): void {
     require_once __DIR__ . '/../vendor/autoload.php';
     $mail = new \PHPMailer\PHPMailer\PHPMailer(true);
+    // PHPMailer defaults CharSet to iso-8859-1 unless told otherwise. Every
+    // subject/body string in this app is a real UTF-8 PHP source string
+    // (em dashes, curly quotes, peso signs, etc.) — left at the default,
+    // PHPMailer mis-declares the MIME encoding of those bytes, and mail
+    // clients decode the actual UTF-8 bytes as Latin-1, garbling anything
+    // non-ASCII into mojibake like "â€”" for what should read "—".
+    $mail->CharSet       = \PHPMailer\PHPMailer\PHPMailer::CHARSET_UTF8;
     $mail->isSMTP();
     $mail->Host          = SMTP_HOST;
     $mail->SMTPAuth      = true;
@@ -229,9 +236,97 @@ HTML;
 //  that one's "sent you a message" framing, since this isn't from a
 //  person — just a title + the notice body.
 // ================================================================
-function systemEmailBody(string $name, string $title, string $message): string {
+// $ctaUrl/$ctaLabel add an optional card + button below the message block
+// (e.g. "Add to Google Calendar" on the approval/reminder emails) —
+// omitted entirely (no empty gap) when $ctaUrl is blank, which is every
+// other caller of this function today. $ctaDate ('Y-m-d', optional) drives
+// a small torn-calendar-page icon (day number + month) on the card, built
+// from plain table/div markup rather than an image or SVG — those are
+// unreliable across email clients (blocked by default, or unsupported
+// outright in Outlook desktop), while table-based "fake icons" like this
+// render consistently everywhere. Explicit "Google Calendar" wording next
+// to it, rather than assuming the button label alone makes that obvious.
+// $reasonLabel/$reasonText (optional) put a staff-entered reason (a
+// cancellation or disapproval) in its own visually separate box below the
+// main message instead of run into the same paragraph — mirrors how the
+// in-app Appointment Details modal already shows a Cancellation/
+// Disapproval Reason as its own highlighted block, not just appended
+// text after the sentence.
+function systemEmailBody(string $name, string $title, string $message, string $ctaUrl = '', string $ctaLabel = '', string $ctaDate = '', string $reasonLabel = '', string $reasonText = ''): string {
     $safeTitle   = htmlspecialchars($title, ENT_QUOTES, 'UTF-8');
     $safeMessage = nl2br(htmlspecialchars($message, ENT_QUOTES, 'UTF-8'));
+
+    $reasonHtml = '';
+    if ($reasonText) {
+        $safeReasonLabel = htmlspecialchars(strtoupper($reasonLabel ?: 'Reason'), ENT_QUOTES, 'UTF-8');
+        $safeReasonText  = nl2br(htmlspecialchars($reasonText, ENT_QUOTES, 'UTF-8'));
+        $reasonHtml = <<<REASON
+        <tr>
+          <td style="padding:0 40px 36px;">
+            <div style="background:#FEF2F2;border:1px solid #FECACA;border-radius:12px;padding:16px 20px;">
+              <div style="font-family:'Poppins','Segoe UI',Arial,sans-serif;font-size:11px;font-weight:700;
+                          color:#991B1B;text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px;">
+                {$safeReasonLabel}
+              </div>
+              <div style="font-family:'Poppins','Segoe UI',Arial,sans-serif;font-size:14px;color:#374151;line-height:1.6;">
+                {$safeReasonText}
+              </div>
+            </div>
+          </td>
+        </tr>
+REASON;
+    }
+
+    $ctaHtml = '';
+    if ($ctaUrl) {
+        $safeCtaUrl   = htmlspecialchars($ctaUrl, ENT_QUOTES, 'UTF-8');
+        $safeCtaLabel = htmlspecialchars($ctaLabel ?: 'View Details', ENT_QUOTES, 'UTF-8');
+
+        $iconHtml = '';
+        $dts = $ctaDate ? strtotime($ctaDate) : false;
+        if ($dts !== false) {
+            $dayNum  = date('j', $dts);
+            $monAbbr = strtoupper(date('M', $dts));
+            $iconHtml = <<<ICON
+            <table cellpadding="0" cellspacing="0" role="presentation" align="center" style="width:46px;margin:0 auto 14px;">
+              <tr><td style="background:#E8760A;height:10px;border-radius:8px 8px 0 0;font-size:0;line-height:0;">&nbsp;</td></tr>
+              <tr>
+                <td style="background:#ffffff;border:2px solid #E8760A;border-top:none;border-radius:0 0 8px 8px;
+                           text-align:center;padding:5px 0 7px;">
+                  <div style="font-family:'Poppins','Segoe UI',Arial,sans-serif;font-size:18px;font-weight:800;color:#1C1C1C;line-height:1.1;">{$dayNum}</div>
+                  <div style="font-family:'Poppins','Segoe UI',Arial,sans-serif;font-size:9px;font-weight:700;color:#9CA3AF;letter-spacing:.06em;">{$monAbbr}</div>
+                </td>
+              </tr>
+            </table>
+ICON;
+        }
+
+        $ctaHtml = <<<CTA
+        <tr>
+          <td style="padding:0 40px 36px;">
+            <table cellpadding="0" cellspacing="0" role="presentation" width="100%"
+                   style="background:#FAFAFB;border:1px solid #EEF0F2;border-radius:12px;">
+              <tr>
+                <td style="padding:20px;text-align:center;">
+                  {$iconHtml}
+                  <p style="margin:0 0 14px;font-family:'Poppins','Segoe UI',Arial,sans-serif;
+                            font-size:12.5px;color:#6B7280;line-height:1.5;">
+                    This appointment can be added to <strong style="color:#1C1C1C;">Google Calendar</strong> for extra reminder options.
+                  </p>
+                  <a href="{$safeCtaUrl}" target="_blank"
+                     style="display:inline-block;background:#E8760A;color:#ffffff;
+                            font-family:'Poppins','Segoe UI',Arial,sans-serif;
+                            font-size:14px;font-weight:700;text-decoration:none;
+                            padding:12px 28px;border-radius:8px;">
+                    {$safeCtaLabel}
+                  </a>
+                </td>
+              </tr>
+            </table>
+          </td>
+        </tr>
+CTA;
+    }
 
     return <<<HTML
 <!DOCTYPE html>
@@ -294,7 +389,7 @@ function systemEmailBody(string $name, string $title, string $message): string {
             </div>
           </td>
         </tr>
-
+{$ctaHtml}
         <!-- Divider -->
         <tr>
           <td style="padding:0 40px;">

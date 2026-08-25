@@ -3,8 +3,7 @@
 //  CANAOPTICALCLINIC — api/patients/create.php
 //  Admin/Staff only. Registers a new patient from the dashboard.
 //  POST { firstName, middleName?, lastName, gender, dob, contact, email?,
-//         address?, occupation?, medicalHistory?, opticalHistory?,
-//         bloodType? }
+//         address?, occupation? }
 //  → { success:true, patient, tempPassword? }
 // ================================================================
 
@@ -32,9 +31,6 @@ $contact= trim($b['contact']        ?? '');
 $email  = trim($b['email']          ?? '');
 $addr   = trim($b['address']        ?? '');
 $occ    = trim($b['occupation']     ?? '');
-$medHx  = trim($b['medicalHistory'] ?? '');
-$optHx  = trim($b['opticalHistory'] ?? '');
-$blood  = trim($b['bloodType']      ?? 'Unknown');
 
 if (!$first || !$last || !$gender || !$dob) {
     jsonResponse(['success' => false, 'message' => 'First name, last name, gender and date of birth are required.']);
@@ -93,14 +89,12 @@ try {
     $pdo->prepare(
         'INSERT INTO patients
          (id, user_id, first_name, middle_name, last_name, gender, dob, age,
-          contact, address, blood_type, occupation,
-          medical_history, optical_history,
+          contact, address, occupation,
           qr_data, registered_date, status)
-         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)'
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)'
     )->execute([
         $pid, $uid, $first, $middle ?: null, $last, $gender, $dob, $age,
-        $contact, $addr, $blood ?: 'Unknown', $occ,
-        $medHx, $optHx,
+        $contact, $addr, $occ,
         $qrData, $today, 'active',
     ]);
 
@@ -127,7 +121,12 @@ try {
                 welcomeEmailBody($fullName, 'patient', $email, $tempPw),
                 "Welcome, $fullName!\n\nYour patient account at Cana Optical Clinic has been created.\n\nLogin email: $email\nTemporary password: $tempPw\n\nPlease sign in and change this password as soon as possible."
             );
-        } catch (\Throwable $e) { /* non-critical */ }
+        } catch (\Throwable $e) {
+            // Non-critical (never blocks account creation), but silently
+            // swallowing this made "did the welcome email actually send?"
+            // undebuggable — error_log() lands in Railway's deploy logs.
+            error_log('[email] Welcome email failed for patient ' . $email . ': ' . $e->getMessage());
+        }
     }
 
     $patientObj = [
@@ -142,10 +141,7 @@ try {
         'contact'        => $contact,
         'email'          => $email,
         'address'        => $addr,
-        'bloodType'      => $blood ?: 'Unknown',
         'occupation'     => $occ,
-        'medicalHistory' => $medHx,
-        'opticalHistory' => $optHx,
         'qrData'         => $qrData,
         'registeredDate' => $today,
         'lastVisit'      => '—',

@@ -33,7 +33,6 @@ const SIDEBAR_CONFIG = {
         { key: 'appointments', filter: 'no-show',     label: 'No-show',     color: '#6D28D9' }
       ]
     },
-    { key: 'waitlist',             label: 'Waitlist',         icon: 'clock', badgeKey: '_waitlistCount' },
     { key: 'patient-list',         label: 'Patient Records',  icon: 'file-text' },
     { key: 'exam-records',         label: 'Examination Records', icon: 'eye' },
     { key: 'schedule',             label: 'Doctor Schedule',  icon: 'clock' },
@@ -76,7 +75,6 @@ const SIDEBAR_CONFIG = {
         { key: 'appointments', filter: 'no-show',     label: 'No-show',     color: '#6D28D9' }
       ]
     },
-    { key: 'waitlist',             label: 'Waitlist',         icon: 'clock', badgeKey: '_waitlistCount' },
     { key: 'patient-list',         label: 'Patient Records',  icon: 'file-text' },
     { key: 'exam-records',         label: 'Examination Records', icon: 'eye' },
     { key: 'schedule',             label: 'Doctor Schedule',  icon: 'clock' },
@@ -354,9 +352,22 @@ function bootShell(role, user) {
   renderTopbar()
   applySidebarBucket(true)
 
-  // Navigate to default page for role
+  // The public site's "Book Now"/"Book Appointment" buttons set this flag
+  // (app.html's inline bootstrap script, from a #book URL hash) so a
+  // patient lands straight on the booking wizard instead of their generic
+  // dashboard — landing on the dashboard after clicking a button that says
+  // "book" defeats the point of it. Only ever meaningful for patients
+  // (the only role those buttons are shown to — see public-nav.js); any
+  // other role just falls through to its normal default page.
+  const openBooking = window._openBooking
+  window._openBooking = false
+
   state.filter = 'all'
-  navigate(ROLE_DASHBOARD[role] || 'admin-dashboard')
+  if (openBooking && role === 'patient') {
+    navigate('patient-request-appt')
+  } else {
+    navigate(ROLE_DASHBOARD[role] || 'admin-dashboard')
+  }
 }
 
 // ── Sidebar ─────────────────────────────────────────────────────
@@ -742,6 +753,17 @@ function _markNotifDropdown(id) {
   // page are two separate click-handling paths that both need it.
   if (notif.type === 'reminder' && notif.relatedId && state.role === 'patient' && window.confirmApptPrompt) {
     window.confirmApptPrompt(notif.relatedId)
+    return
+  }
+  // Same for a reschedule request (admin/staff/doctor) — straight to that
+  // appointment's details instead of a filtered list to scan.
+  if (notif.type === 'reschedule_request' && notif.relatedId && state.role !== 'patient' && window.openRescheduleRequestNotif) {
+    window.openRescheduleRequestNotif(notif.relatedId)
+    return
+  }
+  // Same again for a brand-new appointment request (admin/staff).
+  if (notif.type === 'new_appointment' && notif.relatedId && state.role !== 'patient' && window.openNewApptRequestNotif) {
+    window.openNewApptRequestNotif(notif.relatedId)
     return
   }
   const { page: _np, params: _npar } = _notifNavTarget(notif.type, state.role)

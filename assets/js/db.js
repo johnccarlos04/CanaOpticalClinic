@@ -15,41 +15,31 @@ var appointments = []
 
 var activityLog = []
 
+// Examination records only — clinical measurements, no lens/frame/coating
+// data (that lives on `prescriptions` now, see database/schema.sql's
+// CREATE TABLE comments). Look up a linked prescription separately via
+// `consultationId`/the exam's own id (prescriptions.examId) when needed.
 function getExamRecords() {
   var result = []
   patients.forEach(function(p) {
     ;(p.examinations || []).forEach(function(e) {
-      var od = e.od || {}
-      var os = e.os || {}
-      var sph = function(v) { return v && v !== '0.00' ? v : '' }
-      var cyl = function(v) { return v && v !== '0.00' ? v : '' }
-      var rxStr = function(eye) {
-        var parts = [eye.sph || '']
-        if (eye.cyl && eye.cyl !== '0.00') parts.push(eye.cyl + (eye.axis ? ' ×' + eye.axis : ''))
-        if (eye.add && eye.add !== '0.00') parts.push('Add ' + eye.add)
-        return parts.filter(Boolean).join(' ')
-      }
       result.push({
-        id:                  e.id,
-        patientId:           p.id,
-        patientName:         p.name,
-        patientPhotoUrl:     p.photoUrl || null,
-        doctor:              e.doctor || '',
-        date:                e.date   || '',
-        diagnosis:           e.diagnosis           || '',
-        lensType:            e.lensType            || '—',
-        lensMaterial:        e.lensMaterial        || '',
-        lensCoating:         e.lensCoating         || [],
-        frameSelection:      e.frameSelection      || '',
-        status:              e.status              || 'completed',
-        od:                  od,
-        os:                  os,
-        iop:                 e.iop                 || {},
-        pd:                  e.pd                  || '',
-        recommendation:      e.recommendation      || '',
-        testResults:         e.testResults         || '',
-        prescriptionDetails: e.prescriptionDetails || ('OD: ' + rxStr(od) + ' / OS: ' + rxStr(os)).trim(),
-        remarks:             e.remarks             || ''
+        id:                e.id,
+        patientId:         p.id,
+        patientName:       p.name,
+        patientPhotoUrl:   p.photoUrl || null,
+        doctor:            e.doctor || '',
+        date:              e.date   || '',
+        consultationId:    e.consultationId || '',
+        diagnosis:         e.diagnosis        || '',
+        status:            e.status           || 'completed',
+        od:                e.od               || {},
+        os:                e.os               || {},
+        iop:               e.iop              || {},
+        pd:                e.pd               || '',
+        externalFindings:  e.externalFindings || '',
+        testResults:       e.testResults      || '',
+        remarks:           e.remarks          || ''
       })
     })
   })
@@ -191,7 +181,11 @@ function getTodayAppts() {
 function _recomputeApptCounts() {
   const todayStr = localDateStr()
   window._apptPendingCount      = appointments.filter(x => x.status === 'pending').length
-  window._doctorTodayCount      = appointments.filter(a => a.date === todayStr && !['cancelled','disapproved'].includes(a.status)).length
+  // 'approved'/'pending' only — matches _doctorUpcomingCount below. A
+  // completed (or cancelled/disapproved) appointment doesn't need the
+  // doctor's attention anymore, so it shouldn't keep inflating the "Today"
+  // sidebar badge after it's already been seen.
+  window._doctorTodayCount      = appointments.filter(a => a.date === todayStr && ['approved','pending'].includes(a.status)).length
   window._doctorUpcomingCount   = appointments.filter(a => a.date > todayStr && ['approved','pending'].includes(a.status)).length
   window._doctorApptAlertCount  = window._doctorTodayCount + window._doctorUpcomingCount
 }

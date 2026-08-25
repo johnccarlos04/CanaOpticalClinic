@@ -83,23 +83,19 @@ try {
     foreach ($examRows as $e) {
         $pid = $e['patient_id'];
         $examsByPt[$pid][] = [
-            'id'                  => $e['id'],
-            'date'                => $e['date'],
-            'doctor'              => $doctorName($e),
-            'od'                  => ['sph' => $e['od_sph'] ?? '', 'cyl' => $e['od_cyl'] ?? '', 'axis' => $e['od_axis'] ?? '', 'va' => $e['od_va'] ?? '', 'add' => $e['od_add'] ?? ''],
-            'os'                  => ['sph' => $e['os_sph'] ?? '', 'cyl' => $e['os_cyl'] ?? '', 'axis' => $e['os_axis'] ?? '', 'va' => $e['os_va'] ?? '', 'add' => $e['os_add'] ?? ''],
-            'iop'                 => ['od' => $e['iop_od'] ?? '', 'os' => $e['iop_os'] ?? ''],
-            'pd'                  => $e['pd'] ?? '',
-            'diagnosis'           => $e['diagnosis'] ?? '',
-            'recommendation'      => $e['recommendation'] ?? '',
-            'testResults'         => $e['test_results'] ?? '',
-            'prescriptionDetails' => $e['prescription_details'] ?? '',
-            'lensType'            => $e['lens_type'] ?? '',
-            'lensMaterial'        => $e['lens_material'] ?? '',
-            'lensCoating'         => $e['lens_coating'] ? (json_decode($e['lens_coating'], true) ?? []) : [],
-            'frameSelection'      => $e['frame_selection'] ?? '',
-            'remarks'             => $e['remarks'] ?? '',
-            'status'              => $e['status'] ?? 'completed',
+            'id'                => $e['id'],
+            'date'              => $e['date'],
+            'doctor'            => $doctorName($e),
+            'consultationId'    => $e['consultation_id'] ?? '',
+            'od'                => ['vaUncorrected' => $e['od_va_uncorrected'] ?? '', 'va' => $e['od_va_corrected'] ?? '', 'sph' => $e['od_sph'] ?? '', 'cyl' => $e['od_cyl'] ?? '', 'axis' => $e['od_axis'] ?? '', 'add' => $e['od_add'] ?? ''],
+            'os'                => ['vaUncorrected' => $e['os_va_uncorrected'] ?? '', 'va' => $e['os_va_corrected'] ?? '', 'sph' => $e['os_sph'] ?? '', 'cyl' => $e['os_cyl'] ?? '', 'axis' => $e['os_axis'] ?? '', 'add' => $e['os_add'] ?? ''],
+            'iop'               => ['od' => $e['iop_od'] ?? '', 'os' => $e['iop_os'] ?? ''],
+            'pd'                => $e['pd'] ?? '',
+            'externalFindings'  => $e['external_findings'] ?? '',
+            'diagnosis'         => $e['diagnosis'] ?? '',
+            'testResults'       => $e['test_results'] ?? '',
+            'remarks'           => $e['remarks'] ?? '',
+            'status'            => $e['status'] ?? 'completed',
         ];
     }
 
@@ -107,13 +103,20 @@ try {
     foreach ($rxRows as $rx) {
         $pid = $rx['patient_id'];
         $rxByPt[$pid][] = [
-            'id'       => $rx['id'],
-            'date'     => $rx['date'],
-            'doctor'   => $doctorName($rx),
-            'od'       => ['sph' => $rx['od_sph'] ?? '', 'cyl' => $rx['od_cyl'] ?? '', 'axis' => $rx['od_axis'] ?? ''],
-            'os'       => ['sph' => $rx['os_sph'] ?? '', 'cyl' => $rx['os_cyl'] ?? '', 'axis' => $rx['os_axis'] ?? ''],
-            'lensType' => $rx['lens_type'] ?? '',
-            'remarks'  => $rx['remarks'] ?? '',
+            'id'              => $rx['id'],
+            'date'            => $rx['date'],
+            'expiryDate'      => $rx['expiry_date'] ?? '',
+            'status'          => $rx['status'] ?? 'valid',
+            'prcLicense'      => $rx['prc_license'] ?? '',
+            'doctor'          => $doctorName($rx),
+            'examId'          => $rx['exam_id'] ?? '',
+            'od'              => ['sph' => $rx['od_sph'] ?? '', 'cyl' => $rx['od_cyl'] ?? '', 'axis' => $rx['od_axis'] ?? '', 'add' => $rx['od_add'] ?? ''],
+            'os'              => ['sph' => $rx['os_sph'] ?? '', 'cyl' => $rx['os_cyl'] ?? '', 'axis' => $rx['os_axis'] ?? '', 'add' => $rx['os_add'] ?? ''],
+            'pd'              => $rx['pd'] ?? '',
+            'lensType'        => $rx['lens_type'] ?? '',
+            'lensMaterial'    => $rx['lens_material'] ?? '',
+            'frameSelection'  => $rx['frame_selection'] ?? '',
+            'lensCoating'     => $rx['lens_coating'] ? (json_decode($rx['lens_coating'], true) ?? []) : [],
         ];
     }
 
@@ -121,13 +124,17 @@ try {
     foreach ($conRows as $c) {
         $pid = $c['patient_id'];
         $conByPt[$pid][] = [
-            'id'           => $c['id'],
-            'date'         => $c['date'],
-            'doctor'       => $doctorName($c),
-            'type'         => $c['type'] ?? '',
-            'diagnosis'    => $c['diagnosis'] ?? '',
-            'prescription' => $c['prescription'] ?? '',
-            'remarks'      => $c['remarks'] ?? '',
+            'id'                     => $c['id'],
+            'date'                   => $c['date'],
+            'doctor'                 => $doctorName($c),
+            'examId'                 => $c['exam_id'] ?? '',
+            'type'                   => $c['type'] ?? '',
+            'chiefComplaint'         => $c['chief_complaint'] ?? '',
+            'historyPresentIllness'  => $c['history_present_illness'] ?? '',
+            'assessment'             => $c['assessment'] ?? '',
+            'recommendation'         => $c['recommendation'] ?? '',
+            'followUpDate'           => $c['follow_up_date'] ?? '',
+            'status'                 => $c['status'] ?? 'completed',
         ];
     }
 
@@ -146,10 +153,7 @@ try {
             'age'            => (int)($p['age'] ?? 0),
             'contact'        => $p['contact'] ?? '',
             'address'        => $p['address'] ?? '',
-            'bloodType'      => $p['blood_type'] ?? '',
             'occupation'     => $p['occupation'] ?? '',
-            'medicalHistory' => $p['medical_history'] ?? '',
-            'opticalHistory' => $p['optical_history'] ?? '',
             'qrData'         => $p['qr_data'] ?? '',
             'registeredDate' => $p['registered_date'] ?? '',
             'lastVisit'      => $p['last_visit'] ?: '—',

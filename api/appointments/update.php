@@ -145,26 +145,41 @@ try {
         // Cancelled/disapproved get email too, same as rescheduled below —
         // all three mean "don't come at the time you were expecting to,"
         // which is a real, tangible consequence to miss, not just a status
-        // update. Approved/no-show stay in-app-only: approved has no wrong
-        // action to guard against, and no-show has already happened.
+        // update. Approved now gets an email too (previously in-app-only) —
+        // specifically to carry the "Add to Google Calendar" link so the
+        // patient has a place to pick up extra reminder options right when
+        // the appointment becomes real, not just at the day-before reminder.
+        // No-show stays in-app-only — it's already happened, nothing to act on.
         if ($role !== 'patient' && $patientUid = $getPatientUserId()) {
             $fmtDate = date('M j, Y', strtotime($appt['date']));
             $doctor  = $appt['doctor_name'] ?? 'your doctor';
             if ($newStatus === 'approved') {
-                createNotification($pdo, $patientUid, 'approved',
-                    'Appointment Approved',
-                    "Your appointment with {$doctor} on {$fmtDate} at {$appt['time']} has been approved."
-                );
+                $approveMsg = "Your appointment with {$doctor} on {$fmtDate} at {$appt['time']} has been approved.";
+                createNotification($pdo, $patientUid, 'approved', 'Appointment Approved', $approveMsg);
+                $calUrl = googleCalendarUrl($pdo, $appt['date'], $appt['time'], $appt['doctor_name'], $appt['type'] ?? null);
+                _emailPatientNotice($pdo, $patientUid, 'Appointment Approved', $approveMsg, $calUrl, 'Add to Google Calendar', $appt['date']);
             } elseif ($newStatus === 'cancelled') {
                 $cancelMsg = "Your appointment with {$doctor} on {$fmtDate} has been cancelled by the clinic."
                     . ($cancelReason ? " Reason: {$cancelReason}" : '');
                 createNotification($pdo, $patientUid, 'cancelled', 'Appointment Cancelled', $cancelMsg);
-                _emailPatientNotice($pdo, $patientUid, 'Appointment Cancelled', $cancelMsg);
+                // Email keeps the reason in its own highlighted box instead of
+                // run into the same sentence (see systemEmailBody) — the
+                // in-app notification above stays a single plain-text line,
+                // it doesn't have a layout to separate it into.
+                _emailPatientNotice(
+                    $pdo, $patientUid, 'Appointment Cancelled',
+                    "Your appointment with {$doctor} on {$fmtDate} has been cancelled by the clinic.",
+                    '', '', '', 'Reason for Cancellation', $cancelReason
+                );
             } elseif ($newStatus === 'disapproved') {
                 $disapproveMsg = "Your appointment request with {$doctor} on {$fmtDate} could not be approved."
                     . ($disapprovalReason ? " Reason: {$disapprovalReason}" : '');
                 createNotification($pdo, $patientUid, 'disapproved', 'Appointment Not Approved', $disapproveMsg);
-                _emailPatientNotice($pdo, $patientUid, 'Appointment Not Approved', $disapproveMsg);
+                _emailPatientNotice(
+                    $pdo, $patientUid, 'Appointment Not Approved',
+                    "Your appointment request with {$doctor} on {$fmtDate} could not be approved.",
+                    '', '', '', 'Reason', $disapprovalReason
+                );
             } elseif ($newStatus === 'no-show') {
                 $msg = "You were marked as a no-show for your appointment with {$doctor} on {$fmtDate} at {$appt['time']}.";
                 if ($justRestricted) {
@@ -282,7 +297,8 @@ try {
         $prefSlot = $prefDate ? (" Preferred: {$prefDate}" . ($prefTime ? " at {$prefTime}" : '') . '.') : '';
         notifyAdminStaff($pdo, 'reschedule_request',
             'Reschedule Request',
-            "{$patName} has requested to reschedule appointment #{$id}.{$prefSlot}"
+            "{$patName} has requested to reschedule appointment #{$id}.{$prefSlot}",
+            $id
         );
 
         jsonResponse(['success' => true]);

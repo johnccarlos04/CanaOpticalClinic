@@ -216,10 +216,7 @@ CREATE TABLE IF NOT EXISTS `patients` (
   `age`             TINYINT UNSIGNED NOT NULL DEFAULT 0,
   `contact`         VARCHAR(20)  DEFAULT NULL,
   `address`         TEXT         DEFAULT NULL,
-  `blood_type`      VARCHAR(10)  NOT NULL DEFAULT 'Unknown',
   `occupation`      VARCHAR(100) DEFAULT NULL,
-  `medical_history` TEXT         DEFAULT NULL,
-  `optical_history` TEXT         DEFAULT NULL,
   `qr_data`         VARCHAR(150) DEFAULT NULL,
   `registered_date` DATE         DEFAULT NULL,
   `last_visit`      DATE         DEFAULT NULL,
@@ -281,64 +278,82 @@ CREATE TABLE IF NOT EXISTS `appointment_waitlist` (
   FOREIGN KEY (`patient_id`) REFERENCES `patients`(`id`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
--- ── Optical Examinations ──────────────────────────────────────────
+-- ── Consultations — the narrative of the visit ─────────────────────
+-- Chief complaint / history / assessment / plan are the doctor's own
+-- words about why the patient came in and what happens next. Must NOT
+-- carry SPH/CYL/AXIS or any refraction data — that's examinations' job
+-- (see the old `prescription` text-summary column this replaces, which
+-- was a spec violation: a free-text "OD: ... / OS: ..." string).
+CREATE TABLE IF NOT EXISTS `consultations` (
+  `id`                       VARCHAR(10)  NOT NULL,
+  `patient_id`               VARCHAR(10)  DEFAULT NULL,
+  `doctor_id`                VARCHAR(10)  DEFAULT NULL,
+  `exam_id`                  VARCHAR(10)  DEFAULT NULL,  -- the exam this visit led to, if any
+  `date`                     DATE         NOT NULL,
+  `type`                     VARCHAR(100) DEFAULT NULL,  -- appointment type (Eye Examination / Follow-up / Frame Fitting / Complaint)
+  `chief_complaint`          TEXT         DEFAULT NULL,
+  `history_present_illness`  TEXT         DEFAULT NULL,
+  `assessment`               TEXT         DEFAULT NULL,  -- doctor's notes/reasoning
+  `recommendation`           TEXT         DEFAULT NULL,  -- the plan — what happens next
+  `follow_up_date`           DATE         DEFAULT NULL,
+  `status`                   ENUM('completed','cancelled','no-show') NOT NULL DEFAULT 'completed',
+  PRIMARY KEY (`id`),
+  FOREIGN KEY (`patient_id`) REFERENCES `patients`(`id`) ON DELETE CASCADE,
+  FOREIGN KEY (`doctor_id`)  REFERENCES `doctors`(`id`)  ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ── Optical Examinations — the clinical measurements ───────────────
+-- Must NOT carry lens type/material/coating, frame selection, or a
+-- prescription-details narrative — those belong to the issued
+-- prescription document (see `prescriptions` below), not the exam that
+-- produced it.
 CREATE TABLE IF NOT EXISTS `examinations` (
   `id`                   VARCHAR(10)  NOT NULL,
   `patient_id`           VARCHAR(10)  DEFAULT NULL,
   `doctor_id`            VARCHAR(10)  DEFAULT NULL,
+  `consultation_id`      VARCHAR(10)  DEFAULT NULL,  -- the visit this exam was performed during
   `date`                 DATE         NOT NULL,
   -- Right eye (OD)
-  `od_sph`  VARCHAR(10), `od_cyl` VARCHAR(10), `od_axis` VARCHAR(10),
-  `od_va`   VARCHAR(10), `od_add` VARCHAR(10),
+  `od_va_uncorrected` VARCHAR(10), `od_va_corrected` VARCHAR(10),
+  `od_sph` VARCHAR(10), `od_cyl` VARCHAR(10), `od_axis` VARCHAR(10), `od_add` VARCHAR(10),
   -- Left eye (OS)
-  `os_sph`  VARCHAR(10), `os_cyl` VARCHAR(10), `os_axis` VARCHAR(10),
-  `os_va`   VARCHAR(10), `os_add` VARCHAR(10),
+  `os_va_uncorrected` VARCHAR(10), `os_va_corrected` VARCHAR(10),
+  `os_sph` VARCHAR(10), `os_cyl` VARCHAR(10), `os_axis` VARCHAR(10), `os_add` VARCHAR(10),
   -- Intraocular pressure & pupillary distance
   `iop_od`               VARCHAR(10)  DEFAULT NULL,
   `iop_os`               VARCHAR(10)  DEFAULT NULL,
   `pd`                   VARCHAR(20)  DEFAULT NULL,
   -- Clinical findings
+  `external_findings`    TEXT         DEFAULT NULL,  -- lids, conjunctiva, cornea, pupils
   `diagnosis`            TEXT         DEFAULT NULL,
-  `recommendation`       TEXT         DEFAULT NULL,
   `test_results`         TEXT         DEFAULT NULL,
-  `prescription_details` TEXT         DEFAULT NULL,
-  -- Lens / frame
-  `lens_type`            VARCHAR(50)  DEFAULT NULL,
-  `lens_material`        VARCHAR(50)  DEFAULT NULL,
-  `lens_coating`         TEXT         DEFAULT NULL,  -- comma-separated
-  `frame_selection`      TEXT         DEFAULT NULL,
-  `remarks`              TEXT         DEFAULT NULL,
+  `remarks`              TEXT         DEFAULT NULL,  -- clinical remarks
   `status`               ENUM('pending','completed') NOT NULL DEFAULT 'completed',
   PRIMARY KEY (`id`),
   FOREIGN KEY (`patient_id`) REFERENCES `patients`(`id`) ON DELETE CASCADE,
   FOREIGN KEY (`doctor_id`)  REFERENCES `doctors`(`id`)  ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
--- ── Prescriptions ────────────────────────────────────────────────
+-- ── Prescriptions — the issued document ─────────────────────────────
+-- A clean, printable, legally-standing document. Must NOT carry
+-- uncorrected acuity, external findings, or the doctor's narrative notes
+-- — those belong to the examination/consultation that led to it.
 CREATE TABLE IF NOT EXISTS `prescriptions` (
-  `id`         VARCHAR(10)  NOT NULL,
-  `patient_id` VARCHAR(10)  DEFAULT NULL,
-  `doctor_id`  VARCHAR(10)  DEFAULT NULL,
-  `date`       DATE         NOT NULL,
-  `od_sph`     VARCHAR(10), `od_cyl` VARCHAR(10), `od_axis` VARCHAR(10),
-  `os_sph`     VARCHAR(10), `os_cyl` VARCHAR(10), `os_axis` VARCHAR(10),
-  `lens_type`  VARCHAR(100) DEFAULT NULL,
-  `remarks`    TEXT         DEFAULT NULL,
-  PRIMARY KEY (`id`),
-  FOREIGN KEY (`patient_id`) REFERENCES `patients`(`id`) ON DELETE CASCADE,
-  FOREIGN KEY (`doctor_id`)  REFERENCES `doctors`(`id`)  ON DELETE CASCADE
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-
--- ── Consultations ────────────────────────────────────────────────
-CREATE TABLE IF NOT EXISTS `consultations` (
   `id`           VARCHAR(10)  NOT NULL,
   `patient_id`   VARCHAR(10)  DEFAULT NULL,
   `doctor_id`    VARCHAR(10)  DEFAULT NULL,
-  `date`         DATE         NOT NULL,
-  `type`         VARCHAR(100) DEFAULT NULL,
-  `diagnosis`    TEXT         DEFAULT NULL,
-  `prescription` TEXT         DEFAULT NULL,
-  `remarks`      TEXT         DEFAULT NULL,
+  `exam_id`      VARCHAR(10)  DEFAULT NULL,  -- the exam this prescription was issued from
+  `date`         DATE         NOT NULL,      -- issue date
+  `expiry_date`  DATE         DEFAULT NULL,  -- issue date + 1 year
+  `status`       ENUM('valid','expired','superseded') NOT NULL DEFAULT 'valid',
+  `prc_license`  VARCHAR(50)  DEFAULT NULL,  -- snapshot of the issuing doctor's PRC license at issue time
+  `od_sph`     VARCHAR(10), `od_cyl` VARCHAR(10), `od_axis` VARCHAR(10), `od_add` VARCHAR(10),
+  `os_sph`     VARCHAR(10), `os_cyl` VARCHAR(10), `os_axis` VARCHAR(10), `os_add` VARCHAR(10),
+  `pd`           VARCHAR(20)  DEFAULT NULL,
+  `lens_type`     VARCHAR(100) DEFAULT NULL,
+  `lens_material` VARCHAR(50)  DEFAULT NULL,  -- not in the spec's minimum field list, but real dispensing
+  `frame_selection` TEXT       DEFAULT NULL,  -- data that would otherwise have nowhere to live once examinations sheds it
+  `lens_coating` TEXT         DEFAULT NULL,  -- JSON array, same convention the old examinations.lens_coating used
   PRIMARY KEY (`id`),
   FOREIGN KEY (`patient_id`) REFERENCES `patients`(`id`) ON DELETE CASCADE,
   FOREIGN KEY (`doctor_id`)  REFERENCES `doctors`(`id`)  ON DELETE CASCADE
@@ -517,7 +532,6 @@ CREATE TABLE IF NOT EXISTS `pending_registrations` (
   `gender`        VARCHAR(20)      NOT NULL,
   `address`       TEXT             NOT NULL,
   `contact`       VARCHAR(50)      NOT NULL,
-  `blood_type`    VARCHAR(10)      NOT NULL DEFAULT 'Unknown',
   `password_hash` VARCHAR(255)     NOT NULL,
   `otp`           VARCHAR(6)       NOT NULL,
   `attempts`       TINYINT UNSIGNED NOT NULL DEFAULT 0,
@@ -526,6 +540,31 @@ CREATE TABLE IF NOT EXISTS `pending_registrations` (
   `created_at`    TIMESTAMP        NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (`id`),
   UNIQUE KEY `uq_pending_email` (`email`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ── Email Changes (OTP-verified email address changes) ────────────
+-- A logged-in patient changing their email must prove they own the new
+-- address first — mirrors the password_resets OTP+lockout pattern, but
+-- scoped to a users_id (the requester must already be authenticated)
+-- rather than a bare email, and the code is sent to the NEW address
+-- instead of an existing one. users.email is only updated once verify-
+-- email-change.php confirms the OTP. Currently patient-only (see
+-- api/patients/request-email-change.php) — other roles still change
+-- email straight through their existing profile-save endpoints.
+CREATE TABLE IF NOT EXISTS `email_changes` (
+  `id`             INT UNSIGNED     NOT NULL AUTO_INCREMENT,
+  `users_id`       INT UNSIGNED     NOT NULL,
+  `new_email`      VARCHAR(255)     NOT NULL,
+  `otp`            VARCHAR(6)       NOT NULL,
+  `used`           TINYINT(1)       NOT NULL DEFAULT 0,
+  `attempts`       TINYINT UNSIGNED NOT NULL DEFAULT 0,
+  `total_attempts` TINYINT UNSIGNED NOT NULL DEFAULT 0,
+  `blocked_until`  DATETIME         NULL DEFAULT NULL,
+  `expires_at`     DATETIME         NOT NULL,
+  `created_at`     TIMESTAMP        NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  INDEX `idx_ec_user` (`users_id`),
+  FOREIGN KEY (`users_id`) REFERENCES `users`(`id`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- ── Rate Limits (IP-based, keyed by endpoint) ────────────────────
@@ -563,5 +602,18 @@ CREATE TABLE IF NOT EXISTS `about_gallery` (
 --    ALTER TABLE `clinic_settings` ADD COLUMN IF NOT EXISTS `reminder_time` VARCHAR(20) NOT NULL DEFAULT '12:00 PM' AFTER `appointment_policy_content`;
 --    ALTER TABLE `clinic_settings` ADD COLUMN IF NOT EXISTS `confirm_deadline_time` VARCHAR(20) NOT NULL DEFAULT '9:00 PM' AFTER `reminder_time`;
 --    ALTER TABLE `clinic_settings` ADD COLUMN IF NOT EXISTS `waitlist_offer_hours` TINYINT UNSIGNED NOT NULL DEFAULT 3 AFTER `confirm_deadline_time`;
+--    ALTER TABLE `patients` DROP COLUMN `blood_type`;
+--    ALTER TABLE `pending_registrations` DROP COLUMN `blood_type`;
+--    ALTER TABLE `patients` DROP COLUMN `medical_history`;
+--    ALTER TABLE `patients` DROP COLUMN `optical_history`;
+--    Consultation/Examination/Prescription field-separation fix — the
+--    `consultations`/`examinations`/`prescriptions` CREATE TABLE blocks
+--    above are already the target shape for a fresh install; an existing
+--    live database needs database/migrate_exam_prescription_split.sql
+--    run once (it also carries forward each exam's existing lens/
+--    material/coating/frame data onto a matching prescription row before
+--    dropping the columns that used to hold it — don't skip straight to
+--    the DROP COLUMN statements inside that file without the copy steps
+--    ahead of them).
 
 SET FOREIGN_KEY_CHECKS = 1;

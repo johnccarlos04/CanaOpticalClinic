@@ -83,7 +83,6 @@ try {
     $gender  = $row['gender'];
     $address = $row['address'];
     $contact = $row['contact'];
-    $blood   = $row['blood_type'];
     $hash    = $row['password_hash'];
     $today   = date('Y-m-d');
 
@@ -113,14 +112,12 @@ try {
     $pdo->prepare(
         'INSERT INTO patients
            (id, user_id, first_name, middle_name, last_name, gender, dob, age,
-            contact, address, blood_type, occupation,
-            medical_history, optical_history,
+            contact, address, occupation,
             qr_data, registered_date, status)
-         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)'
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)'
     )->execute([
         $pid, $uid, $first, $middle ?: null, $last, $gender, $dob, $age,
-        $contact, $address, $blood, '',
-        '', '',
+        $contact, $address, '',
         $qr, $today, 'active',
     ]);
 
@@ -146,7 +143,9 @@ try {
             welcomeEmailBody("$first $last", 'patient', $email),
             "Welcome, $first $last!\n\nYour patient account at Cana Optical Clinic has been created successfully. You can now sign in anytime using $email and the password you chose."
         );
-    } catch (\Throwable $e) { /* non-critical */ }
+    } catch (\Throwable $e) {
+        error_log('[email] Welcome email failed for new patient ' . $email . ': ' . $e->getMessage());
+    }
 
     // Activity log
     try {

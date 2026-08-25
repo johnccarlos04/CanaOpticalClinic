@@ -71,7 +71,7 @@ function rowToResponse(array $r): array {
         'galleryMaxPhotos'         => isset($r['gallery_max_photos']) ? (int)$r['gallery_max_photos'] : null,
         'termsContent'             => $r['terms_content'] ?: DEFAULT_TERMS_MD,
         'appointmentPolicyContent' => $r['appointment_policy_content']
-            ?: defaultApptPolicyMd($r['reminder_time'] ?: '12:00 PM', $r['confirm_deadline_time'] ?: '9:00 PM'),
+            ?: defaultApptPolicyMd($r['reminder_time'] ?: '12:00 AM', $r['confirm_deadline_time'] ?: '10:00 PM'),
         'defaultDuration'          => $r['default_duration'],
         'maxAdvanceBooking'        => $r['max_advance_booking'],
         'minAdvanceBooking'        => $r['min_advance_booking'],
@@ -116,6 +116,45 @@ try {
         if (array_key_exists('clinicDays', $b) && is_array($b['clinicDays'])) {
             $sets[]   = '`clinic_days` = ?';
             $values[] = implode(',', array_map('trim', $b['clinicDays']));
+        }
+
+        // Keep the Appointment Policy's Section 4 wording in sync with the
+        // actual reminder/confirm-deadline times, so an admin doesn't have
+        // to remember to also go re-edit Terms & Policies every time they
+        // change Scheduling Rules. Only kicks in when this save touches
+        // reminderTime/confirmDeadlineTime but ISN'T also explicitly
+        // rewriting appointmentPolicyContent in the same request (that
+        // save wins outright — never silently overwritten out from under
+        // the admin), and only against whatever custom text is already
+        // stored — an empty column already falls back to
+        // defaultApptPolicyMd(), which reads these settings live on every
+        // render, so there's nothing frozen there to fix.
+        if ((array_key_exists('reminderTime', $b) || array_key_exists('confirmDeadlineTime', $b))
+            && !array_key_exists('appointmentPolicyContent', $b)) {
+            $curContent = $pdo->query('SELECT appointment_policy_content FROM clinic_settings WHERE id = 1 LIMIT 1')->fetchColumn();
+            if ($curContent) {
+                $updatedContent = $curContent;
+                if (array_key_exists('reminderTime', $b)) {
+                    $newReminder = trim((string)$b['reminderTime']);
+                    $updatedContent = preg_replace_callback(
+                        '/(reminder at )\S.*?( the day before your visit)/',
+                        fn($m) => $m[1] . $newReminder . $m[2],
+                        $updatedContent, 1
+                    );
+                }
+                if (array_key_exists('confirmDeadlineTime', $b)) {
+                    $newDeadline = trim((string)$b['confirmDeadlineTime']);
+                    $updatedContent = preg_replace_callback(
+                        '/(attending by )\S.*?( that same day)/',
+                        fn($m) => $m[1] . $newDeadline . $m[2],
+                        $updatedContent, 1
+                    );
+                }
+                if ($updatedContent !== $curContent) {
+                    $sets[]   = '`appointment_policy_content` = ?';
+                    $values[] = $updatedContent;
+                }
+            }
         }
 
         if ($sets) {

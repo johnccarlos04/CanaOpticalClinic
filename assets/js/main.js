@@ -196,13 +196,51 @@ function dateFieldHtml(id, opts = {}) {
   // rendering with none of it applied, just the plain .form-input default.
   const onchangeAttr = onchange ? ` onchange="${esc(onchange)}"` : ''
   const styleAttr = style ? ` style="${esc(style)}"` : ''
+  // The trigger is a <div>, not a <button> — it needs to host a real,
+  // typeable <input> (buttons can't contain form controls), while still
+  // being the single element openDobPicker()/outside-click-detection
+  // already position and bounds-check against. Typing is handled by
+  // _dobTextInput() (auto-inserts "/" as digits are typed, matching
+  // mm/dd/yyyy) and _dobTextCommit() (validates + commits once a full
+  // date is typed) below — clicking the calendar icon (or focusing the
+  // field at all) still opens the same calendar popover as before, so
+  // typing is an addition, not a replacement, for picking a date.
+  // The default "mm/dd/yyyy" placeholder doubles as a literal character
+  // template: the still-untyped tail of it ("dd/yyyy" once "08/19/" is
+  // typed, say) is rendered as one plain grey text run positioned right
+  // after whatever's actually been typed, instead of the whole
+  // placeholder vanishing at the first keystroke (see _dobMaskHtml). Its
+  // position is measured off a hidden mirror span holding the same typed
+  // text in the same font (see _dobSyncMask) rather than assumed from
+  // character counting — a proportional font's "m"/"d"/"y" don't share a
+  // digit's width, so anything that tried to reserve a fixed cell per
+  // character (an earlier version of this) drifted out of alignment or
+  // had letters overlapping their neighbour; measuring the real rendered
+  // width sidesteps that entirely. Only wired up when the placeholder
+  // actually IS that template — a caller passing an instructional
+  // placeholder instead (not a per-character template) just gets the
+  // plain native placeholder, unchanged.
+  const useMask = placeholder === 'mm/dd/yyyy'
+  const initialOut = value ? label : ''
+  const mirrorMaskHtml = useMask ? `
+        <span class="dob-mask-mirror" id="${id}-mirror" aria-hidden="true">${esc(initialOut)}</span>
+        <span class="dob-picker-mask" id="${id}-mask" aria-hidden="true">${_dobMaskHtml(initialOut)}</span>` : ''
   return `
   <div class="dob-picker" id="${id}-wrap" data-max="${max}" data-min="${min}" data-default-years-ago="${defaultYearsAgo}" data-placeholder="${esc(placeholder)}">
     <input type="hidden" id="${id}" value="${value || ''}"${onchangeAttr}>
-    <button type="button" id="${id}-trigger" class="${cls} dob-picker-trigger"${styleAttr} onclick="window.toggleDobPicker('${id}')">
-      <span class="dob-picker-text${value ? '' : ' placeholder'}" id="${id}-text">${label}</span>
-      ${icon('calendar', 'icon-sm')}
-    </button>
+    <div id="${id}-trigger" class="${cls} dob-picker-trigger"${styleAttr}>
+      <span class="dob-picker-text-wrap">${mirrorMaskHtml}
+        <input type="text" class="dob-picker-text${value ? '' : ' placeholder'}" id="${id}-text"
+               inputmode="numeric" autocomplete="off" placeholder="${useMask ? '' : esc(placeholder)}" value="${value ? label : ''}"
+               oninput="window._dobTextInput('${id}', this)"
+               onkeydown="window._dobTextKeydown('${id}', event)"
+               onfocus="window.openDobPicker('${id}')"
+               onblur="window._dobTextBlur('${id}')">
+      </span>
+      <button type="button" class="dob-picker-icon-btn" tabindex="-1" onclick="window.toggleDobPicker('${id}')">
+        ${icon('calendar', 'icon-sm')}
+      </button>
+    </div>
   </div>`
 }
 window.dateFieldHtml = dateFieldHtml
@@ -226,8 +264,13 @@ window.dobFieldHtml = dobFieldHtml
 // a newborn. One shared helper so all of them agree with registration's
 // exact cutoff instead of each recomputing it slightly differently.
 function maxDobFor18() {
+  // localDateStr(), not toISOString() — .toISOString() converts the local
+  // midnight this constructs to UTC first, which lands on the previous
+  // calendar day in a UTC+8 timezone (the clinic's), shifting the 18+
+  // cutoff a day early/late depending on time of day. Same bug as
+  // dobPickerRenderPanel's todayIso, above.
   const t = new Date()
-  return new Date(t.getFullYear() - 18, t.getMonth(), t.getDate()).toISOString().slice(0, 10)
+  return localDateStr(new Date(t.getFullYear() - 18, t.getMonth(), t.getDate()))
 }
 window.maxDobFor18 = maxDobFor18
 
@@ -239,6 +282,130 @@ function _dobFormat(iso) {
   const dd = String(dt.getDate()).padStart(2, '0')
   return `${mm}/${dd}/${dt.getFullYear()}`
 }
+
+// Builds the grey "mm/dd/yyyy" tail that's shown after whatever's already
+// been typed (see dateFieldHtml's mirrorMaskHtml). `out` is the input's
+// own current value — always a strict left-to-right prefix of the
+// template (built the same way, slashes and all, by
+// _dobTextInput/_dobTextCommit/the calendar picker) — so the untyped
+// remainder is just the template's own tail past that length. Rendered as
+// one plain text run (not split into per-character cells — a
+// proportional font's letters don't share a digit's width, so an earlier
+// version that tried to size each character individually kept drifting
+// out of alignment or overlapping); its next real digit position (after
+// skipping an auto-inserted "/", never something the user actually
+// types) is wrapped in its own span so CSS can mark it as the current
+// typing position without disturbing the rest of the run's normal flow.
+const DOB_MASK_TEMPLATE = 'mm/dd/yyyy'
+function _dobMaskHtml(out) {
+  out = out || ''
+  const remaining = DOB_MASK_TEMPLATE.slice(out.length)
+  if (!remaining) return ''
+  let activeIdx = remaining.search(/[^/]/)
+  if (activeIdx === -1) activeIdx = 0
+  const before = esc(remaining.slice(0, activeIdx))
+  const active = esc(remaining.slice(activeIdx, activeIdx + 1))
+  const after  = esc(remaining.slice(activeIdx + 1))
+  return `${before}<span class="dob-mask-active">${active}</span>${after}`
+}
+window._dobMaskHtml = _dobMaskHtml
+
+// Re-renders the mask tail from whatever the real text input currently
+// holds, and repositions it to start exactly where that typed text ends —
+// measured off a hidden mirror span holding the same text in the same
+// font (offsetWidth), not assumed from character counts, so it's pixel-
+// accurate regardless of what's actually been typed. No-op when the
+// field wasn't built with the mask (custom instructional placeholders
+// like the old "Select date of birth" have no -mask/-mirror span at all)
+// — every place that writes ${id}-text.value calls this right after, so
+// all three (input, mirror, mask) never drift out of sync.
+function _dobSyncMask(id) {
+  const mask   = document.getElementById(id + '-mask')
+  const mirror = document.getElementById(id + '-mirror')
+  const text   = document.getElementById(id + '-text')
+  if (!mask || !mirror || !text) return
+  const out = text.value || ''
+  mirror.textContent = out
+  mask.style.left = mirror.offsetWidth + 'px'
+  mask.innerHTML = _dobMaskHtml(out)
+}
+window._dobSyncMask = _dobSyncMask
+
+// ── Keyboard typing into the date field, alongside the calendar ───
+// Auto-inserts "/" as digits are typed (matching mm/dd/yyyy) — same spirit
+// as a native date input's segment auto-advance, but for a plain text
+// field. Non-digit characters are dropped rather than rejected outright,
+// so pasting a slash-formatted date ("08/19/2008") still works.
+function _dobTextInput(id, el) {
+  const digits = el.value.replace(/\D/g, '').slice(0, 8)
+  let out = digits.slice(0, 2)
+  if (digits.length > 2) out += '/' + digits.slice(2, 4)
+  if (digits.length > 4) out += '/' + digits.slice(4, 8)
+  el.value = out
+  el.classList.toggle('placeholder', !out)
+  _dobSyncMask(id)
+  if (digits.length === 8) _dobTextCommit(id, el)
+}
+window._dobTextInput = _dobTextInput
+
+function _dobTextKeydown(id, e) {
+  if (e.key === 'Enter') { e.preventDefault(); _dobTextCommit(id, e.target); closeDobPicker() }
+  else if (e.key === 'Escape') { closeDobPicker() }
+}
+window._dobTextKeydown = _dobTextKeydown
+
+// Parses the typed mm/dd/yyyy text, validates it's a real calendar date
+// (rejects e.g. 02/30/2020) within the field's min/max, and — only if
+// valid — commits it exactly like picking a day from the calendar does:
+// same hidden-input update + 'change' event, and syncs the calendar panel
+// to that month/year if it's currently open. An incomplete typed value is
+// left alone rather than errored on mid-edit; only a genuinely invalid
+// *complete* date gets the .error treatment.
+function _dobTextCommit(id, el) {
+  el = el || document.getElementById(id + '-text')
+  const wrap    = document.getElementById(id + '-wrap')
+  const trigger = document.getElementById(id + '-trigger')
+  if (!el || !wrap) return
+  const m = (el.value || '').match(/^(\d{2})\/(\d{2})\/(\d{4})$/)
+  if (!m) return
+  const [, mm, dd, yyyy] = m
+  const iso = `${yyyy}-${mm}-${dd}`
+  const dt  = new Date(iso + 'T00:00:00')
+  const validCalendarDate = !isNaN(dt) && dt.getFullYear() === +yyyy && dt.getMonth() === +mm - 1 && dt.getDate() === +dd
+  const maxIso = wrap.dataset.max, minIso = wrap.dataset.min
+  const inRange = (!maxIso || iso <= maxIso) && (!minIso || iso >= minIso)
+  if (!validCalendarDate || !inRange) {
+    if (trigger) trigger.classList.add('error')
+    return
+  }
+  if (trigger) trigger.classList.remove('error')
+  const hidden = document.getElementById(id)
+  if (hidden) { hidden.value = iso; hidden.dispatchEvent(new Event('change', { bubbles: true })) }
+  el.classList.remove('placeholder')
+  if (_dobOpenId === id) {
+    _dobState.year  = +yyyy
+    _dobState.month = +mm - 1
+    _dobRenderPanel()
+  }
+}
+window._dobTextCommit = _dobTextCommit
+
+// Leaving the field with an incomplete/garbled typed value (e.g. tabbed
+// away after only typing "08/19") reverts the visible text back to
+// whatever was last actually committed, instead of leaving a half-typed
+// value sitting there that doesn't match the real underlying date.
+function _dobTextBlur(id) {
+  const el     = document.getElementById(id + '-text')
+  const hidden = document.getElementById(id)
+  if (!el || !hidden) return
+  if (/^\d{2}\/\d{2}\/\d{4}$/.test(el.value || '')) return // already committed above
+  el.value = hidden.value ? _dobFormat(hidden.value) : ''
+  el.classList.toggle('placeholder', !hidden.value)
+  _dobSyncMask(id)
+  const trigger = document.getElementById(id + '-trigger')
+  if (trigger) trigger.classList.remove('error')
+}
+window._dobTextBlur = _dobTextBlur
 
 let _dobOpenId = null
 let _dobState  = {}
@@ -276,7 +443,7 @@ function openDobPicker(id) {
     // reach a usable range.
     y = today.getFullYear() - defaultYearsAgo
     m = today.getMonth()
-  } else if (maxIso && new Date(maxIso + 'T00:00:00') < today) {
+  } else if (maxIso && maxIso !== 'none' && new Date(maxIso + 'T00:00:00') < today) {
     // No offset configured, but the field's upper bound is in the past
     // (e.g. registration's DOB field, capped at "18 years ago" — built as
     // static HTML rather than via dobFieldHtml(), so it has no
@@ -429,11 +596,15 @@ function _dobRenderPanel() {
   const pop = document.getElementById('dob-popover-root')
   if (!pop || !_dobOpenId) return
   const { year, month, maxIso, minIso } = _dobState
-  const maxDate = maxIso ? new Date(maxIso + 'T00:00:00') : new Date()
+  // maxIso === 'none' is an explicit opt-out (exam wizard's date fields —
+  // Examination/Follow-up/Dispensed Date) from the otherwise-default
+  // cap-at-today behavior below; maxDate stays null so no day is ever
+  // disabled as "in the future".
+  const maxDate = maxIso === 'none' ? null : (maxIso ? new Date(maxIso + 'T00:00:00') : new Date())
   const minDate = minIso ? new Date(minIso + 'T00:00:00') : null
 
   const monthNames = ['January','February','March','April','May','June','July','August','September','October','November','December']
-  const yearMax = maxDate.getFullYear()
+  const yearMax = maxDate ? maxDate.getFullYear() : new Date().getFullYear() + 10
   const yearMin = minDate ? minDate.getFullYear() : yearMax - 100
   const years = []
   for (let y = yearMax; y >= yearMin; y--) years.push(y)
@@ -442,14 +613,17 @@ function _dobRenderPanel() {
   const daysInMon = new Date(year, month + 1, 0).getDate()
   const hidden    = document.getElementById(_dobOpenId)
   const selIso    = hidden ? hidden.value : ''
-  const todayIso  = new Date().toISOString().slice(0, 10)
+  // localDateStr(), not toISOString() — the latter is UTC, which during
+  // early-morning hours in a UTC+8 timezone (the clinic's) is still
+  // "yesterday", making the calendar highlight the wrong day as today.
+  const todayIso  = localDateStr()
 
   let cells = ''
   for (let i = 0; i < firstDow; i++) cells += `<div class="dob-day dob-day-empty"></div>`
   for (let d = 1; d <= daysInMon; d++) {
     const iso = `${year}-${String(month + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`
     const dateObj = new Date(year, month, d)
-    const disabled = (dateObj > maxDate) || (minDate && dateObj < minDate)
+    const disabled = (maxDate && dateObj > maxDate) || (minDate && dateObj < minDate)
     const cls = ['dob-day']
     if (disabled) cls.push('dob-day-disabled')
     if (iso === selIso)   cls.push('dob-day-selected')
@@ -547,7 +721,8 @@ function dobPickerSelectDay(iso) {
   const trigger = document.getElementById(id + '-trigger')
   const text    = document.getElementById(id + '-text')
   if (hidden) { hidden.value = iso; hidden.dispatchEvent(new Event('change', { bubbles: true })) }
-  if (text)   { text.textContent = _dobFormat(iso); text.classList.remove('placeholder') }
+  if (text)   { text.value = _dobFormat(iso); text.classList.remove('placeholder') }
+  _dobSyncMask(id)
   if (trigger) trigger.classList.remove('error')
   closeDobPicker()
 }
@@ -575,9 +750,10 @@ function setDateFieldValue(id, iso) {
   hidden.value = iso || ''
   hidden.dispatchEvent(new Event('change', { bubbles: true }))
   if (text) {
-    if (iso) { text.textContent = _dobFormat(iso); text.classList.remove('placeholder') }
-    else     { text.textContent = wrap?.dataset.placeholder || 'mm/dd/yyyy'; text.classList.add('placeholder') }
+    if (iso) { text.value = _dobFormat(iso); text.classList.remove('placeholder') }
+    else     { text.value = ''; text.classList.add('placeholder') }
   }
+  _dobSyncMask(id)
 }
 window.setDateFieldValue = setDateFieldValue
 
@@ -633,6 +809,27 @@ function timeFieldHtml(id, opts = {}) {
   return selectFieldHtml(id, { placeholder: 'Select time', ...opts })
 }
 window.timeFieldHtml = timeFieldHtml
+
+// Shared "h:mm AM/PM" option list for timeFieldHtml(), capped to a
+// plausible 7 AM–9:30 PM business-hours window in 30-min steps — the same
+// list Consultation Settings' own clinic morning/afternoon open/close
+// pickers use (pages.js's sectionConsultation(), whose local timeOpts()
+// now just calls this), so a doctor's individual schedule Start/End Time
+// (openSetScheduleModal() below) is always picking from the exact same
+// selectable times as the clinic's own hours setup instead of free text
+// that could drift out of step with it.
+function clinicTimeOpts() {
+  const slots = []
+  for (let h = 7; h <= 21; h++) {
+    for (const m of [0, 30]) {
+      const hh   = h % 12 === 0 ? 12 : h % 12
+      const ampm = h < 12 ? 'AM' : 'PM'
+      slots.push(`${hh}:${m === 0 ? '00' : '30'} ${ampm}`)
+    }
+  }
+  return slots
+}
+window.clinicTimeOpts = clinicTimeOpts
 
 let _custOpenId = null
 let _custHighlight = -1  // index of the keyboard-highlighted row, independent of the picked value
@@ -901,6 +1098,25 @@ function resetSelectField(id) {
 }
 window.resetSelectField = resetSelectField
 
+// Swaps a custom-select's option list at runtime — e.g. the exam wizard's
+// Lens Type/Material fields switching between eyeglass and contact-lens
+// option sets depending on which correction the doctor picked. Always
+// resets to the placeholder afterward: a previously-picked value ("CR-39")
+// almost never exists in the new option set, and even on the rare case it
+// does, silently keeping a value the doctor picked under the *other*
+// category would be more confusing than asking them to reselect it.
+function setSelectFieldOptions(id, options, placeholder) {
+  const wrap = document.getElementById(id + '-wrap')
+  if (!wrap) return
+  const norm = options.map(o => (o && typeof o === 'object')
+    ? { value: String(o.value), label: String(o.label) }
+    : { value: String(o), label: String(o) })
+  wrap.dataset.options = JSON.stringify(norm)
+  if (placeholder !== undefined) wrap.dataset.placeholder = placeholder
+  resetSelectField(id)
+}
+window.setSelectFieldOptions = setSelectFieldOptions
+
 // ════════════════════════════════════════════════════════════════
 //  TOAST
 // ════════════════════════════════════════════════════════════════
@@ -969,6 +1185,19 @@ window.showConfirm = showConfirm;
 // ════════════════════════════════════════════════════════════════
 let _qrIdCounter = 0
 
+// QRCode.js has no DPI/resolution awareness — asking it for a 120×120
+// canvas (this app's typical on-screen size) bakes that same low pixel
+// count into the underlying image data, not just its CSS display size.
+// downloadQR() below exports that canvas as-is via toDataURL(), so a
+// QR meant to be scanned ended up downloaded at a genuinely low native
+// resolution — often too coarse for a phone camera to resolve reliably,
+// especially after any print/zoom/re-compression. Always render at a
+// fixed high native resolution regardless of the requested display size,
+// then scale the rendered element down visually via CSS — on-screen
+// layout is identical to before, but the real pixel data (and therefore
+// any download/print export of it) stays sharp.
+const QR_RENDER_SIZE = 512
+
 function mockQRSvg(data, size = 120) {
   const uid  = `_qr${++_qrIdCounter}`
   const safe = (data || 'CANA').replace(/&/g,'&amp;').replace(/"/g,'&quot;')
@@ -984,12 +1213,21 @@ function mockQRSvg(data, size = 120) {
       container.innerHTML = ''
       new window.QRCode(container, {
         text:         data || 'CANA',
-        width:        size,
-        height:       size,
+        width:        QR_RENDER_SIZE,
+        height:       QR_RENDER_SIZE,
         colorDark:    '#1C1C1C',
         colorLight:   '#ffffff',
         correctLevel: window.QRCode.CorrectLevel.M
       })
+      // Scale the actual rendered canvas/img down to the intended
+      // on-screen size — its real pixel data stays at QR_RENDER_SIZE, so
+      // downloadQR()'s toDataURL() export is always full resolution no
+      // matter how small this is displayed here.
+      const rendered = container.querySelector('canvas, img')
+      if (rendered) {
+        rendered.style.width  = size + 'px'
+        rendered.style.height = size + 'px'
+      }
       container.style.background = ''
     } catch (_) {}
   }
@@ -1056,6 +1294,12 @@ function _getQRDataUrl(rootEl) {
 // Synchronous QR data URL for embedding into generated print documents
 // (exam records, prescriptions) — unlike mockQRSvg, this doesn't wait on a
 // DOM element already being mounted since it builds its own offscreen one.
+// `size` is kept as the caller-facing param (every call site still passes
+// its intended display size) but no longer drives the actual render
+// resolution — every caller embeds the result as an <img> with its own
+// explicit CSS width/height anyway, so bumping the real underlying pixel
+// data to QR_RENDER_SIZE only makes the print crisper/more scannable at
+// real print DPI, it never changes how big it appears on the page.
 function _makeQRDataUrl(text, size = 90) {
   if (!window.QRCode || !text) return null
   const tmp = document.createElement('div')
@@ -1063,7 +1307,7 @@ function _makeQRDataUrl(text, size = 90) {
   document.body.appendChild(tmp)
   try {
     new window.QRCode(tmp, {
-      text, width: size, height: size,
+      text, width: QR_RENDER_SIZE, height: QR_RENDER_SIZE,
       colorDark: '#1C1C1C', colorLight: '#ffffff',
       correctLevel: window.QRCode.CorrectLevel.M
     })
@@ -1411,20 +1655,37 @@ function processQRImageFile(file) {
   const preview  = document.getElementById('qr-upload-preview')
   const statusEl = document.getElementById('qr-upload-status')
 
-  const setStatus = (msg, color) => {
+  // Resolved states (found/not-found/error) get a filled, solid-border tint
+  // instead of the idle dashed box — a plain dashed border reads as "still
+  // waiting for input" regardless of what text sits below it; a filled
+  // color state reads as resolved at a glance, before even reading the text.
+  const setZoneTone = (border, bg) => {
+    if (!zone) return
+    zone.style.borderStyle = border ? 'solid' : 'dashed'
+    zone.style.borderColor = border || '#E5E7EB'
+    zone.style.background  = bg || '#FAFAFA'
+  }
+  const setStatus = (html) => {
     if (!statusEl) return
     statusEl.style.display = ''
-    statusEl.style.color   = color || '#6B7280'
-    statusEl.textContent   = msg
+    statusEl.innerHTML     = html
   }
+  // label/value layout used by every resolved (non-"reading") state —
+  // icon + small-caps status word, then the actual message in larger type.
+  const resultHtml = (iconName, color, label, message) => `
+    <div style="display:flex;align-items:center;justify-content:center;gap:5px;line-height:1;color:${color};margin-bottom:2px">
+      ${icon(iconName, 'icon-sm')}
+      <span style="font-size:.66rem;font-weight:700;text-transform:uppercase;letter-spacing:.06em;line-height:1">${label}</span>
+    </div>
+    <div style="font-size:.86rem;font-weight:700;color:#1C1C1C">${message}</div>`
 
   const reader = new FileReader()
   reader.onload = function(e) {
     // Show preview
     if (preview) { preview.src = e.target.result; preview.style.display = 'block' }
     if (idle)    idle.style.display = 'none'
-    if (zone)    zone.style.borderColor = '#E5E7EB'
-    setStatus('Reading QR code…', '#9CA3AF')
+    setZoneTone('#E5E7EB', '#FAFAFA')
+    setStatus(`<div style="font-size:.8rem;color:#9CA3AF">Reading QR code…</div>`)
 
     const img = new Image()
     img.onload = function() {
@@ -1438,26 +1699,29 @@ function processQRImageFile(file) {
       const code    = window.jsQR && window.jsQR(imgData.data, imgData.width, imgData.height, { inversionAttempts: 'attemptBoth' })
 
       if (!code?.data) {
-        setStatus('No QR code found. Try a clearer or higher-resolution image.', '#EF4444')
-        if (zone) zone.style.borderColor = '#EF4444'
+        setZoneTone('#FCA5A5', '#FEF2F2')
+        setStatus(resultHtml('x-circle', '#DC2626', 'No QR Code Found', 'Try a clearer or higher-resolution image.'))
         return
       }
 
-      setStatus('QR detected — looking up patient…', '#E8760A')
+      setStatus(`<div style="font-size:.8rem;color:#E8760A;font-weight:600">QR detected — looking up patient…</div>`)
       const patient = patients.find(p => p.qrData === code.data)
       _qrStatsRecord(!!patient, patient?.id)
       if (patient) {
-        setStatus(`Patient found: ${patient.name}`, '#059669')
-        if (zone) zone.style.borderColor = '#059669'
+        setZoneTone('#6EE7B7', '#ECFDF5')
+        setStatus(resultHtml('check-circle', '#059669', 'Patient Found', patient.name))
         showQRResult(patient)
         toast(`Patient found: ${patient.name}`)
       } else {
-        setStatus('QR code not recognised in this system.', '#EF4444')
-        if (zone) zone.style.borderColor = '#EF4444'
+        setZoneTone('#FCA5A5', '#FEF2F2')
+        setStatus(resultHtml('x-circle', '#DC2626', 'Not Recognized', 'This QR code isn’t linked to any patient in the system.'))
         toast('QR code not recognised in this system.', 'error')
       }
     }
-    img.onerror = () => setStatus('Could not read image file.', '#EF4444')
+    img.onerror = () => {
+      setZoneTone('#FCA5A5', '#FEF2F2')
+      setStatus(resultHtml('x-circle', '#DC2626', 'Read Error', 'Could not read this image file.'))
+    }
     img.src = e.target.result
   }
   reader.readAsDataURL(file)
@@ -1544,7 +1808,7 @@ async function _apptUpdate(payload) {
 
 async function approveAppt(id) {
   const ok = await _apptUpdate({ id, action: 'status', status: 'approved' })
-  if (!ok) return
+  if (!ok) return false
   updateAppointmentStatus(id, 'approved')
   const a = appointments.find(a => a.id === id)
   if (a) addActivityLog({ id:'L'+Date.now(), user: state.user.name, role: state.role,
@@ -1552,26 +1816,54 @@ async function approveAppt(id) {
     timestamp: nowTimestamp(), type:'appointment' })
   toast('Appointment confirmed. The patient will be notified of their scheduled consultation.')
   renderPage()
+  return true
 }
+
+// Disables + spins the button for the duration of the request, and only
+// closes the modal once approval actually finished — same reasoning as
+// doCancelAppt()/doDisapproveAppt() below (this now sends the patient an
+// email too, see api/appointments/update.php), but this one specifically
+// used to call closeModal() synchronously right alongside the async
+// approveAppt() call, closing instantly with zero loading feedback and no
+// guard at all against a second click firing a duplicate approval+email
+// while the first request was still in flight.
+async function doApproveAppt(id) {
+  const btn = document.getElementById('approve-confirm-btn')
+  if (btn) {
+    if (btn.disabled) return // already in flight
+    btn.disabled = true
+    // .btn-success is a light-green fill with dark-green text (not a
+    // solid-color button like .btn-danger), so the white spinner used
+    // for those would be nearly invisible here — tinted to match its own
+    // palette instead, same reasoning as .btn-disapprove's spinner.
+    btn.innerHTML = `<span style="display:inline-block;width:9px;height:9px;border:2px solid rgba(46,125,50,.35);border-top-color:#2E7D32;border-radius:50%;animation:spin .6s linear infinite;flex-shrink:0"></span> Approving…`
+  }
+  const ok = await approveAppt(id)
+  if (ok) { closeModal(); return }
+  if (btn) { btn.disabled = false; btn.innerHTML = 'Approve' }
+}
+window.doApproveAppt = doApproveAppt
 
 async function cancelAppt(id, reason) {
   const ok = await _apptUpdate({ id, action: 'status', status: 'cancelled', cancellationReason: reason || '' })
-  if (!ok) return
+  if (!ok) return false
   updateAppointmentStatus(id, 'cancelled')
   const a = appointments.find(a => a.id === id)
   if (a && reason) a.cancellationReason = reason
   toast('Appointment has been cancelled. The patient will be notified of the cancellation.', 'error')
   renderPage()
+  return true
 }
 
 async function disapproveAppt(id, reason) {
   const ok = await _apptUpdate({ id, action: 'status', status: 'disapproved', disapprovalReason: reason || '' })
-  if (!ok) return
+  if (!ok) return false
   updateAppointmentStatus(id, 'disapproved')
   const a = appointments.find(a => a.id === id)
   if (a && reason) a.disapprovalReason = reason
   toast('Appointment request declined. The patient will be notified and may submit a new request.')
   renderPage()
+  return true
 }
 
 // Taken-slot state for the staff reschedule modal — mirrors the patient
@@ -1737,6 +2029,7 @@ function rescheduleAppt(id) {
            rather than shrinking the buttons to fit the smaller size. */
         .modal-box.modal-xl { max-width:840px; }
         .time-slot { padding:9px 14px; border-radius:8px; border:1.5px solid #e5e7eb; background:#fff;
+          -webkit-appearance:none; appearance:none; color:#1C1C1C;
           font-family:'Poppins',sans-serif; font-size:.82rem; cursor:pointer; transition:all .15s; white-space:nowrap; }
         .time-slot:hover:not(.taken) { border-color:#E8760A; }
         .time-slot.selected { background:#E8760A; color:#fff; border-color:#E8760A; }
@@ -1943,12 +2236,21 @@ function rsBuildTimeSlots() {
     if (period === 'AM' && h === 12) h = 0
     return h * 60 + m
   }
+  // Narrow the clinic-wide session window to this specific doctor's own
+  // configured hours (see _clampToDoctorHours) — this appointment's
+  // doctor is fixed (a reschedule keeps the same doctor), so unlike the
+  // multi-doctor "any available optometrist" wizard flow there's exactly
+  // one doctor's hours to clamp against here.
+  const _rsDoc = doctors.find(dd => dd.id === _rsCal.doctorId)
   let morning, afternoon
   if (consultationSettings.lunchBreak) {
-    morning   = _buildSessionSlots(consultationSettings.morningStart,   consultationSettings.morningEnd,   stepMin)
-    afternoon = _buildSessionSlots(consultationSettings.afternoonStart, consultationSettings.afternoonEnd, stepMin)
+    const [mStart, mEnd] = _clampToDoctorHours(consultationSettings.morningStart,   consultationSettings.morningEnd,   _rsDoc?.hours)
+    const [aStart, aEnd] = _clampToDoctorHours(consultationSettings.afternoonStart, consultationSettings.afternoonEnd, _rsDoc?.hours)
+    morning   = _buildSessionSlots(mStart, mEnd, stepMin)
+    afternoon = _buildSessionSlots(aStart, aEnd, stepMin)
   } else {
-    const allSlots = _buildSessionSlots(consultationSettings.morningStart, consultationSettings.afternoonEnd, stepMin)
+    const [fStart, fEnd] = _clampToDoctorHours(consultationSettings.morningStart, consultationSettings.afternoonEnd, _rsDoc?.hours)
+    const allSlots = _buildSessionSlots(fStart, fEnd, stepMin)
     morning   = allSlots.filter(t => _toMin(t) < 720)
     afternoon = allSlots.filter(t => _toMin(t) >= 720)
   }
@@ -2026,6 +2328,7 @@ function requestReschedule(id) {
       <style>
         .modal-box.modal-xl { max-width:840px; }
         .time-slot { padding:9px 14px; border-radius:8px; border:1.5px solid #e5e7eb; background:#fff;
+          -webkit-appearance:none; appearance:none; color:#1C1C1C;
           font-family:'Poppins',sans-serif; font-size:.82rem; cursor:pointer; transition:all .15s; white-space:nowrap; }
         .time-slot:hover:not(.taken) { border-color:#E8760A; }
         .time-slot.selected { background:#E8760A; color:#fff; border-color:#E8760A; }
@@ -2170,7 +2473,7 @@ function viewAppt(id) {
   const actionBtns = (isAdmin || isDoctor) ? `
     ${a.status === 'pending' && isAdmin ? `
       ${a.doctorId
-        ? `<button class="btn-success" onclick="window.approveAppt('${a.id}');window.closeModal()">Approve</button>`
+        ? `<button class="btn-success" id="approve-confirm-btn" onclick="window.doApproveAppt('${a.id}')">Approve</button>`
         : `<button class="btn-success" disabled style="opacity:.45;cursor:not-allowed" title="Assign an optometrist before approving">Approve</button>`}
       <button class="btn-danger"  onclick="window.confirmCancelAppt('${a.id}')">Cancel</button>
       <button class="btn-disapprove" onclick="window.confirmDisapproveAppt('${a.id}')">Disapprove</button>` : ''}
@@ -2225,6 +2528,13 @@ function viewAppt(id) {
           <div style="font-size:.84rem;font-weight:600">${a.time}</div>
         </div>
       </div>
+      ${isAdmin && a.status === 'pending' && !a.doctorId ? `<div style="display:flex;gap:10px;align-items:center;background:#FFF7ED;border-left:3px solid #E8760A;border-radius:8px;padding:12px;margin-bottom:14px;flex-wrap:wrap">
+        <span style="flex-shrink:0;display:flex;color:#E8760A">${icon('alert-circle','icon-sm')}</span>
+        <div style="font-size:.82rem;color:#92400E;line-height:1.5;flex:1;min-width:200px">
+          Please assign a doctor to this appointment before approving it.
+        </div>
+        <button class="btn-primary" style="font-size:.78rem;padding:6px 14px;flex-shrink:0" onclick="window.closeModal();window.openAssignDoctorModal('${a.id}')">Assign Doctor</button>
+      </div>` : ''}
       ${a.notes ? `<div style="background:#F9FAFB;border-radius:6px;padding:10px;margin-bottom:14px;min-width:0">
         <div style="font-size:.68rem;color:#9CA3AF;margin-bottom:4px;text-transform:uppercase;letter-spacing:.04em">Notes</div>
         <div style="font-size:.84rem;overflow-wrap:anywhere;word-break:break-word">${a.notes}</div>
@@ -2299,6 +2609,17 @@ function markNotifRead(id) {
     confirmApptPrompt(notif.relatedId)
     return
   }
+  // Same shortcut for a reschedule request (admin/staff/doctor) — straight
+  // to that appointment's details instead of a filtered list to scan.
+  if (notif && notif.type === 'reschedule_request' && notif.relatedId && state.role !== 'patient') {
+    openRescheduleRequestNotif(notif.relatedId)
+    return
+  }
+  // Same again for a brand-new appointment request (admin/staff).
+  if (notif && notif.type === 'new_appointment' && notif.relatedId && state.role !== 'patient') {
+    openNewApptRequestNotif(notif.relatedId)
+    return
+  }
   if (notif && window._notifNavTarget) {
     const { page: _np, params: _npar } = window._notifNavTarget(notif.type, state.role)
     navigate(_np, _npar)
@@ -2370,6 +2691,85 @@ function togglePwVisibility(inputId, btn) {
   btn.innerHTML = icon(isHidden ? 'eye' : 'eye-off', 'icon-sm')
 }
 window.togglePwVisibility = togglePwVisibility
+
+// Exam wizard, Prescription step — Eyeglass vs Contact Lens toggle. Frames
+// don't apply to a contact lens fitting, and "lens type"/"lens material"
+// mean different things for each (Single Vision/Progressive + CR-39/
+// Polycarbonate for eyeglasses; Hard/Soft/Hybrid/Multifocal/Scleral +
+// Silicone Hydrogel/Hydrogel/RGP for contacts) — swap both select's
+// option sets and show/hide Frame Selection instead of cramming every
+// option from both categories into one dropdown.
+const EYEGLASS_LENS_TYPES = ['Single Vision', 'Bifocal', 'Progressive'] // Photochromic is a coating (see Lens Coatings), not a lens type
+const CONTACT_LENS_TYPES  = ['Hard Lenses', 'Soft Lenses', 'Hybrid Lenses', 'Multifocal Lenses', 'Scleral Lenses']
+const EYEGLASS_LENS_MATERIALS = ['CR-39', 'Polycarbonate', 'High Index', 'Trivex']
+const CONTACT_LENS_MATERIALS  = ['Silicone Hydrogel', 'Hydrogel', 'Rigid Gas Permeable (RGP)']
+
+function syncCorrectionType() {
+  _syncRadioPills('ne-correction')
+  const isContact = document.getElementById('r-corr-cl')?.checked
+
+  // Frame Selection and PD are both eyeglass-frame concerns — a contact
+  // lens sits directly on the eye, so there's no frame to center a lens
+  // in and PD is meaningless. ADD stays visible either way: it applies to
+  // multifocal contacts just as much as bifocal/progressive eyeglasses.
+  const frameGroup = document.getElementById('ne-frame-group')
+  const pdGroup     = document.getElementById('ne-pd-group')
+  if (frameGroup) frameGroup.style.display = isContact ? 'none' : ''
+  if (pdGroup)     pdGroup.style.display   = isContact ? 'none' : ''
+  // Clear rather than just hide — otherwise a value typed in before
+  // switching to Contact Lens would still silently ride along in the
+  // saved payload despite the field being invisible.
+  const frameInput = document.getElementById('ne-frame')
+  const pdInput     = document.getElementById('ne-pd')
+  if (isContact && frameInput) frameInput.value = ''
+  if (isContact && pdInput)    pdInput.value    = ''
+  // Collapse the now-empty grid track instead of leaving a blank gap
+  // where the hidden field used to sit.
+  const addPdRow    = document.getElementById('ne-add-pd-row')
+  const frameLensRow = document.getElementById('ne-frame-lens-row')
+  if (addPdRow)     addPdRow.style.gridTemplateColumns    = isContact ? '1fr 1fr' : '1fr 1fr 1fr'
+  if (frameLensRow) frameLensRow.style.gridTemplateColumns = isContact ? '1fr' : '1fr 1fr'
+
+  window.setSelectFieldOptions('ne-lens-type', isContact ? CONTACT_LENS_TYPES : EYEGLASS_LENS_TYPES, 'Select lens type')
+  window.setSelectFieldOptions('ne-lens-material', isContact ? CONTACT_LENS_MATERIALS : EYEGLASS_LENS_MATERIALS, 'Select lens material')
+
+  // Anti-Reflective/Blue Light Filter/Scratch Resistant are lens-surface
+  // treatments that don't apply to a contact lens (see the Lens Coatings
+  // comment, pages.js) — Photochromic is the one real exception and stays
+  // either way.
+  ;['ar', 'bl', 'sr'].forEach(key => {
+    const group = document.getElementById('ne-coat-group-' + key)
+    const input = document.getElementById('ne-coat-' + key)
+    if (group) group.style.display = isContact ? 'none' : 'flex'
+    if (isContact && input) input.checked = false
+  })
+}
+window.syncCorrectionType = syncCorrectionType
+
+// Exam wizard — "Issue Prescription: Yes/No" toggle. Everything on the
+// Prescription step below it, and the whole Dispensing step, only makes
+// sense once a prescription is actually being issued — there's nothing to
+// pick a lens type for, or dispense, otherwise. Covers both blocks
+// (id="ne-rx-fields"/"ne-dispensing-fields") with an explanatory overlay
+// (id="ne-rx-overlay"/"ne-dispensing-overlay", already in the DOM, just
+// hidden) instead of leaving fields that don't apply sitting there
+// editable with no explanation.
+function syncIssuePrescription() {
+  _syncRadioPills('ne-issue-choice')
+  const issuing = document.getElementById('r-issue-yes')?.checked
+  ;[['ne-rx-fields', 'ne-rx-overlay'], ['ne-dispensing-fields', 'ne-dispensing-overlay']].forEach(([fieldsId, overlayId]) => {
+    const fields  = document.getElementById(fieldsId)
+    const overlay = document.getElementById(overlayId)
+    if (overlay) overlay.style.display = issuing ? 'none' : 'flex'
+    if (!fields) return
+    // The overlay already blocks mouse/touch clicks by sitting on top of
+    // the fields (it has no inputs of its own to accidentally catch here);
+    // disabling the actual controls additionally covers keyboard
+    // Tab-focus, which an overlay alone doesn't stop.
+    fields.querySelectorAll('input, textarea, button').forEach(f => { f.disabled = !issuing })
+  })
+}
+window.syncIssuePrescription = syncIssuePrescription
 
 // Custom radio pill helper — called via onchange on the hidden input
 // Updates all label pills for the given radio group
@@ -2500,7 +2900,6 @@ async function savePatientSettings() {
   const mn      = document.getElementById('sett-middle')?.value.trim() || ''
   const ln      = document.getElementById('sett-last')?.value.trim()    || ''
   const contact = document.getElementById('sett-contact')?.value.trim() || ''
-  const email   = document.getElementById('sett-email')?.value.trim()   || ''
   const address    = document.getElementById('sett-address')?.value.trim() || ''
   const occupation = document.getElementById('sett-occupation')?.value.trim() || ''
   const dob     = document.getElementById('sett-dob')?.value    || ''
@@ -2511,7 +2910,7 @@ async function savePatientSettings() {
     const r = await fetch('api/patients/update.php', {
       method:  'POST',
       headers: { 'Content-Type': 'application/json' },
-      body:    JSON.stringify({ action: 'profile', firstName: fn, middleName: mn, lastName: ln, phone: contact, email, address, occupation, dob, gender })
+      body:    JSON.stringify({ action: 'profile', firstName: fn, middleName: mn, lastName: ln, phone: contact, address, occupation, dob, gender })
     })
     const d = await r.json()
     if (d.success) {
@@ -2522,7 +2921,6 @@ async function savePatientSettings() {
         state.user.middleName = mn
         state.user.lastName   = ln
         state.user.name       = fullName
-        if (email)   state.user.email   = email
         if (contact) state.user.contact = contact
         if (address) state.user.address = address
       }
@@ -2536,7 +2934,6 @@ async function savePatientSettings() {
         p.lastName   = ln
         p.name       = fullName
         p.contact    = contact
-        if (email) p.email = email
         p.address    = address
         p.occupation = occupation
         if (gender) p.gender = gender
@@ -2551,6 +2948,270 @@ async function savePatientSettings() {
   }
 }
 window.savePatientSettings = savePatientSettings
+
+// ════════════════════════════════════════════════════════════════
+//  PATIENT SETTINGS — Change Email (OTP-verified, 2-step modal)
+//  Step 1: api/patients/request-email-change.php sends a 6-digit code to
+//          the NEW address. Step 2: api/patients/verify-email-change.php
+//          checks it and only then flips users.email server-side.
+//  Deliberately separate from savePatientSettings() — email is the one
+//  field on this page that can lock a patient out of login/notifications
+//  if fat-fingered, so it gets its own proof-of-ownership step instead of
+//  saving on the same click as name/address/etc.
+// ════════════════════════════════════════════════════════════════
+function openChangeEmailModal() {
+  showModal(`
+    <div class="modal-header">
+      <div class="modal-title">Change Email Address</div>
+      <button class="modal-close" onclick="window.closeModal()">&times;</button>
+    </div>
+    <div class="modal-body">
+      <p style="font-size:.85rem;color:#6B7280;line-height:1.6;margin:0">
+        For your security, we'll send a 6-digit verification code to your new email address before it's saved. Your current email stays active until then.
+      </p>
+      <div class="form-group">
+        <label class="form-label">New Email Address</label>
+        <input type="email" class="form-input" id="chg-email-new" placeholder="you@example.com" autocomplete="email"
+               onkeydown="if(event.key==='Enter'){event.preventDefault();window._sendEmailChangeOtp()}">
+        <div class="field-error" id="chg-email-err"></div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn-secondary" onclick="window.closeModal()">Cancel</button>
+      <button class="btn-primary" id="chg-email-send-btn" onclick="window._sendEmailChangeOtp()">
+        ${icon('mail', 'icon-sm')} Send Code
+      </button>
+    </div>`)
+  setTimeout(() => document.getElementById('chg-email-new')?.focus(), 50)
+}
+window.openChangeEmailModal = openChangeEmailModal
+
+async function _sendEmailChangeOtp() {
+  const input  = document.getElementById('chg-email-new')
+  const errEl  = document.getElementById('chg-email-err')
+  const btn    = document.getElementById('chg-email-send-btn')
+  if (!input || window._chgEmailBusy) return
+  const newEmail = input.value.trim()
+  errEl.classList.remove('show')
+  if (!newEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(newEmail)) {
+    errEl.textContent = 'Please enter a valid email address.'
+    errEl.classList.add('show')
+    input.focus()
+    return
+  }
+
+  window._chgEmailBusy = true
+  btn.disabled = true
+  const originalLabel = btn.innerHTML
+  btn.innerHTML = 'Sending…'
+  try {
+    const r = await fetch('api/patients/request-email-change.php', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ newEmail })
+    })
+    const d = await r.json()
+    if (!document.getElementById('chg-email-send-btn')) return // modal closed mid-request
+    if (!d.success) {
+      // A code was already sent from a still-cooling-down earlier request
+      // (e.g. the modal was closed and reopened) — the earlier code is
+      // still valid, so go straight to entering it instead of dead-ending
+      // on a red "please wait" error. Same handling as _resendEmailChangeOtp.
+      if (d.cooldown && d.retryAfter) {
+        _renderEmailChangeOtpStep(newEmail, d.retryAfter)
+        return
+      }
+      errEl.textContent = d.message || 'Failed to send code. Please try again.'
+      errEl.classList.add('show')
+      btn.disabled = false
+      btn.innerHTML = originalLabel
+      return
+    }
+    _renderEmailChangeOtpStep(newEmail, d.cooldownSeconds || 60)
+  } catch (_) {
+    if (!document.getElementById('chg-email-send-btn')) return
+    errEl.textContent = 'Network error. Please check your connection.'
+    errEl.classList.add('show')
+    btn.disabled = false
+    btn.innerHTML = originalLabel
+  } finally {
+    window._chgEmailBusy = false
+  }
+}
+window._sendEmailChangeOtp = _sendEmailChangeOtp
+
+function _renderEmailChangeOtpStep(newEmail, cooldownSeconds) {
+  showModal(`
+    <div class="modal-header">
+      <div class="modal-title">Verify Your New Email</div>
+      <button class="modal-close" onclick="window.closeModal()">&times;</button>
+    </div>
+    <div class="modal-body">
+      <div>
+        <p style="font-size:.85rem;color:#6B7280;line-height:1.6;margin:0 0 2px">We sent a 6-digit code to</p>
+        <p style="font-size:.92rem;font-weight:700;color:#1C1C1C;margin:0;word-break:break-word">${newEmail}</p>
+      </div>
+      <div class="otp-row" id="chg-email-otp-row" style="margin:0">
+        ${[0,1,2,3,4,5].map(i => `<input type="text" inputmode="numeric" maxlength="1" class="otp-input" id="chg-email-otp-${i}">`).join('')}
+      </div>
+      <div class="field-error" id="chg-email-otp-err" style="justify-content:center;text-align:center"></div>
+      <div style="text-align:center;font-size:.8rem;color:#9CA3AF">
+        Didn't get it?
+        <button type="button" id="chg-email-resend-btn" onclick="window._resendEmailChangeOtp('${newEmail.replace(/'/g,"\\'")}')"
+                style="color:#E8760A;font-weight:700;background:none;border:none;padding:0;font-size:.8rem" disabled>Resend Code</button>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn-secondary" onclick="window.closeModal()">Cancel</button>
+      <button class="btn-primary" id="chg-email-verify-btn" onclick="window._verifyEmailChangeOtp()">
+        ${icon('check', 'icon-sm')} Verify &amp; Save
+      </button>
+    </div>`)
+  _setupEmailChangeOtpInputs()
+  _startEmailChangeResendCooldown(cooldownSeconds)
+  setTimeout(() => document.getElementById('chg-email-otp-0')?.focus(), 50)
+}
+
+function _setupEmailChangeOtpInputs() {
+  const inputs = document.querySelectorAll('#chg-email-otp-row .otp-input')
+  inputs.forEach((el, idx) => {
+    el.addEventListener('input', e => {
+      const val = e.target.value.replace(/\D/g, '')
+      e.target.value = val ? val[0] : ''
+      if (val && idx < 5) inputs[idx + 1].focus()
+    })
+    el.addEventListener('keydown', e => {
+      if (e.key === 'Backspace' && !e.target.value && idx > 0) inputs[idx - 1].focus()
+      if (e.key === 'Enter') { e.preventDefault(); window._verifyEmailChangeOtp() }
+    })
+    el.addEventListener('paste', e => {
+      e.preventDefault()
+      const pasted = (e.clipboardData || window.clipboardData).getData('text').replace(/\D/g, '')
+      ;[...pasted].slice(0, 6).forEach((ch, i) => { if (inputs[idx + i]) inputs[idx + i].value = ch })
+      inputs[Math.min(idx + pasted.length, 5)].focus()
+    })
+  })
+}
+
+// Ticking countdown for the "Resend Code" button — mirrors the
+// forgot-password flow's cooldown UX (fpRunResendCooldownTicker,
+// auth.js): the countdown lives IN the button's own label ("Resend in
+// 0:38"), not a separate span next to it, and the button visibly dims
+// while disabled. A static "Resend" label sitting beside a small
+// "(38s)" hint reads as still-clickable at a glance — the forgot-
+// password pattern makes the wait state unambiguous instead of
+// something that looks broken when clicking it silently does nothing.
+// Server-side is still the real enforcement (request-email-change.php
+// rejects an early resend regardless of what the client's timer says).
+function _startEmailChangeResendCooldown(seconds) {
+  clearInterval(window._chgEmailCooldownInterval)
+  const btn = document.getElementById('chg-email-resend-btn')
+  if (!btn) return
+  let remaining = seconds
+  const setDisabled = (is) => {
+    btn.disabled      = is
+    btn.style.opacity = is ? '.55' : '1'
+    btn.style.cursor  = is ? 'not-allowed' : 'pointer'
+  }
+  setDisabled(true)
+  const tick = () => {
+    if (remaining <= 0) {
+      clearInterval(window._chgEmailCooldownInterval)
+      setDisabled(false)
+      btn.textContent = 'Resend Code'
+      return
+    }
+    const m = Math.floor(remaining / 60), s = remaining % 60
+    btn.textContent = `Resend in ${m}:${String(s).padStart(2, '0')}`
+    remaining--
+  }
+  tick()
+  window._chgEmailCooldownInterval = setInterval(tick, 1000)
+}
+
+async function _resendEmailChangeOtp(newEmail) {
+  const btn = document.getElementById('chg-email-resend-btn')
+  if (!btn || btn.disabled || window._chgEmailBusy) return
+  window._chgEmailBusy = true
+  try {
+    const r = await fetch('api/patients/request-email-change.php', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ newEmail })
+    })
+    const d = await r.json()
+    if (!document.getElementById('chg-email-resend-btn')) return // modal closed mid-request
+    const errEl = document.getElementById('chg-email-otp-err')
+    if (!d.success) {
+      if (d.cooldown && d.retryAfter) { _startEmailChangeResendCooldown(d.retryAfter); return }
+      errEl.textContent = d.message || 'Failed to resend code. Please try again.'
+      errEl.classList.add('show')
+      return
+    }
+    errEl.classList.remove('show')
+    document.querySelectorAll('#chg-email-otp-row .otp-input').forEach(i => i.value = '')
+    document.getElementById('chg-email-otp-0')?.focus()
+    _startEmailChangeResendCooldown(d.cooldownSeconds || 60)
+    toast('A new code was sent.', 'success')
+  } catch (_) {
+    if (!document.getElementById('chg-email-resend-btn')) return
+  } finally {
+    window._chgEmailBusy = false
+  }
+}
+window._resendEmailChangeOtp = _resendEmailChangeOtp
+
+async function _verifyEmailChangeOtp() {
+  const inputs = document.querySelectorAll('#chg-email-otp-row .otp-input')
+  const errEl  = document.getElementById('chg-email-otp-err')
+  const btn    = document.getElementById('chg-email-verify-btn')
+  if (!inputs.length || window._chgEmailBusy) return
+  const code = [...inputs].map(i => i.value).join('')
+  errEl.classList.remove('show')
+  if (code.length < 6) {
+    inputs.forEach(i => { if (!i.value) i.classList.add('error') })
+    errEl.textContent = 'Please enter the full 6-digit code.'
+    errEl.classList.add('show')
+    return
+  }
+  inputs.forEach(i => i.classList.remove('error'))
+
+  window._chgEmailBusy = true
+  btn.disabled = true
+  const originalLabel = btn.innerHTML
+  btn.innerHTML = 'Verifying…'
+  try {
+    const r = await fetch('api/patients/verify-email-change.php', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ otp: code })
+    })
+    const d = await r.json()
+    if (!document.getElementById('chg-email-verify-btn')) return // modal closed mid-request
+    if (!d.success) {
+      inputs.forEach(i => i.classList.add('error'))
+      errEl.textContent = d.message || 'Incorrect code. Please try again.'
+      errEl.classList.add('show')
+      btn.disabled = false
+      btn.innerHTML = originalLabel
+      return
+    }
+    // Sync the new email everywhere it's cached client-side.
+    if (state.user) state.user.email = d.email
+    const p = patients.find(pt => pt.id === state.user?.id)
+    if (p) p.email = d.email
+    clearInterval(window._chgEmailCooldownInterval)
+    closeModal()
+    toast('Email address updated successfully.', 'success')
+    window.navigate(state.page, { ...state.params })
+  } catch (_) {
+    if (!document.getElementById('chg-email-verify-btn')) return
+    errEl.textContent = 'Network error. Please try again.'
+    errEl.classList.add('show')
+    btn.disabled = false
+    btn.innerHTML = originalLabel
+  } finally {
+    window._chgEmailBusy = false
+  }
+}
+window._verifyEmailChangeOtp = _verifyEmailChangeOtp
 
 // Combined search filter for the appointments list table
 function filterApptTable(input) {
@@ -2613,15 +3274,30 @@ function confirmCancelAppt(id) {
     </div>
     <div class="modal-footer">
       <button class="btn-secondary" onclick="window.closeModal()">Keep Appointment</button>
-      <button class="btn-danger" onclick="window.doCancelAppt('${a.id}')">Confirm Cancellation</button>
+      <button class="btn-danger" id="cancel-confirm-btn" onclick="window.doCancelAppt('${a.id}')">Confirm Cancellation</button>
     </div>`)
 }
 
+// Disables + spins the confirm button for the duration of the request —
+// this now sends the patient a cancellation email (see api/appointments/
+// update.php), so a fast double-click/tap before the first request
+// resolves would fire it twice instead of just double-submitting a no-op
+// status change like before. Re-enabled (not just left spinning forever)
+// on failure so a network hiccup doesn't strand the modal with no way
+// to retry; on success the modal closes anyway so there's nothing to
+// restore.
 async function doCancelAppt(id) {
   const reason = (document.getElementById('cancel-reason')?.value || '').trim()
   if (!reason) { toast('Please provide a reason for cancellation.', 'error'); return }
-  await cancelAppt(id, reason)
-  closeModal()
+  const btn = document.getElementById('cancel-confirm-btn')
+  if (btn) {
+    if (btn.disabled) return // already in flight
+    btn.disabled = true
+    btn.innerHTML = `<span style="display:inline-block;width:9px;height:9px;border:2px solid rgba(255,255,255,.5);border-top-color:#fff;border-radius:50%;animation:spin .6s linear infinite;flex-shrink:0"></span> Cancelling…`
+  }
+  const ok = await cancelAppt(id, reason)
+  if (ok) { closeModal(); return }
+  if (btn) { btn.disabled = false; btn.innerHTML = 'Confirm Cancellation' }
 }
 
 // ── Waitlist removal (admin/staff, e.g. a patient calls asking to be
@@ -2744,6 +3420,47 @@ window.confirmMyAppointment = confirmMyAppointment
 // card, doctor/type/date/time grid, and notes section, which is exactly
 // why patients were missing it. This puts nothing between the patient and
 // the one action the notification is actually about.
+// A reschedule-request notification (admin/staff/doctor) gets its own
+// dedicated shortcut, same idea as confirmApptPrompt() below for
+// patients' day-before reminder — land directly on that one appointment's
+// details (viewAppt() already shows its Reschedule Request block, with
+// Accept & Reschedule / Dismiss right there) instead of just a filtered
+// list the reviewer still has to scan to find the right row.
+// Navigates to the underlying filtered list first (so there's a sensible
+// page behind the modal, and Close doesn't strand them on whatever page
+// they clicked the notification from) then opens the modal on top — the
+// same setTimeout-after-navigate pattern navigate() itself already uses
+// for 'add-patient'.
+function openRescheduleRequestNotif(id) {
+  const target = window._notifNavTarget ? window._notifNavTarget('reschedule_request', state.role) : null
+  const a = appointments.find(a => a.id === id)
+  if (!a || !a.rescheduleRequest) {
+    // Stale by the time they clicked (already accepted/dismissed elsewhere).
+    toast('This reschedule request has already been handled.', 'info')
+    if (target) navigate(target.page, target.params)
+    return
+  }
+  if (target) navigate(target.page, target.params)
+  setTimeout(() => viewAppt(id), 100)
+}
+window.openRescheduleRequestNotif = openRescheduleRequestNotif
+
+// Same shortcut again for a brand-new appointment request (admin/staff) —
+// straight to that specific patient's request instead of the Pending list.
+function openNewApptRequestNotif(id) {
+  const target = window._notifNavTarget ? window._notifNavTarget('new_appointment', state.role) : null
+  const a = appointments.find(a => a.id === id)
+  if (!a || a.status !== 'pending') {
+    // Already approved/disapproved/cancelled elsewhere by the time they clicked.
+    toast('This appointment request has already been handled.', 'info')
+    if (target) navigate(target.page, target.params)
+    return
+  }
+  if (target) navigate(target.page, target.params)
+  setTimeout(() => viewAppt(id), 100)
+}
+window.openNewApptRequestNotif = openNewApptRequestNotif
+
 function confirmApptPrompt(id) {
   const a = appointments.find(a => a.id === id)
   if (!a || a.status !== 'approved' || !a.reminderSentAt) {
@@ -2811,15 +3528,25 @@ function confirmDisapproveAppt(id) {
     </div>
     <div class="modal-footer">
       <button class="btn-secondary" onclick="window.closeModal()">Keep Request</button>
-      <button class="btn-disapprove" onclick="window.doDisapproveAppt('${a.id}')">Confirm Disapproval</button>
+      <button class="btn-disapprove" id="disapprove-confirm-btn" onclick="window.doDisapproveAppt('${a.id}')">Confirm Disapproval</button>
     </div>`)
 }
 
+// Same disable+spin guard as doCancelAppt() above, same reason — this
+// sends the patient an email too, so it needs to be spam-proof against a
+// fast double-click, not just double-submit-proof.
 async function doDisapproveAppt(id) {
   const reason = (document.getElementById('disapprove-reason')?.value || '').trim()
   if (!reason) { toast('Please provide a reason for disapproval.', 'error'); return }
-  await disapproveAppt(id, reason)
-  closeModal()
+  const btn = document.getElementById('disapprove-confirm-btn')
+  if (btn) {
+    if (btn.disabled) return // already in flight
+    btn.disabled = true
+    btn.innerHTML = `<span style="display:inline-block;width:9px;height:9px;border:2px solid rgba(220,38,38,.4);border-top-color:#991b1b;border-radius:50%;animation:spin .6s linear infinite;flex-shrink:0"></span> Disapproving…`
+  }
+  const ok = await disapproveAppt(id, reason)
+  if (ok) { closeModal(); return }
+  if (btn) { btn.disabled = false; btn.innerHTML = 'Confirm Disapproval' }
 }
 
 window.confirmDisapproveAppt = confirmDisapproveAppt
@@ -2959,6 +3686,30 @@ function _buildSessionSlots(startStr, endStr, stepMin) {
   const out = []
   for (let t = start; t < end; t += stepMin) out.push(_minutesToClock(t))
   return out
+}
+
+// Narrows a clinic-wide session window down to a specific doctor's own
+// configured hours (Doctor Schedule → Edit Schedule, doctor.hours e.g.
+// "12:30 PM – 5:00 PM") — only ever tightens the window, never widens it
+// past the clinic's own hours. Without this, the time-slot pickers
+// (wizBuildTimeSlots/rsBuildTimeSlots below) offered every clinic-wide
+// slot regardless of which doctor was actually selected, including ones
+// hours before that doctor's own start time. A doctor with no `hours`
+// set at all falls back to the clinic's own window unchanged.
+function _clampToDoctorHours(startStr, endStr, doctorHours) {
+  const parts      = (doctorHours || '').split('–').map(s => s.trim())
+  const docStartMin = parts[0] ? _clockToMinutes(parts[0]) : null
+  const docEndMin   = parts[1] ? _clockToMinutes(parts[1]) : null
+  let clampedStart = startStr, clampedEnd = endStr
+  if (docStartMin != null) {
+    const clinicStartMin = _clockToMinutes(startStr)
+    if (clinicStartMin != null && docStartMin > clinicStartMin) clampedStart = _minutesToClock(docStartMin)
+  }
+  if (docEndMin != null) {
+    const clinicEndMin = _clockToMinutes(endStr)
+    if (clinicEndMin != null && docEndMin < clinicEndMin) clampedEnd = _minutesToClock(docEndMin)
+  }
+  return [clampedStart, clampedEnd]
 }
 
 // ── Stepper UI update ─────────────────────────────────────────────
@@ -3593,6 +4344,24 @@ function _slotConflicts(slotTime, slotDur) {
   })
 }
 
+// Same overlap check as _slotConflicts(), narrowed to whether the
+// CURRENT patient (not just anyone) is the one holding a conflicting
+// booking with this doctor — taken.php now carries each taken slot's
+// patientId for exactly this. Only meaningful for a patient looking at
+// their own booking wizard (state.user.id is a patient's own record id
+// there); harmless no-op otherwise since it'll just never match.
+function _slotConflictsMine(slotTime, slotDur) {
+  const slotMins = _clockToMinutes(slotTime)
+  if (slotMins == null) return false
+  return _takenSlotTimes.some(bt => {
+    if (bt.patientId !== state.user?.id) return false
+    const btMins = _clockToMinutes(bt.time)
+    const btDur  = bt.duration || _takenSlotDur
+    if (btMins == null) return false
+    return slotMins < btMins + btDur && slotMins + slotDur > btMins
+  })
+}
+
 async function wizBuildTimeSlots() {
   if (_wiz.anyDoctor) return wizBuildTimeSlotsAnyDoctor()
 
@@ -3618,12 +4387,21 @@ async function wizBuildTimeSlots() {
     if (period === 'AM' && h === 12) h = 0
     return h * 60 + m
   }
+  // Narrow the clinic-wide session window to this specific doctor's own
+  // configured hours (see _clampToDoctorHours) — a doctor picked here has
+  // already been committed to (wizSelectDoctor), so unlike the multi-
+  // doctor "any available optometrist" flow there's exactly one doctor's
+  // hours to clamp against.
+  const _wizDoc = doctors.find(dd => dd.id === _wiz.doctorId)
   let morning, afternoon
   if (consultationSettings.lunchBreak) {
-    morning   = _buildSessionSlots(consultationSettings.morningStart,   consultationSettings.morningEnd,   stepMin)
-    afternoon = _buildSessionSlots(consultationSettings.afternoonStart, consultationSettings.afternoonEnd, stepMin)
+    const [mStart, mEnd] = _clampToDoctorHours(consultationSettings.morningStart,   consultationSettings.morningEnd,   _wizDoc?.hours)
+    const [aStart, aEnd] = _clampToDoctorHours(consultationSettings.afternoonStart, consultationSettings.afternoonEnd, _wizDoc?.hours)
+    morning   = _buildSessionSlots(mStart, mEnd, stepMin)
+    afternoon = _buildSessionSlots(aStart, aEnd, stepMin)
   } else {
-    const allSlots = _buildSessionSlots(consultationSettings.morningStart, consultationSettings.afternoonEnd, stepMin)
+    const [fStart, fEnd] = _clampToDoctorHours(consultationSettings.morningStart, consultationSettings.afternoonEnd, _wizDoc?.hours)
+    const allSlots = _buildSessionSlots(fStart, fEnd, stepMin)
     morning   = allSlots.filter(t => _toMin(t) < 720)
     afternoon = allSlots.filter(t => _toMin(t) >= 720)
   }
@@ -3646,7 +4424,13 @@ async function wizBuildTimeSlots() {
     // waitlist offer — both come back from taken.php) is still selectable:
     // the patient can pick it and, if they try to submit, create.php offers
     // them the waitlist for it. Only truly past times are unselectable.
+    // A slot that's full specifically because THIS patient already has
+    // their own appointment there is different again — joining a waitlist
+    // for a slot they already hold doesn't make sense, so that one's
+    // unselectable too, with its own "Booked by you" treatment instead of
+    // the generic waitlist-eligible one.
     const isFull   = _slotConflicts(t, newSlotDur)
+    const isMine   = state.role === 'patient' && isFull && _slotConflictsMine(t, newSlotDur)
     const isPast   = isToday && parseSlotMin(t) <= nowMin
     const isSel    = t === _wiz.time && !isPast
     // Built additively (not a chained ternary) so a slot that's both the
@@ -3657,14 +4441,16 @@ async function wizBuildTimeSlots() {
     // every time this grid re-renders (e.g. navigating back to this step).
     let cls = 'time-slot'
     if (isPast) cls += ' taken'
+    else if (isMine) cls += ' mine'
     else {
       if (isFull) cls += ' full'
       if (isSel)  cls += ' selected'
     }
     const tip      = isPast ? 'This time slot has already passed.'
+                   : isMine ? 'You already have an appointment with this doctor at this time.'
                    : isFull ? 'This slot is fully booked. You can still select it to join the waitlist.'
                    : ''
-    const disabled = isPast ? `disabled title="${tip}"` : (tip ? `title="${tip}"` : '')
+    const disabled = (isPast || isMine) ? `disabled title="${tip}"` : (tip ? `title="${tip}"` : '')
     return `<button class="${cls}" ${disabled} onclick="window.wizSelectTime('${t}',this)">${t}</button>`
   }
 
@@ -4507,104 +5293,12 @@ document.addEventListener('keydown', e => {
 // ════════════════════════════════════════════════════════════════
 //  SAVE OPTICAL EXAMINATION
 // ════════════════════════════════════════════════════════════════
-async function saveExamination(patientId) {
-  const p = patients.find(p => p.id === patientId)
-  if (!p) return
-
-  const val = id => (document.getElementById(id) || {}).value || ''
-  const od = { sph: val('ex-od-sph'), cyl: val('ex-od-cyl'), axis: val('ex-od-axis'), va: val('ex-od-va'), add: val('ex-od-add') }
-  const os = { sph: val('ex-os-sph'), cyl: val('ex-os-cyl'), axis: val('ex-os-axis'), va: val('ex-os-va'), add: val('ex-os-add') }
-  const rxPart = (eye) => [eye.sph, eye.cyl ? eye.cyl + (eye.axis ? ' ×' + eye.axis : '') : '', eye.add ? 'Add ' + eye.add : ''].filter(Boolean).join(' ')
-
-  const diagnosis = val('ex-diagnosis')
-  if (!diagnosis) { toast('Please enter a diagnosis.', 'error'); return }
-
-  const newExam = {
-    date:                localDateStr(),
-    doctor:              state.user?.name || '',
-    od, os,
-    iop:                 { od: val('ex-iop-od'), os: val('ex-iop-os') },
-    pd:                  val('ex-pd'),
-    lensType:            val('ex-lens-type') || '—',
-    lensMaterial:        val('ne-lens-material') || '',
-    lensCoating:         Array.from(document.querySelectorAll('[id^="ne-coat-"]:checked')).map(c => c.value),
-    frameSelection:      val('ne-frame') || '',
-    diagnosis,
-    recommendation:      val('ex-recommendation'),
-    prescriptionDetails: ('OD: ' + rxPart(od) + ' / OS: ' + rxPart(os)).trim(),
-    testResults:         val('ex-test-results'),
-    remarks:             val('ex-remarks'),
-    status:              'completed'
-  }
-
-  const saveBtns = document.querySelectorAll('.exam-save-btn')
-  const saveHtml = saveBtns.length ? saveBtns[0].innerHTML : ''
-  saveBtns.forEach(b => { b.disabled = true; b.textContent = 'Saving…' })
-
-  // This page used to only update in-memory state — the "Saved successfully"
-  // toast and activity log entry fired even though nothing was persisted, so
-  // the record silently vanished on the next sync/reload. Now mirrors
-  // saveNewExam()'s real backend call (api/examinations/create.php).
-  try {
-    const r = await fetch('api/examinations/create.php', {
-      method:  'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body:    JSON.stringify({ patientId, ...newExam })
-    })
-    const d = await r.json()
-    if (!d.success) { toast(d.message || 'Failed to save examination.', 'error'); return }
-
-    newExam.id = d.id
-    p.examinations.push(newExam)
-    p.consultations.unshift({
-      id: 'C' + Date.now(), date: newExam.date,
-      doctor: state.user.name, type: 'Eye Examination',
-      diagnosis: newExam.diagnosis,
-      prescription: `OD: ${newExam.od.sph} ${newExam.od.cyl} x${newExam.od.axis} / OS: ${newExam.os.sph} ${newExam.os.cyl} x${newExam.os.axis}`,
-      remarks: newExam.remarks
-    })
-    if (!p.prescriptions) p.prescriptions = []
-    p.prescriptions.unshift({
-      id:       d.rxId || ('RX-' + newExam.id),
-      date:     newExam.date,
-      doctor:   newExam.doctor,
-      od:       { sph: newExam.od.sph, cyl: newExam.od.cyl, axis: newExam.od.axis },
-      os:       { sph: newExam.os.sph, cyl: newExam.os.cyl, axis: newExam.os.axis },
-      lensType: newExam.lensType && newExam.lensType !== '—' ? newExam.lensType : '',
-      remarks:  newExam.remarks || ''
-    })
-    p.lastVisit = newExam.date
-
-    toast('Examination record saved successfully. The prescription summary is now available for printing.')
-    navigate('patient-view', { patientId, patientName: p.name })
-  } catch (_) {
-    toast('Network error — examination not saved.', 'error')
-  } finally {
-    saveBtns.forEach(b => { b.disabled = false; b.innerHTML = saveHtml })
-  }
-}
-window.saveExamination = saveExamination
-
-function printExaminationForm(patientId) {
-  const p = patients.find(pt => pt.id === patientId)
-  if (!p) return
-  const val = id => (document.getElementById(id)?.value || '').trim()
-  const e = {
-    id:       'DRAFT',
-    date:     localDateStr(),
-    doctor:   state.user?.name || '—',
-    od:       { sph: val('ex-od-sph'), cyl: val('ex-od-cyl'), axis: val('ex-od-axis'), va: val('ex-od-va'), add: '' },
-    os:       { sph: val('ex-os-sph'), cyl: val('ex-os-cyl'), axis: val('ex-os-axis'), va: val('ex-os-va'), add: '' },
-    iop:      { od: val('ex-iop-od'), os: val('ex-iop-os') },
-    pd:       '',
-    diagnosis:    val('ex-diagnosis'),
-    recommendation: val('ex-recommendation'),
-    remarks:      val('ex-remarks'),
-    lensType: '', lensMaterial: '', lensCoating: [], frameSelection: '', prescriptionDetails: '', testResults: ''
-  }
-  _openExamPrintWindow(p, e)
-}
-window.printExaminationForm = printExaminationForm
+// saveExamination()/printExaminationForm() (the old single-form editor's
+// save/print pair) were removed here — pageExamination() (pages.js) no
+// longer renders that form for doctors, redirecting to the wizard
+// (saveNewExam()/printNewExamDraft() below) instead, so these had no
+// remaining callers and their field shapes had drifted from the current
+// create.php contract (see database/schema.sql's field-separation fix).
 
 // ════════════════════════════════════════════════════════════════
 //  ADD / EDIT USER MODAL
@@ -4616,14 +5310,14 @@ function openAddUserModal() {
       <button class="modal-close" onclick="window.closeModal()">&times;</button>
     </div>
     <div class="modal-body" style="display:flex;flex-direction:column;gap:14px">
-      <div class="form-row-3">
+      <div class="form-row-2">
         <div class="form-group"><label class="form-label">First Name <span class="req">*</span></label>
           <input id="nu-first" class="form-input" placeholder="Juan"></div>
         <div class="form-group"><label class="form-label">Middle Name</label>
           <input id="nu-middle" class="form-input" placeholder="Santos"></div>
-        <div class="form-group"><label class="form-label">Last Name <span class="req">*</span></label>
-          <input id="nu-last" class="form-input" placeholder="Dela Cruz"></div>
       </div>
+      <div class="form-group"><label class="form-label">Last Name <span class="req">*</span></label>
+        <input id="nu-last" class="form-input" placeholder="Dela Cruz"></div>
       <div class="form-row-2">
         <div class="form-group"><label class="form-label">Email <span class="req">*</span></label>
           <input id="nu-email" type="email" class="form-input" placeholder="juan@email.com"></div>
@@ -4653,20 +5347,10 @@ function openAddUserModal() {
           <div class="form-group"><label class="form-label">Gender <span class="req">*</span></label>
             ${window.selectFieldHtml('nu-gender', { value: '', placeholder: 'Select gender', options: ['Male','Female','Other'] })}</div>
         </div>
-        <div class="form-row-2">
-          <div class="form-group"><label class="form-label">Blood Type</label>
-            ${window.selectFieldHtml('nu-blood', { value: '', options: [{ value: '', label: 'Unknown' }, 'A+','A-','B+','B-','AB+','AB-','O+','O-'] })}</div>
-          <div class="form-group"><label class="form-label">Occupation</label>
-            <input id="nu-occupation" class="form-input" placeholder="e.g. Teacher, Engineer, Student"></div>
-        </div>
+        <div class="form-group"><label class="form-label">Occupation</label>
+          <input id="nu-occupation" class="form-input" placeholder="e.g. Teacher, Engineer, Student"></div>
         <div class="form-group"><label class="form-label">Address</label>
           <input id="nu-address" class="form-input" placeholder="Street, City, Province"></div>
-        <div class="form-group"><label class="form-label">Medical History</label>
-          <textarea id="nu-medical" class="form-textarea" rows="2"
-            placeholder="Known conditions, allergies, medications…"></textarea></div>
-        <div class="form-group"><label class="form-label">Optical History</label>
-          <textarea id="nu-optical" class="form-textarea" rows="2"
-            placeholder="Prior eye conditions, prescriptions, surgeries…"></textarea></div>
       </div>
 
       <div id="nu-pass-group">
@@ -4742,10 +5426,8 @@ async function doAddUser() {
       body = {
         firstName: first, middleName: middle, lastName: last, email, contact,
         dob: gv('nu-dob'), gender: gv('nu-gender'),
-        address: gv('nu-address'), bloodType: gv('nu-blood') || 'Unknown',
+        address: gv('nu-address'),
         occupation: gv('nu-occupation'),
-        medicalHistory: gv('nu-medical'),
-        opticalHistory: gv('nu-optical'),
       }
     } else {
       endpoint = '/canaopticalclinic/api/users/create.php'
@@ -4806,14 +5488,14 @@ function editUserModal(id, role) {
       <button class="modal-close" onclick="window.closeModal()">&times;</button>
     </div>
     <div class="modal-body">
-      <div class="form-row-3">
+      <div class="form-row-2">
         <div class="form-group"><label class="form-label">First Name</label>
           <input id="eu-first" class="form-input" value="${u.firstName || ''}"></div>
         <div class="form-group"><label class="form-label">Middle Name</label>
           <input id="eu-middle" class="form-input" value="${u.middleName || ''}"></div>
-        <div class="form-group"><label class="form-label">Last Name</label>
-          <input id="eu-last" class="form-input" value="${u.lastName || ''}"></div>
       </div>
+      <div class="form-group"><label class="form-label">Last Name</label>
+        <input id="eu-last" class="form-input" value="${u.lastName || ''}"></div>
       <div class="form-group"><label class="form-label">Email</label>
         <input id="eu-email" type="email" class="form-input" value="${u.email || ''}"></div>
       <div class="form-group"><label class="form-label">Contact</label>
@@ -5081,14 +5763,14 @@ function openAddPatientModal() {
       <button class="modal-close" onclick="window.closeModal()">&times;</button>
     </div>
     <div class="modal-body" style="display:flex;flex-direction:column;gap:14px">
-      <div class="form-row-3">
+      <div class="form-row-2">
         <div class="form-group"><label class="form-label">First Name <span class="req">*</span></label>
           <input id="ap-first" class="form-input" placeholder="Juan"></div>
         <div class="form-group"><label class="form-label">Middle Name</label>
           <input id="ap-middle" class="form-input" placeholder="Santos"></div>
-        <div class="form-group"><label class="form-label">Last Name <span class="req">*</span></label>
-          <input id="ap-last" class="form-input" placeholder="Dela Cruz"></div>
       </div>
+      <div class="form-group"><label class="form-label">Last Name <span class="req">*</span></label>
+        <input id="ap-last" class="form-input" placeholder="Dela Cruz"></div>
       <div class="form-row-2">
         <div class="form-group"><label class="form-label">Email</label>
           <input type="email" id="ap-email" class="form-input" placeholder="juan@email.com"></div>
@@ -5101,20 +5783,10 @@ function openAddPatientModal() {
         <div class="form-group"><label class="form-label">Gender <span class="req">*</span></label>
           ${window.selectFieldHtml('ap-gender', { value: '', placeholder: 'Select gender', options: ['Male','Female','Other'] })}</div>
       </div>
-      <div class="form-row-2">
-        <div class="form-group"><label class="form-label">Blood Type</label>
-          ${window.selectFieldHtml('ap-blood', { value: '', options: [{ value: '', label: 'Unknown' }, 'A+','A-','B+','B-','AB+','AB-','O+','O-'] })}</div>
-        <div class="form-group"><label class="form-label">Occupation</label>
-          <input id="ap-occupation" class="form-input" placeholder="e.g. Teacher, Engineer, Student"></div>
-      </div>
+      <div class="form-group"><label class="form-label">Occupation</label>
+        <input id="ap-occupation" class="form-input" placeholder="e.g. Teacher, Engineer, Student"></div>
       <div class="form-group"><label class="form-label">Address</label>
         <input id="ap-address" class="form-input" placeholder="Street, City, Province"></div>
-      <div class="form-group"><label class="form-label">Medical History</label>
-        <textarea id="ap-medical" class="form-textarea" rows="2"
-          placeholder="Known conditions, allergies, medications…"></textarea></div>
-      <div class="form-group"><label class="form-label">Optical History</label>
-        <textarea id="ap-optical" class="form-textarea" rows="2"
-          placeholder="Prior eye conditions, prescriptions, surgeries…"></textarea></div>
     </div>
     <div class="modal-footer">
       <button class="btn-secondary" onclick="window.closeModal()">Cancel</button>
@@ -5145,9 +5817,6 @@ async function doAddPatient() {
         email:          gv('ap-email'),
         address:        gv('ap-address'),
         occupation:     gv('ap-occupation'),
-        medicalHistory: gv('ap-medical'),
-        opticalHistory: gv('ap-optical'),
-        bloodType:      gv('ap-blood') || 'Unknown',
       })
     })
     const d = await r.json()
@@ -5179,14 +5848,14 @@ function openEditPatientModal(patientId) {
       <button class="modal-close" onclick="window.closeModal()">&times;</button>
     </div>
     <div class="modal-body">
-      <div class="form-row-3">
+      <div class="form-row-2">
         <div class="form-group"><label class="form-label">First Name</label>
           <input id="ep-first" class="form-input" value="${p.firstName}"></div>
         <div class="form-group"><label class="form-label">Middle Name</label>
           <input id="ep-middle" class="form-input" value="${p.middleName || ''}"></div>
-        <div class="form-group"><label class="form-label">Last Name</label>
-          <input id="ep-last" class="form-input" value="${p.lastName}"></div>
       </div>
+      <div class="form-group"><label class="form-label">Last Name</label>
+        <input id="ep-last" class="form-input" value="${p.lastName}"></div>
       <div class="form-row-2">
         <div class="form-group"><label class="form-label">Date of Birth</label>
           ${dobFieldHtml('ep-dob', { value: p.dob || '', max: maxDobFor18() })}</div>
@@ -5201,12 +5870,8 @@ function openEditPatientModal(patientId) {
                ${!p.email ? 'disabled title="This patient has no login account — email can\'t be set here."' : ''}></div>
       <div class="form-group"><label class="form-label">Address</label>
         <input id="ep-address" class="form-input" value="${p.address}"></div>
-      <div class="form-row-2">
-        <div class="form-group"><label class="form-label">Blood Type</label>
-          ${window.selectFieldHtml('ep-blood', { value: p.bloodType || 'Unknown', options: ['Unknown','A+','A-','B+','B-','AB+','AB-','O+','O-'] })}</div>
-        ${isAdmin ? `<div class="form-group"><label class="form-label">Status</label>
-          ${window.selectFieldHtml('ep-status', { value: p.status || 'active', options: [{ value: 'active', label: 'Active' }, { value: 'inactive', label: 'Inactive' }] })}</div>` : ''}
-      </div>
+      ${isAdmin ? `<div class="form-group"><label class="form-label">Status</label>
+        ${window.selectFieldHtml('ep-status', { value: p.status || 'active', options: [{ value: 'active', label: 'Active' }, { value: 'inactive', label: 'Inactive' }] })}</div>` : ''}
       ${isAdmin ? `
       <div style="background:#F9FAFB;border:1px solid #F0F0F2;border-radius:12px;padding:14px 16px;margin-bottom:14px;display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">
         <div>
@@ -5218,14 +5883,8 @@ function openEditPatientModal(patientId) {
         </div>
         ${p.bookingRestricted ? `<button type="button" class="btn-secondary" style="flex-shrink:0" onclick="window.clearBookingRestriction('${p.id}')">Clear Restriction</button>` : ''}
       </div>` : ''}
-      <div class="form-group"><label class="form-label">Occupation</label>
+      <div class="form-group" style="margin-bottom:0"><label class="form-label">Occupation</label>
         <input id="ep-occupation" class="form-input" placeholder="e.g. Teacher, Engineer, Student" value="${p.occupation || ''}"></div>
-      <div class="form-group"><label class="form-label">Medical History</label>
-        <textarea id="ep-medical" class="form-textarea" rows="2"
-          placeholder="Known conditions, allergies, medications…">${p.medicalHistory || ''}</textarea></div>
-      <div class="form-group" style="margin-bottom:0"><label class="form-label">Optical History</label>
-        <textarea id="ep-optical" class="form-textarea" rows="2"
-          placeholder="Prior eye conditions, prescriptions, surgeries…">${p.opticalHistory || ''}</textarea></div>
       ${isAdmin && p.email ? `
       <div style="margin-top:4px">
         <div style="background:#F9FAFB;border:1px solid #F0F0F2;border-radius:12px;padding:14px 16px;display:flex;flex-direction:column;gap:12px">
@@ -5311,10 +5970,8 @@ async function doEditPatient(patientId) {
     id: patientId, firstName, middleName: gv('ep-middle'), lastName,
     gender: gv('ep-gender'), dob: gv('ep-dob'),
     contact: gv('ep-contact'), email: gv('ep-email'),
-    address: gv('ep-address'), bloodType: gv('ep-blood'),
+    address: gv('ep-address'),
     occupation: gv('ep-occupation'),
-    medicalHistory: (document.getElementById('ep-medical') || {}).value ?? p.medicalHistory ?? '',
-    opticalHistory: (document.getElementById('ep-optical') || {}).value ?? p.opticalHistory ?? '',
     ...(statusEl ? { status: statusEl.value } : {})
   }
 
@@ -5357,10 +6014,7 @@ async function doEditPatient(patientId) {
   p.contact       = payload.contact
   if (payload.email && p.email) p.email = payload.email
   p.address       = payload.address
-  p.bloodType     = payload.bloodType
   p.occupation    = payload.occupation
-  p.medicalHistory = payload.medicalHistory
-  p.opticalHistory = payload.opticalHistory
   if (payload.status) p.status = payload.status
 
   closeModal()
@@ -5686,7 +6340,7 @@ function openContactMessageModal(id) {
   showModal(`
     <div class="modal-header">
       <div class="modal-title" style="display:flex;align-items:center;gap:10px">
-        ${avatar(m.name, 'patient-avatar', _accountPhotoForEmail(m.email))}
+        ${avatar(m.name, 'patient-avatar', _accountPhotoForEmail(m.email, m.name))}
         <div>
           <div>${m.name}</div>
           <div style="font-size:.72rem;font-weight:500;color:#9CA3AF">${m.email}</div>
@@ -6591,26 +7245,41 @@ function showQRResult(p) {
   const patAppts = appointments.filter(a => a.patientId === p.id)
   const exams    = p.examinations || []
   const lastExam = exams.length ? exams[exams.length - 1] : null
+  const lastVisitStr = p.lastVisit && p.lastVisit !== '—'
+    ? new Date(p.lastVisit).toLocaleDateString('en-PH', { year: 'numeric', month: 'short', day: 'numeric' })
+    : 'No visits on record'
   body.innerHTML = `
-    <div style="display:flex;align-items:center;gap:14px;margin-bottom:16px">
-      <div style="width:56px;height:56px;border-radius:50%;background:#E8760A;
-                  display:flex;align-items:center;justify-content:center;font-size:1.2rem;font-weight:800;color:#fff;flex-shrink:0;overflow:hidden">
+    <div style="display:flex;align-items:center;gap:14px;margin-bottom:14px">
+      <div style="width:60px;height:60px;border-radius:50%;background:#E8760A;
+                  display:flex;align-items:center;justify-content:center;font-size:1.25rem;font-weight:800;color:#fff;flex-shrink:0;overflow:hidden">
         ${p.photoUrl ? `<img src="${p.photoUrl}" alt="${p.name}" style="width:100%;height:100%;object-fit:cover;border-radius:50%;display:block" onerror="${window.avatarFallbackAttr(p.name)}">` : initls}
       </div>
-      <div>
-        <div style="font-size:1.1rem;font-weight:700;color:#1C1C1C">${p.name}</div>
-        <div style="font-size:.78rem;color:#6B7280">${p.id} &bull; ${p.gender} &bull; ${p.age} yrs</div>
-        <div style="font-size:.78rem;color:#6B7280">Last Visit: ${p.lastVisit && p.lastVisit!=='—' ? new Date(p.lastVisit).toLocaleDateString('en-PH',{year:'numeric',month:'short',day:'numeric'}) : '—'}</div>
+      <div style="min-width:0">
+        <div style="font-size:1.12rem;font-weight:800;color:#1C1C1C;letter-spacing:-.01em;margin-bottom:5px">${p.name}</div>
+        <div style="display:flex;flex-wrap:wrap;gap:5px">
+          <span style="font-size:.68rem;font-weight:700;font-family:monospace;color:#9A3412;background:#FFF1E0;border:1px solid #FED7AA;border-radius:5px;padding:2px 7px">${p.id}</span>
+          <span style="font-size:.68rem;font-weight:600;color:#374151;background:#F3F4F6;border-radius:5px;padding:2px 7px">${p.gender || '—'}</span>
+          <span style="font-size:.68rem;font-weight:600;color:#374151;background:#F3F4F6;border-radius:5px;padding:2px 7px">${p.age ? p.age + ' yrs' : '—'}</span>
+        </div>
       </div>
     </div>
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:16px">
-      <div style="background:#F9FAFB;border-radius:6px;padding:8px 10px">
-        <div style="font-size:.68rem;color:#9CA3AF;text-transform:uppercase;letter-spacing:.04em">Eye Condition</div>
-        <div style="font-size:.82rem;font-weight:600;color:#1C1C1C;margin-top:2px">${lastExam ? lastExam.diagnosis : 'No exam on record'}</div>
+    <div style="display:flex;align-items:center;gap:6px;font-size:.76rem;color:#9CA3AF;margin-bottom:16px;padding-bottom:14px;border-bottom:1px solid #F3F4F6">
+      ${icon('clock','icon-sm')} Last visit: <span style="color:#374151;font-weight:600">${lastVisitStr}</span>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:16px">
+      <div style="background:#F9FAFB;border:1px solid #F3F4F6;border-radius:8px;padding:10px 12px">
+        <div style="display:flex;align-items:center;gap:5px;color:#9CA3AF;margin-bottom:4px">
+          ${icon('eye','icon-sm')}
+          <span style="font-size:.65rem;font-weight:700;text-transform:uppercase;letter-spacing:.05em">Eye Condition</span>
+        </div>
+        <div style="font-size:.83rem;font-weight:700;color:#1C1C1C;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${lastExam ? lastExam.diagnosis : ''}">${lastExam ? lastExam.diagnosis : 'No exam on record'}</div>
       </div>
-      <div style="background:#F9FAFB;border-radius:6px;padding:8px 10px">
-        <div style="font-size:.68rem;color:#9CA3AF;text-transform:uppercase;letter-spacing:.04em">Appointments</div>
-        <div style="font-size:.82rem;font-weight:600;color:#1C1C1C;margin-top:2px">${patAppts.length} total</div>
+      <div style="background:#F9FAFB;border:1px solid #F3F4F6;border-radius:8px;padding:10px 12px">
+        <div style="display:flex;align-items:center;gap:5px;color:#9CA3AF;margin-bottom:4px">
+          ${icon('calendar','icon-sm')}
+          <span style="font-size:.65rem;font-weight:700;text-transform:uppercase;letter-spacing:.05em">Appointments</span>
+        </div>
+        <div style="font-size:.83rem;font-weight:700;color:#1C1C1C">${patAppts.length} total</div>
       </div>
     </div>
     <div style="display:flex;gap:8px;flex-wrap:wrap">
@@ -6619,7 +7288,7 @@ function showQRResult(p) {
         ${icon('eye','icon-sm')} View Profile
       </button>
       ${state.role === 'doctor' ? `<button class="btn-secondary" style="flex:1;justify-content:center;min-width:120px"
-              onclick="window.navigate('examination',{patientId:'${p.id}'})">
+              onclick="window.navigate('new-examination',{patientId:'${p.id}'})">
         ${icon('eye','icon-sm')} Start Consultation
       </button>` : ''}
       <button class="btn-ghost" style="flex:1;justify-content:center;min-width:120px"
@@ -6714,9 +7383,9 @@ function openSetScheduleModal(doctorId) {
         </div></div>
       <div class="form-row-2">
         <div class="form-group"><label class="form-label">Start Time</label>
-          <input id="sched-start" class="form-input" value="${d ? (d.hours || '8:00 AM – 5:00 PM').split('–')[0].trim() : '8:00 AM'}"></div>
+          ${window.timeFieldHtml('sched-start', { value: d ? (d.hours || '8:00 AM – 5:00 PM').split('–')[0].trim() : '8:00 AM', options: window.clinicTimeOpts() })}</div>
         <div class="form-group"><label class="form-label">End Time</label>
-          <input id="sched-end" class="form-input" value="${d ? (d.hours || '8:00 AM – 5:00 PM').split('–')[1]?.trim() ?? '5:00 PM' : '5:00 PM'}"></div>
+          ${window.timeFieldHtml('sched-end', { value: d ? ((d.hours || '8:00 AM – 5:00 PM').split('–')[1]?.trim() ?? '5:00 PM') : '5:00 PM', options: window.clinicTimeOpts() })}</div>
       </div>
       <div class="form-group" style="display:flex;align-items:center;justify-content:space-between">
         <label class="form-label" style="margin:0">Mark as Available</label>
@@ -6740,13 +7409,15 @@ window._schedDocChange = function(id) {
         <input type="checkbox" class="sched-day-cb chk" value="${day}" ${activeDays.includes(day) ? 'checked' : ''}> ${day}
       </label>`).join('')
   }
-  const startEl = document.getElementById('sched-start')
-  const endEl   = document.getElementById('sched-end')
   const availEl = document.getElementById('sched-avail')
   if (doc) {
     const parts = (doc.hours || '8:00 AM – 5:00 PM').split('–')
-    if (startEl) startEl.value = parts[0]?.trim() || '8:00 AM'
-    if (endEl)   endEl.value   = parts[1]?.trim() || '5:00 PM'
+    // sched-start/sched-end are now timeFieldHtml() custom selects, not
+    // plain inputs — setting .value directly only updates the hidden
+    // field, not the visible trigger label, so this needs the same
+    // setter the select's own picker uses.
+    window.setSelectFieldValue('sched-start', parts[0]?.trim() || '8:00 AM')
+    window.setSelectFieldValue('sched-end',   parts[1]?.trim() || '5:00 PM')
     if (availEl) availEl.checked = doc.available !== false
   }
 }
@@ -6800,11 +7471,11 @@ window.doSaveSchedule       = doSaveSchedule
 //  OPTICAL EXAMINATION — WIZARD CONTROLLER
 // ════════════════════════════════════════════════════════════════
 var _wizStep = 1
-var _wizTotal = 6
+var _wizTotal = 7
 
 var _STEP_LABELS = [
   'Patient Info', 'Visual Exam', 'Diagnosis',
-  'Results', 'Dispensing', 'Review'
+  'Prescription', 'Dispensing', 'Consultation', 'Review'
 ]
 
 function examWizInit() {
@@ -6957,30 +7628,36 @@ async function saveNewExam(patientId) {
   if (!diagnosis) { toast('Please enter a diagnosis.', 'error'); return }
 
   const date = gv('ne-date') || localDateStr()
+  const doctorName = (window._examApptDoctor && state.role === 'admin') ? window._examApptDoctor : state.user.name
+  const issuePrescription = !!document.getElementById('r-issue-yes')?.checked
 
-  const newExam = {
+  // One visit, three payloads — matches the field boundaries in
+  // api/examinations/create.php (consultation narrative / exam
+  // measurements / issued prescription).
+  const od = { vaUncorrected: gv('ne-od-va-un'), va: gv('ne-od-va'), sph: gv('ne-od-sph'), cyl: gv('ne-od-cyl'), axis: gv('ne-od-axis'), add: gv('ne-od-add') }
+  const os = { vaUncorrected: gv('ne-os-va-un'), va: gv('ne-os-va'), sph: gv('ne-os-sph'), cyl: gv('ne-os-cyl'), axis: gv('ne-os-axis'), add: gv('ne-os-add') }
+  const iop = { od: gv('ne-iop-od'), os: gv('ne-iop-os') }
+  const pd = gv('ne-pd')
+
+  const payload = {
     date,
-    doctor: (window._examApptDoctor && state.role === 'admin') ? window._examApptDoctor : state.user.name,
-    od: {
-      sph: gv('ne-od-sph'), cyl: gv('ne-od-cyl'), axis: gv('ne-od-axis'),
-      va:  gv('ne-od-va'),  add: gv('ne-od-add')
-    },
-    os: {
-      sph: gv('ne-os-sph'), cyl: gv('ne-os-cyl'), axis: gv('ne-os-axis'),
-      va:  gv('ne-os-va'),  add: gv('ne-os-add')
-    },
-    iop:                 { od: gv('ne-iop-od'), os: gv('ne-iop-os') },
-    pd:                  gv('ne-pd'),
+    appointmentType:        gv('ne-con-type') || 'Eye Examination',
+    chiefComplaint:         gv('ne-con-complaint'),
+    historyPresentIllness:  gv('ne-con-history'),
+    assessment:              gv('ne-con-assessment'),
+    recommendation:          gv('ne-con-recommendation'),
+    followUpDate:            gv('ne-con-followup'),
+    consultationStatus:      gv('ne-con-status') || 'completed',
+    od, os, iop, pd,
+    externalFindings:        gv('ne-ext-findings'),
     diagnosis,
-    recommendation:      gv('ne-recommendation'),
-    testResults:         gv('ne-test-results'),
-    prescriptionDetails: gv('ne-rx-details'),
-    lensType:            gv('ne-lens-type'),
-    lensMaterial:        gv('ne-lens-material'),
-    lensCoating:         coatings,
-    frameSelection:      gv('ne-frame'),
-    remarks:             gv('ne-remarks'),
-    status:              'completed'
+    testResults:             [gv('ne-test-results'), (document.querySelector('input[name="ne-ishihara"]:checked')?.value ? 'Ishihara: ' + document.querySelector('input[name="ne-ishihara"]:checked').value : '')].filter(Boolean).join('. '),
+    remarks:                 gv('ne-remarks'),
+    issuePrescription,
+    lensType:                gv('ne-lens-type'),
+    lensMaterial:            gv('ne-lens-material'),
+    lensCoating:             coatings,
+    frameSelection:          gv('ne-frame'),
   }
 
   const saveBtn = document.getElementById('wiz-btn-save')
@@ -6989,27 +7666,14 @@ async function saveNewExam(patientId) {
   const examId = state.params?.examId || null
 
   try {
-    // Persist updated history back to patient record if changed
-    const newMedical = gv('ne-medical')
-    const newOptical = gv('ne-optical')
-    if (newMedical !== (p.medicalHistory || '') || newOptical !== (p.opticalHistory || '')) {
-      p.medicalHistory = newMedical
-      p.opticalHistory = newOptical
-      fetch('api/patients/update_history.php', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ patientId, medicalHistory: newMedical, opticalHistory: newOptical })
-      }).catch(() => {})
-    }
-
     if (examId) {
-      // ── Editing an existing record — update it in place, don't create
-      // a duplicate. Consultation/prescription rows from the original
-      // save are intentionally left alone (no exam_id link exists to
-      // find "the ones this exam created" to update instead).
+      // ── Editing an existing record — update it in place, and now also
+      // propagate to the linked consultation and (if issuing) prescription
+      // rows, via api/examinations/update.php's new FK-aware logic.
       const r = await fetch('api/examinations/update.php', {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({ patientId, examId, ...newExam })
+        body:    JSON.stringify({ patientId, examId, ...payload })
       })
       const d = await r.json()
       if (!d.success) {
@@ -7017,11 +7681,17 @@ async function saveNewExam(patientId) {
         return
       }
 
-      newExam.id = examId
+      const updatedExam = {
+        id: examId, date, doctor: doctorName,
+        od, os, iop, pd,
+        externalFindings: payload.externalFindings,
+        diagnosis, testResults: payload.testResults, remarks: payload.remarks,
+        status: 'completed'
+      }
       const idx = p.examinations.findIndex(ex => ex.id === examId)
-      if (idx >= 0) p.examinations[idx] = newExam
-      else p.examinations.unshift(newExam)
-      p.lastVisit = newExam.date
+      if (idx >= 0) p.examinations[idx] = updatedExam
+      else p.examinations.unshift(updatedExam)
+      p.lastVisit = date
 
       toast('Examination record updated successfully.', 'success')
       navigate('patient-view', { patientId, patientName: p.name })
@@ -7032,7 +7702,7 @@ async function saveNewExam(patientId) {
     const r = await fetch('api/examinations/create.php', {
       method:  'POST',
       headers: { 'Content-Type': 'application/json' },
-      body:    JSON.stringify({ patientId, apptId, ...newExam })
+      body:    JSON.stringify({ patientId, apptId, ...payload })
     })
     const d = await r.json()
     if (!d.success) {
@@ -7040,27 +7710,37 @@ async function saveNewExam(patientId) {
       return
     }
 
-    // Update local arrays so the UI stays consistent
-    newExam.id = d.id
-    p.examinations.unshift(newExam)
+    // Update local arrays so the UI stays consistent without a full reload
+    p.examinations.unshift({
+      id: d.id, date, doctor: doctorName, consultationId: d.consultationId,
+      od, os, iop, pd,
+      externalFindings: payload.externalFindings,
+      diagnosis, testResults: payload.testResults, remarks: payload.remarks,
+      status: 'completed'
+    })
+    if (!p.consultations) p.consultations = []
     p.consultations.unshift({
-      id: 'C' + Date.now(), date: newExam.date,
-      doctor: state.user.name, type: 'Eye Examination',
-      diagnosis: newExam.diagnosis,
-      prescription: `OD: ${newExam.od.sph} ${newExam.od.cyl} x${newExam.od.axis} / OS: ${newExam.os.sph} ${newExam.os.cyl} x${newExam.os.axis}`,
-      remarks: newExam.remarks
+      id: d.consultationId, date, doctor: doctorName, examId: d.id,
+      type: payload.appointmentType,
+      chiefComplaint: payload.chiefComplaint,
+      historyPresentIllness: payload.historyPresentIllness,
+      assessment: payload.assessment,
+      recommendation: payload.recommendation,
+      followUpDate: payload.followUpDate,
+      status: payload.consultationStatus
     })
-    if (!p.prescriptions) p.prescriptions = []
-    p.prescriptions.unshift({
-      id:       d.rxId || ('RX-' + newExam.id),
-      date:     newExam.date,
-      doctor:   (window._examApptDoctor && state.role === 'admin') ? window._examApptDoctor : state.user.name,
-      od:       { sph: newExam.od.sph, cyl: newExam.od.cyl, axis: newExam.od.axis },
-      os:       { sph: newExam.os.sph, cyl: newExam.os.cyl, axis: newExam.os.axis },
-      lensType: newExam.lensType && newExam.lensType !== '—' ? newExam.lensType : '',
-      remarks:  newExam.remarks || ''
-    })
-    p.lastVisit = newExam.date
+    if (d.rxId) {
+      if (!p.prescriptions) p.prescriptions = []
+      p.prescriptions.unshift({
+        id: d.rxId, date, doctor: doctorName, examId: d.id,
+        expiryDate: '', status: 'valid', prcLicense: '',
+        od: { sph: od.sph, cyl: od.cyl, axis: od.axis, add: od.add },
+        os: { sph: os.sph, cyl: os.cyl, axis: os.axis, add: os.add },
+        pd, lensType: payload.lensType, lensMaterial: payload.lensMaterial,
+        frameSelection: payload.frameSelection, lensCoating: coatings
+      })
+    }
+    p.lastVisit = date
 
     if (apptId) {
       updateAppointmentStatus(apptId, 'completed')
@@ -7081,40 +7761,40 @@ window.saveNewExam = saveNewExam
 // ════════════════════════════════════════════════════════════════
 //  OPTICAL EXAMINATION — PRINT WIZARD DRAFT (Step 6)
 // ════════════════════════════════════════════════════════════════
+// Prints the draft as a Prescription document — matches what
+// updateRxPreview() shows on the Review step, gated the same way on the
+// "Issue Prescription" toggle from the Prescription step.
 function printNewExamDraft(patientId) {
   const p = patients.find(pt => pt.id === patientId)
   if (!p) return
+  if (!document.getElementById('r-issue-yes')?.checked) {
+    toast('Toggle "Issue Prescription" on the Prescription step to print one.', 'info')
+    return
+  }
   const gv = id => (document.getElementById(id)?.value || '').trim()
-  const radioVal = name => document.querySelector(`input[name="${name}"]:checked`)?.value || ''
   const coatings = []
   document.querySelectorAll('[id^="ne-coat-"]:checked').forEach(cb => coatings.push(cb.value))
   const doctor = (window._examApptDoctor && state.role === 'admin') ? window._examApptDoctor : (state.user?.name || '—')
-  const ishihara = radioVal('ne-ishihara')
-  const eyeglass = radioVal('ne-eyeglass')
-  const testParts = [
-    ishihara ? `Ishihara: ${ishihara}` : '',
-    gv('ne-test-results') || ''
-  ].filter(Boolean).join('. ')
+  const date = gv('ne-date') || localDateStr()
+  const expiryDate = new Date(date + 'T00:00:00')
+  expiryDate.setFullYear(expiryDate.getFullYear() + 1)
 
-  const e = {
+  const rx = {
     id:       'DRAFT',
-    date:     gv('ne-date') || localDateStr(),
+    date,
+    expiryDate: localDateStr(expiryDate),
+    status:   'valid',
+    prcLicense: window.state?.doctorPrcLicense || '',
     doctor,
-    od:       { sph: gv('ne-od-sph'), cyl: gv('ne-od-cyl'), axis: gv('ne-od-axis'), va: gv('ne-od-va'), add: gv('ne-od-add') },
-    os:       { sph: gv('ne-os-sph'), cyl: gv('ne-os-cyl'), axis: gv('ne-os-axis'), va: gv('ne-os-va'), add: gv('ne-os-add') },
-    iop:      { od: gv('ne-iop-od'), os: gv('ne-iop-os') },
+    od:       { sph: gv('ne-od-sph'), cyl: gv('ne-od-cyl'), axis: gv('ne-od-axis'), add: gv('ne-od-add') },
+    os:       { sph: gv('ne-os-sph'), cyl: gv('ne-os-cyl'), axis: gv('ne-os-axis'), add: gv('ne-os-add') },
     pd:       gv('ne-pd'),
-    diagnosis:         gv('ne-diagnosis'),
-    recommendation:    [gv('ne-lens-type'), eyeglass ? `Eyeglass Rec: ${eyeglass}` : '', coatings.join(', ')].filter(Boolean).join(' · ') || '—',
-    testResults:       testParts || null,
-    prescriptionDetails: gv('ne-rx-details') || null,
-    lensType:          gv('ne-lens-type'),
-    lensMaterial:      gv('ne-lens-material'),
-    lensCoating:       coatings,
-    frameSelection:    gv('ne-frame'),
-    remarks:           gv('ne-remarks')
+    lensType:       gv('ne-lens-type'),
+    lensMaterial:   gv('ne-lens-material'),
+    lensCoating:    coatings,
+    frameSelection: gv('ne-frame'),
   }
-  _openExamPrintWindow(p, e)
+  _openRxPrintWindow(p, rx)
 }
 window.printNewExamDraft = printNewExamDraft
 
@@ -7128,23 +7808,29 @@ function updateRxPreview(patientId) {
   const p  = patients.find(p => p.id === patientId)
   const pName = p ? p.name : patientId
 
-  const row = (lbl, od, os) => `
-    <tr>
-      <td style="padding:7px 10px;font-size:.78rem;color:#6B7280;font-weight:600;border-bottom:1px solid #F3F4F6">${lbl}</td>
-      <td style="padding:7px 10px;font-size:.82rem;font-weight:700;color:#1C1C1C;border-bottom:1px solid #F3F4F6;text-align:center">${od}</td>
-      <td style="padding:7px 10px;font-size:.82rem;font-weight:700;color:#1C1C1C;border-bottom:1px solid #F3F4F6;text-align:center">${os}</td>
-    </tr>`
+  // Nothing to preview if the doctor hasn't toggled "Issue Prescription" —
+  // matches create.php's explicit-flag gate, no inferring from filled fields.
+  const issuing = document.getElementById('r-issue-yes')?.checked
+  if (!issuing) {
+    el.innerHTML = `<div style="text-align:center;color:#9CA3AF;font-size:.84rem;padding:16px">No prescription will be issued for this visit. Toggle "Issue Prescription" on the Prescription step to preview one.</div>`
+    return
+  }
 
   const doctorName  = window.state?.user?.name || 'Dr. Lalaine Cana'
   const pidDisplay  = gv('ne-patient-id') !== '—' ? gv('ne-patient-id') : (p ? p.id : '—')
   const patientName = gv('ne-patient-name') !== '—' ? gv('ne-patient-name') : pName
   const examDate    = gv('ne-date') !== '—' ? gv('ne-date') : localDateStr()
-  const thCell = (txt, color='#6B7280') =>
-    `<th style="padding:8px 10px;font-size:.68rem;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:${color};text-align:center;background:#f9fafb;border-bottom:2px solid #e5e7eb">${txt}</th>`
-  const tdCell = (val, color='#1C1C1C') =>
-    `<td style="padding:8px 10px;font-size:.82rem;font-weight:700;color:${color};text-align:center;border-bottom:1px solid #f3f4f6">${val||'—'}</td>`
   const infoRow = (label, val, orange=false) =>
     `<div><div style="font-size:.58rem;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:#9CA3AF;margin-bottom:2px">${label}</div><div style="font-size:.8rem;font-weight:600;color:${orange?'#E8891C':'#1C1C1C'}">${val}</div></div>`
+  // Metric cell used inside the OD/OS cards below — flex-wraps its own
+  // content instead of living in a fixed-width table column, so the whole
+  // block reflows on narrow screens (renderRxDocumentCard, main.js, uses
+  // this same bordered-card pattern for the same reason).
+  const eyeField = (label, val) =>
+    `<div style="flex:1;min-width:0;text-align:center;padding:8px 4px">
+       <div style="font-size:.55rem;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:#9CA3AF;margin-bottom:3px">${label}</div>
+       <div style="font-size:.8rem;font-weight:800;font-family:monospace;color:#1C1C1C;overflow:hidden;text-overflow:ellipsis">${val||'—'}</div>
+     </div>`
 
   el.innerHTML = `
     <!-- Clinic Header -->
@@ -7164,52 +7850,47 @@ function updateRxPreview(patientId) {
       ${infoRow('Consultation Date', examDate)}
     </div>
 
-    <!-- Prescription Table — its own horizontal scroll on narrow screens
-         instead of squeezing 5 columns illegibly or overflowing the page. -->
-    <div style="overflow-x:auto;margin-bottom:14px">
-    <table style="width:100%;min-width:360px;border-collapse:collapse;border:1px solid #e5e7eb;border-radius:8px;overflow:hidden">
-      <thead>
-        <tr>
-          ${thCell('Eye', '#6B7280')}
-          ${thCell('Sphere', '#1C1C1C')}
-          ${thCell('Cylinder', '#1C1C1C')}
-          ${thCell('Axis', '#1C1C1C')}
-          ${thCell('VA', '#1C1C1C')}
-        </tr>
-      </thead>
-      <tbody>
-        <tr>
-          <td style="padding:8px 10px;font-size:.78rem;font-weight:700;color:#16a34a;border-bottom:1px solid #f3f4f6;text-align:center;white-space:nowrap">OD (Right)</td>
-          ${tdCell(gv('ne-od-sph'))}
-          ${tdCell(gv('ne-od-cyl'))}
-          ${tdCell(gv('ne-od-axis'))}
-          ${tdCell(gv('ne-od-va'))}
-        </tr>
-        <tr>
-          <td style="padding:8px 10px;font-size:.78rem;font-weight:700;color:#E8891C;border-bottom:1px solid #f3f4f6;text-align:center;white-space:nowrap">OS (Left)</td>
-          ${tdCell(gv('ne-os-sph'))}
-          ${tdCell(gv('ne-os-cyl'))}
-          ${tdCell(gv('ne-os-axis'))}
-          ${tdCell(gv('ne-os-va'))}
-        </tr>
-      </tbody>
-    </table>
+    <!-- OD/OS cards — reflow to a single column on narrow screens instead
+         of a wide table needing its own horizontal scroll to read. -->
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px;margin-bottom:14px">
+      <div style="border:1.5px solid #86EFAC;border-radius:8px;overflow:hidden">
+        <div style="background:#F0FDF4;padding:6px 10px;border-bottom:1px solid #86EFAC">
+          <span style="font-size:.62rem;font-weight:800;text-transform:uppercase;letter-spacing:.06em;color:#059669">OD (Right)</span>
+        </div>
+        <div style="display:flex;background:#fff">
+          ${eyeField('SPH', gv('ne-od-sph'))}
+          ${eyeField('CYL', gv('ne-od-cyl'))}
+          ${eyeField('AXIS', gv('ne-od-axis'))}
+          ${eyeField('ADD', gv('ne-od-add'))}
+        </div>
+      </div>
+      <div style="border:1.5px solid #FDE68A;border-radius:8px;overflow:hidden">
+        <div style="background:#FFF7ED;padding:6px 10px;border-bottom:1px solid #FDE68A">
+          <span style="font-size:.62rem;font-weight:800;text-transform:uppercase;letter-spacing:.06em;color:#B45309">OS (Left)</span>
+        </div>
+        <div style="display:flex;background:#fff">
+          ${eyeField('SPH', gv('ne-os-sph'))}
+          ${eyeField('CYL', gv('ne-os-cyl'))}
+          ${eyeField('AXIS', gv('ne-os-axis'))}
+          ${eyeField('ADD', gv('ne-os-add'))}
+        </div>
+      </div>
     </div>
 
     <!-- Summary fields — flex-wrap so a long value drops to its own line
          under the label instead of forcing the row wider than its card. -->
     <div style="display:flex;flex-direction:column;gap:8px;margin-bottom:16px;padding:12px;background:#f9fafb;border-radius:8px;border:1px solid #e5e7eb">
       <div style="display:flex;flex-wrap:wrap;gap:4px 8px;font-size:.8rem">
-        <span style="font-weight:600;color:#6B7280;min-width:140px">Diagnosis:</span>
-        <span style="color:#1C1C1C;font-weight:500">${gv('ne-diagnosis')}</span>
+        <span style="font-weight:600;color:#6B7280;min-width:140px">Pupillary Distance:</span>
+        <span style="color:#1C1C1C;font-weight:500">${gv('ne-pd')}</span>
       </div>
       <div style="display:flex;flex-wrap:wrap;gap:4px 8px;font-size:.8rem">
-        <span style="font-weight:600;color:#6B7280;min-width:140px">Final VA:</span>
-        <span style="color:#1C1C1C;font-weight:500">${gv('ne-final-va')}</span>
-      </div>
-      <div style="display:flex;flex-wrap:wrap;gap:4px 8px;font-size:.8rem">
-        <span style="font-weight:600;color:#6B7280;min-width:140px">Recommended Lenses:</span>
+        <span style="font-weight:600;color:#6B7280;min-width:140px">Lens Type:</span>
         <span style="color:#1C1C1C;font-weight:500">${gv('ne-lens-type')}</span>
+      </div>
+      <div style="display:flex;flex-wrap:wrap;gap:4px 8px;font-size:.8rem">
+        <span style="font-weight:600;color:#6B7280;min-width:140px">Lens Material:</span>
+        <span style="color:#1C1C1C;font-weight:500">${gv('ne-lens-material')}</span>
       </div>
       <div style="display:flex;flex-wrap:wrap;gap:4px 8px;font-size:.8rem">
         <span style="font-weight:600;color:#6B7280;min-width:140px">Frame Selection:</span>
@@ -7255,9 +7936,6 @@ function viewExamDetail(patientId, examId) {
 
   const examDate = new Date(e.date.includes('T') ? e.date : e.date + 'T00:00:00')
   const examDateStr = examDate.toLocaleDateString('en-PH', {year:'numeric',month:'long',day:'numeric'})
-  const expiryDate = new Date(examDate)
-  expiryDate.setFullYear(expiryDate.getFullYear() + 1)
-  const expiryStr = expiryDate.toLocaleDateString('en-PH', {year:'numeric',month:'long',day:'numeric'})
   const docRecord = doctors.find(d => d.name === e.doctor)
   const docPhoto  = docRecord?.photoUrl || null
   const docInits  = (e.doctor||'Dr').split(' ').slice(0,2).map(w=>w[0]||'').join('').toUpperCase()
@@ -7332,36 +8010,30 @@ function viewExamDetail(patientId, examId) {
             <div style="border:1.5px solid #86EFAC;border-radius:10px;overflow:hidden">
               <div style="background:#F0FDF4;padding:8px 12px;border-bottom:1px solid #86EFAC;display:flex;align-items:center;gap:6px">
                 <div style="width:7px;height:7px;border-radius:50%;background:#22C55E;flex-shrink:0"></div>
-                <span style="font-size:.65rem;font-weight:800;text-transform:uppercase;letter-spacing:.07em;color:#059669">OD — Right Eye</span>
+                <span style="font-size:.65rem;font-weight:800;text-transform:uppercase;letter-spacing:.07em;color:#059669">OD (Right Eye)</span>
               </div>
               <div style="display:flex;background:#fff">
+                ${eyeField('VA (Uncorr.)', e.od?.vaUncorrected, false)}
+                ${eyeField('VA (Corr.)', e.od?.va, false)}
                 ${eyeField('SPH', e.od?.sph, false)}
                 ${eyeField('CYL', e.od?.cyl, false)}
-                ${eyeField('AXIS', e.od?.axis, false)}
-                ${eyeField('VA', e.od?.va, true)}
+                ${eyeField('AXIS', e.od?.axis, true)}
               </div>
-              ${e.od?.add ? `<div style="padding:7px 12px;border-top:1px solid #BBF7D0;background:#F0FDF4;display:flex;align-items:center;justify-content:space-between">
-                <span style="font-size:.6rem;color:#9CA3AF;font-weight:700;text-transform:uppercase;letter-spacing:.05em">Add Power</span>
-                <span style="font-size:.88rem;font-weight:800;font-family:monospace;color:#059669">${e.od.add}</span>
-              </div>` : ''}
             </div>
 
             <!-- OS Card -->
             <div style="border:1.5px solid #FDE68A;border-radius:10px;overflow:hidden">
               <div style="background:#FFF7ED;padding:8px 12px;border-bottom:1px solid #FDE68A;display:flex;align-items:center;gap:6px">
                 <div style="width:7px;height:7px;border-radius:50%;background:#E8760A;flex-shrink:0"></div>
-                <span style="font-size:.65rem;font-weight:800;text-transform:uppercase;letter-spacing:.07em;color:#B45309">OS — Left Eye</span>
+                <span style="font-size:.65rem;font-weight:800;text-transform:uppercase;letter-spacing:.07em;color:#B45309">OS (Left Eye)</span>
               </div>
               <div style="display:flex;background:#fff">
+                ${eyeField('VA (Uncorr.)', e.os?.vaUncorrected, false)}
+                ${eyeField('VA (Corr.)', e.os?.va, false)}
                 ${eyeField('SPH', e.os?.sph, false)}
                 ${eyeField('CYL', e.os?.cyl, false)}
-                ${eyeField('AXIS', e.os?.axis, false)}
-                ${eyeField('VA', e.os?.va, true)}
+                ${eyeField('AXIS', e.os?.axis, true)}
               </div>
-              ${e.os?.add ? `<div style="padding:7px 12px;border-top:1px solid #FEF3C7;background:#FFFBEB;display:flex;align-items:center;justify-content:space-between">
-                <span style="font-size:.6rem;color:#9CA3AF;font-weight:700;text-transform:uppercase;letter-spacing:.05em">Add Power</span>
-                <span style="font-size:.88rem;font-weight:800;font-family:monospace;color:#E8760A">${e.os.add}</span>
-              </div>` : ''}
             </div>
           </div>
         </div>
@@ -7371,11 +8043,11 @@ function viewExamDetail(patientId, examId) {
         <div style="display:grid;grid-template-columns:${[e.iop?.od||e.iop?.os ? '1fr 1fr' : '', e.pd ? '1fr' : ''].filter(Boolean).join(' ')};gap:8px">
           ${e.iop?.od || e.iop?.os ? `
           <div style="background:#F9FAFB;border:1px solid #F3F4F6;border-radius:8px;padding:11px 13px">
-            <div style="font-size:.58rem;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:#9CA3AF;margin-bottom:3px">IOP — Right Eye</div>
+            <div style="font-size:.58rem;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:#9CA3AF;margin-bottom:3px">IOP (Right Eye)</div>
             <div style="font-size:1.05rem;font-weight:800;color:#1C1C1C;font-family:monospace">${e.iop?.od || '—'} <span style="font-size:.67rem;font-weight:400;color:#9CA3AF">mmHg</span></div>
           </div>
           <div style="background:#F9FAFB;border:1px solid #F3F4F6;border-radius:8px;padding:11px 13px">
-            <div style="font-size:.58rem;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:#9CA3AF;margin-bottom:3px">IOP — Left Eye</div>
+            <div style="font-size:.58rem;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:#9CA3AF;margin-bottom:3px">IOP (Left Eye)</div>
             <div style="font-size:1.05rem;font-weight:800;color:#1C1C1C;font-family:monospace">${e.iop?.os || '—'} <span style="font-size:.67rem;font-weight:400;color:#9CA3AF">mmHg</span></div>
           </div>` : ''}
           ${e.pd ? `
@@ -7385,31 +8057,18 @@ function viewExamDetail(patientId, examId) {
           </div>` : ''}
         </div>` : ''}
 
-        <!-- Clinical Assessment -->
+        <!-- External / Internal Findings -->
+        ${e.externalFindings ? `
+        <div>
+          <div style="font-size:.63rem;font-weight:700;text-transform:uppercase;letter-spacing:.1em;color:#9CA3AF;margin-bottom:6px">External / Internal Findings</div>
+          <div style="background:#F9FAFB;border:1px solid #F3F4F6;border-radius:8px;padding:11px 13px;font-size:.8rem;color:#374151;line-height:1.65">${e.externalFindings}</div>
+        </div>` : ''}
+
+        <!-- Diagnosis -->
         <div style="background:#F9FAFB;border:1px solid #F3F4F6;border-radius:10px;padding:14px 16px">
-          <div style="font-size:.63rem;font-weight:700;text-transform:uppercase;letter-spacing:.1em;color:#9CA3AF;margin-bottom:8px">Clinical Assessment</div>
-          <div style="font-size:1rem;font-weight:800;color:#1C1C1C;${e.recommendation ? 'margin-bottom:6px' : ''}">${e.diagnosis || '—'}</div>
-          ${e.recommendation ? `<div style="font-size:.8rem;color:#374151;line-height:1.65">${e.recommendation}</div>` : ''}
+          <div style="font-size:.63rem;font-weight:700;text-transform:uppercase;letter-spacing:.1em;color:#9CA3AF;margin-bottom:8px">Diagnosis</div>
+          <div style="font-size:1rem;font-weight:800;color:#1C1C1C">${e.diagnosis || '—'}</div>
         </div>
-
-        <!-- Lens Prescription -->
-        ${(e.lensType || e.lensMaterial || (e.lensCoating && e.lensCoating.length) || e.frameSelection) ? `
-        <div>
-          <div style="font-size:.63rem;font-weight:700;text-transform:uppercase;letter-spacing:.1em;color:#9CA3AF;margin-bottom:8px">Lens Prescription</div>
-          <div style="display:flex;align-items:center;gap:7px;flex-wrap:wrap;margin-bottom:${(e.lensCoating && e.lensCoating.length) || e.frameSelection ? '7px' : '0'}">
-            ${e.lensType ? `<span style="font-size:.88rem;font-weight:700;color:#1C1C1C">${e.lensType}</span>` : ''}
-            ${e.lensMaterial && e.lensMaterial !== 'N/A' ? `<span style="color:#D1D5DB;font-size:.85rem">/</span><span style="font-size:.82rem;color:#6B7280">${e.lensMaterial}</span>` : ''}
-          </div>
-          ${e.lensCoating && e.lensCoating.length ? `<div style="display:flex;flex-wrap:wrap;gap:5px;margin-bottom:5px">${e.lensCoating.map(c=>`<span style="background:#FFF7ED;color:#C2410C;font-size:.7rem;font-weight:600;padding:2px 9px;border-radius:20px;border:1px solid #FDE68A">${c}</span>`).join('')}</div>` : ''}
-          ${e.frameSelection && e.frameSelection !== 'N/A — monitoring only' ? `<div style="font-size:.77rem;color:#6B7280">Frame: ${e.frameSelection}</div>` : ''}
-        </div>` : ''}
-
-        <!-- Prescription Notes -->
-        ${e.prescriptionDetails ? `
-        <div>
-          <div style="font-size:.63rem;font-weight:700;text-transform:uppercase;letter-spacing:.1em;color:#9CA3AF;margin-bottom:6px">Prescription Notes</div>
-          <div style="background:#FFFBF5;border:1px solid #FDE68A;border-radius:8px;padding:11px 13px;font-size:.8rem;color:#374151;line-height:1.65">${e.prescriptionDetails}</div>
-        </div>` : ''}
 
         <!-- Test Results -->
         ${e.testResults ? `
@@ -7418,55 +8077,40 @@ function viewExamDetail(patientId, examId) {
           <div style="background:#F9FAFB;border:1px solid #F3F4F6;border-radius:8px;padding:11px 13px;font-size:.8rem;color:#374151;line-height:1.65">${e.testResults}</div>
         </div>` : ''}
 
-        <!-- Doctor's Remarks -->
+        <!-- Clinical Remarks -->
         ${e.remarks ? `
         <div style="border-top:1px solid #F3F4F6;padding-top:16px">
-          <div style="font-size:.63rem;font-weight:700;text-transform:uppercase;letter-spacing:.1em;color:#9CA3AF;margin-bottom:6px">Doctor's Remarks</div>
+          <div style="font-size:.63rem;font-weight:700;text-transform:uppercase;letter-spacing:.1em;color:#9CA3AF;margin-bottom:6px">Clinical Remarks</div>
           <div style="font-size:.83rem;color:#374151;line-height:1.7;font-style:italic;padding-left:12px;border-left:3px solid #E8760A">"${e.remarks}"</div>
-          <div style="font-size:.7rem;color:#9CA3AF;margin-top:4px;padding-left:15px">— ${e.doctor}</div>
+          <div style="font-size:.7rem;color:#9CA3AF;margin-top:4px;padding-left:15px">by ${e.doctor}</div>
         </div>` : ''}
-
-        <!-- Validity notice -->
-        <div style="display:flex;align-items:center;gap:8px;padding:9px 13px;background:#F0FDF4;border:1px solid #BBF7D0;border-radius:8px">
-          ${icon('check-circle','icon-sm')}
-          <span style="font-size:.77rem;color:#059669;font-weight:500">Prescription valid until <strong>${expiryStr}</strong></span>
-        </div>
 
       </div>
     </div>
     <div class="modal-footer">
       <button class="btn-secondary" onclick="window.closeModal()">Close</button>
+      ${e.consultationId ? `<button class="btn-ghost" onclick="window.closeModal();window.viewConsultationDetail('${patientId}','${e.consultationId}')">
+        ${icon('message-square','icon-sm')} Consultation
+      </button>` : ''}
       <button class="btn-ghost" onclick="window.viewPrescriptionModal('${patientId}','${examId}')">
         ${icon('file-text','icon-sm')} Prescription
       </button>
       ${state.role !== 'patient' ? `<button class="btn-ghost" style="color:#0891b2;border-color:#0891b2" onclick="window.closeModal();window.generateClearance('${patientId}','${examId}')">
         ${icon('award','icon-sm')} Generate Clearance
       </button>
-      <button class="btn-primary" onclick="window.printPrescription('${patientId}','${examId}')">
+      <button class="btn-primary" onclick="window.printExamRecord('${examId}')">
         ${icon('printer','icon-sm')} Print
-      </button>` : `
-      <button class="btn-primary" onclick="window.printPrescription('${patientId}','${examId}')">
-        ${icon('printer','icon-sm')} Print Results
-      </button>`}
+      </button>` : ''}
     </div>`, 'modal-lg')
 }
 window.viewExamDetail = viewExamDetail
 
-// Consultation.prescription is a single free-text field (unlike the
-// structured od/os objects on examinations & prescriptions), typically
-// "OD: ... / OS: ..." — either typed by staff or auto-summarized from an
-// exam. Split it so it can render in the same OD/OS box layout as those.
-function _splitRxSummary(text) {
-  if (!text) return { od: '', os: '' }
-  const m = text.match(/OD:\s*(.*?)\s*\/\s*OS:\s*(.*)/i)
-  if (m) return { od: m[1].trim(), os: m[2].trim() }
-  return { od: text.trim(), os: '' }
-}
-window._splitRxSummary = _splitRxSummary
-
 // ════════════════════════════════════════════════════════════════
 //  PATIENT — VIEW CONSULTATION DETAIL (from the compact Consultations list)
 // ════════════════════════════════════════════════════════════════
+// The narrative of the visit — must never show SPH/CYL/AXIS or any
+// refraction data (see database/schema.sql's `consultations` CREATE
+// TABLE comment). That's Examination History's job.
 function viewConsultationDetail(patientId, consultationId) {
   const p = patients.find(p => p.id === patientId)
   if (!p) return
@@ -7475,7 +8119,13 @@ function viewConsultationDetail(patientId, consultationId) {
 
   const cDate    = new Date(c.date.includes('T') ? c.date : c.date + 'T00:00:00')
   const cDateStr = cDate.toLocaleDateString('en-PH', {year:'numeric',month:'long',day:'numeric'})
-  const { od, os } = _splitRxSummary(c.prescription)
+  const statusColor = { completed:'#059669', cancelled:'#DC2626', 'no-show':'#D97706' }
+  const sc = statusColor[c.status] || '#059669'
+  const statusLabel = (c.status || 'completed').split('-').map(w => w.charAt(0).toUpperCase()+w.slice(1)).join('-')
+  const block = (label, val) => val ? `<div>
+        <div style="font-size:.6rem;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:#9CA3AF;margin-bottom:4px">${label}</div>
+        <div style="font-size:.85rem;color:#374151;line-height:1.65">${val}</div>
+      </div>` : ''
 
   showModal(`
     <div class="modal-header">
@@ -7485,203 +8135,48 @@ function viewConsultationDetail(patientId, consultationId) {
     <div class="modal-body" style="display:flex;flex-direction:column;gap:14px">
       <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;padding-bottom:12px;border-bottom:1px solid #F3F4F6">
         <div>
-          <div style="font-size:.6rem;text-transform:uppercase;letter-spacing:.08em;color:#9CA3AF;margin-bottom:2px">Date</div>
+          <div style="font-size:.6rem;text-transform:uppercase;letter-spacing:.08em;color:#9CA3AF;margin-bottom:2px">Date &amp; Time</div>
           <div style="font-size:.88rem;font-weight:700;color:#1C1C1C">${cDateStr}</div>
         </div>
         <div style="text-align:right">
-          <div style="font-size:.6rem;text-transform:uppercase;letter-spacing:.08em;color:#9CA3AF;margin-bottom:2px">Doctor</div>
+          <div style="font-size:.6rem;text-transform:uppercase;letter-spacing:.08em;color:#9CA3AF;margin-bottom:2px">Attending Optometrist</div>
           <div style="font-size:.88rem;font-weight:700;color:#1C1C1C">${c.doctor||'—'}</div>
         </div>
       </div>
-      ${c.type ? `<div>
-        <div style="font-size:.6rem;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:#9CA3AF;margin-bottom:4px">Consultation Type</div>
-        <div style="font-size:.85rem;color:#1C1C1C">${c.type}</div>
-      </div>` : ''}
-      <div>
-        <div style="font-size:.6rem;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:#9CA3AF;margin-bottom:4px">Diagnosis</div>
-        <div style="font-size:.9rem;font-weight:700;color:#1C1C1C">${c.diagnosis || '—'}</div>
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">
+        ${c.type ? `<div>
+          <div style="font-size:.6rem;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:#9CA3AF;margin-bottom:4px">Appointment Type</div>
+          <div style="font-size:.85rem;color:#1C1C1C">${c.type}</div>
+        </div>` : '<div></div>'}
+        <span style="background:${sc};color:#fff;padding:3px 10px;border-radius:20px;font-size:.68rem;font-weight:700">${statusLabel}</span>
       </div>
-      ${c.prescription ? `<div>
-        <div style="font-size:.6rem;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:#9CA3AF;margin-bottom:6px">Prescription</div>
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
-          <div style="border:1.5px solid #86EFAC;border-radius:8px;overflow:hidden">
-            <div style="background:#F0FDF4;padding:6px 10px;border-bottom:1px solid #86EFAC">
-              <span style="font-size:.6rem;font-weight:800;text-transform:uppercase;letter-spacing:.07em;color:#059669">OD — Right Eye</span>
-            </div>
-            <div style="padding:8px 10px;font-family:monospace;font-size:.85rem;color:#1C1C1C;background:#fff">${od || '—'}</div>
-          </div>
-          <div style="border:1.5px solid #FDE68A;border-radius:8px;overflow:hidden">
-            <div style="background:#FFF7ED;padding:6px 10px;border-bottom:1px solid #FDE68A">
-              <span style="font-size:.6rem;font-weight:800;text-transform:uppercase;letter-spacing:.07em;color:#B45309">OS — Left Eye</span>
-            </div>
-            <div style="padding:8px 10px;font-family:monospace;font-size:.85rem;color:#1C1C1C;background:#fff">${os || '—'}</div>
-          </div>
-        </div>
-      </div>` : ''}
-      ${c.remarks ? `<div>
-        <div style="font-size:.6rem;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:#9CA3AF;margin-bottom:4px">Remarks</div>
-        <div style="font-size:.85rem;color:#374151;font-style:italic;line-height:1.6">"${c.remarks}"</div>
+      ${block('Chief Complaint', c.chiefComplaint)}
+      ${block('History of Present Illness', c.historyPresentIllness)}
+      ${block("Doctor's Assessment", c.assessment)}
+      ${block('Recommendation / Plan', c.recommendation)}
+      ${c.followUpDate ? `<div>
+        <div style="font-size:.6rem;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:#9CA3AF;margin-bottom:4px">Follow-up Date</div>
+        <div style="font-size:.85rem;font-weight:600;color:#1C1C1C">${new Date(c.followUpDate+'T00:00:00').toLocaleDateString('en-PH',{year:'numeric',month:'long',day:'numeric'})}</div>
       </div>` : ''}
     </div>
     <div class="modal-footer">
       <button class="btn-secondary" onclick="window.closeModal()">Close</button>
+      ${c.examId ? `<button class="btn-ghost" onclick="window.closeModal();window.viewExamDetail('${patientId}','${c.examId}')">
+        ${icon('eye','icon-sm')} Exam Record
+      </button>` : ''}
     </div>`)
 }
 window.viewConsultationDetail = viewConsultationDetail
 
 // ── View/Print/Clearance from getExamRecords() ───────────────────
+// Thin wrapper — viewExamDetail() (above) is the single canonical exam
+// rendering; this just resolves the patientId this record belongs to
+// (getExamRecords() flattens across all patients, viewExamDetail() needs
+// a specific one) rather than maintaining a near-duplicate modal.
 function viewExamRecord(examId) {
   const e = getExamRecords().find(r => r.id === examId)
   if (!e) { toast('Record not found.', 'error'); return }
-
-  const examDate = new Date(e.date.includes('T') ? e.date : e.date + 'T00:00:00')
-  const examDateStr = examDate.toLocaleDateString('en-PH', {year:'numeric',month:'long',day:'numeric'})
-  const expiryDate = new Date(examDate)
-  expiryDate.setFullYear(expiryDate.getFullYear() + 1)
-  const expiryStr = expiryDate.toLocaleDateString('en-PH', {year:'numeric',month:'long',day:'numeric'})
-  const docRecord  = doctors.find(d => d.name === e.doctor)
-  const docPhoto   = docRecord?.photoUrl || null
-  const docInits   = (e.doctor||'Dr').split(' ').slice(0,2).map(w=>w[0]||'').join('').toUpperCase()
-  const patPhoto   = e.patientPhotoUrl || null
-  const patInits   = (e.patientName||'').split(' ').slice(0,2).map(w=>w[0]||'').join('').toUpperCase()
-
-  const eyeField = (label, val, isLast) => `
-    <div style="padding:10px 6px;${isLast ? '' : 'border-right:1px solid #F3F4F6;'}text-align:center;flex:1;min-width:0">
-      <div style="font-size:.58rem;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:#9CA3AF;margin-bottom:4px">${label}</div>
-      <div style="font-size:.9rem;font-weight:800;font-family:monospace;color:#1C1C1C">${val || '—'}</div>
-    </div>`
-
-  showModal(`
-    <div class="modal-header">
-      <div class="modal-title">Examination Record</div>
-      <button class="modal-close" onclick="window.closeModal()">&times;</button>
-    </div>
-    <div class="modal-body" style="padding:0">
-
-      <!-- Header -->
-      <div class="examrec-header" style="background:linear-gradient(135deg,#1C1C1C 0%,#2A2A2A 100%);padding:18px 24px;display:flex;flex-direction:column;gap:14px">
-        <div style="display:flex;align-items:center;gap:10px">
-          ${patPhoto
-            ? `<div style="width:40px;height:40px;border-radius:50%;overflow:hidden;flex-shrink:0;border:2px solid rgba(255,255,255,.15)"><img src="${patPhoto}" alt="${e.patientName}" style="width:100%;height:100%;object-fit:cover;border-radius:50%;display:block" onerror="var w=this.parentElement;if(w){w.style.cssText='width:40px;height:40px;border-radius:50%;background:#E8760A;display:flex;align-items:center;justify-content:center;font-size:.85rem;font-weight:800;color:#fff;flex-shrink:0';w.textContent='${patInits.replace(/'/g,"\\'")}'}"></div>`
-            : `<div style="width:40px;height:40px;border-radius:50%;background:#E8760A;display:flex;align-items:center;justify-content:center;font-size:.85rem;font-weight:800;color:#fff;flex-shrink:0">${patInits}</div>`
-          }
-          <div>
-            <div style="font-size:.6rem;text-transform:uppercase;letter-spacing:.14em;color:#E8760A;font-weight:800;margin-bottom:3px">Patient Examination Record</div>
-            <div style="font-size:1rem;font-weight:900;color:#fff">${e.patientName}</div>
-            <div style="font-size:.7rem;font-family:monospace;color:rgba(255,255,255,.4);margin-top:1px">${e.patientId}</div>
-          </div>
-        </div>
-        <div style="display:flex;align-items:center;gap:10px;padding-top:14px;border-top:1px solid rgba(255,255,255,.08)">
-          ${docPhoto
-            ? `<div style="width:40px;height:40px;border-radius:50%;overflow:hidden;flex-shrink:0;border:2px solid rgba(255,255,255,.15)"><img src="${docPhoto}" alt="${e.doctor}" style="width:100%;height:100%;object-fit:cover;border-radius:50%;display:block"></div>`
-            : `<div style="width:40px;height:40px;border-radius:50%;background:#3D3D3D;display:flex;align-items:center;justify-content:center;font-size:.75rem;font-weight:800;color:#E8760A;flex-shrink:0;letter-spacing:.02em">${docInits}</div>`
-          }
-          <div>
-            <div style="font-size:.6rem;color:rgba(255,255,255,.35);text-transform:uppercase;letter-spacing:.05em;margin-bottom:1px">Doctor</div>
-            <div style="font-size:.82rem;font-weight:600;color:#fff">${e.doctor}</div>
-            <div style="font-size:.72rem;color:rgba(255,255,255,.5);margin-top:1px">${examDateStr}</div>
-            <div style="font-size:.65rem;font-family:monospace;color:rgba(255,255,255,.28);margin-top:5px">${e.id}</div>
-          </div>
-        </div>
-      </div>
-
-      <div style="padding:18px 24px;display:flex;flex-direction:column;gap:16px">
-
-        <!-- OD/OS Cards -->
-        <div>
-          <div style="font-size:.63rem;font-weight:700;text-transform:uppercase;letter-spacing:.1em;color:#9CA3AF;margin-bottom:8px">Refraction &amp; Visual Acuity</div>
-          <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
-            <div style="border:1.5px solid #86EFAC;border-radius:10px;overflow:hidden">
-              <div style="background:#F0FDF4;padding:8px 12px;border-bottom:1px solid #86EFAC;display:flex;align-items:center;gap:6px">
-                <div style="width:7px;height:7px;border-radius:50%;background:#22C55E;flex-shrink:0"></div>
-                <span style="font-size:.65rem;font-weight:800;text-transform:uppercase;letter-spacing:.07em;color:#059669">OD — Right Eye</span>
-              </div>
-              <div style="display:flex;background:#fff">
-                ${eyeField('SPH', e.od?.sph, false)}
-                ${eyeField('CYL', e.od?.cyl, false)}
-                ${eyeField('AXIS', e.od?.axis, false)}
-                ${eyeField('VA', e.od?.va, true)}
-              </div>
-              ${e.od?.add ? `<div style="padding:7px 12px;border-top:1px solid #BBF7D0;background:#F0FDF4;display:flex;align-items:center;justify-content:space-between"><span style="font-size:.6rem;color:#9CA3AF;font-weight:700;text-transform:uppercase">Add Power</span><span style="font-size:.88rem;font-weight:800;font-family:monospace;color:#059669">${e.od.add}</span></div>` : ''}
-            </div>
-            <div style="border:1.5px solid #FDE68A;border-radius:10px;overflow:hidden">
-              <div style="background:#FFF7ED;padding:8px 12px;border-bottom:1px solid #FDE68A;display:flex;align-items:center;gap:6px">
-                <div style="width:7px;height:7px;border-radius:50%;background:#E8760A;flex-shrink:0"></div>
-                <span style="font-size:.65rem;font-weight:800;text-transform:uppercase;letter-spacing:.07em;color:#B45309">OS — Left Eye</span>
-              </div>
-              <div style="display:flex;background:#fff">
-                ${eyeField('SPH', e.os?.sph, false)}
-                ${eyeField('CYL', e.os?.cyl, false)}
-                ${eyeField('AXIS', e.os?.axis, false)}
-                ${eyeField('VA', e.os?.va, true)}
-              </div>
-              ${e.os?.add ? `<div style="padding:7px 12px;border-top:1px solid #FEF3C7;background:#FFFBEB;display:flex;align-items:center;justify-content:space-between"><span style="font-size:.6rem;color:#9CA3AF;font-weight:700;text-transform:uppercase">Add Power</span><span style="font-size:.88rem;font-weight:800;font-family:monospace;color:#E8760A">${e.os.add}</span></div>` : ''}
-            </div>
-          </div>
-        </div>
-
-        <!-- IOP + PD -->
-        ${(e.iop?.od || e.iop?.os || e.pd) ? `
-        <div style="display:grid;grid-template-columns:${[e.iop?.od||e.iop?.os ? '1fr 1fr' : '', e.pd ? '1fr' : ''].filter(Boolean).join(' ')};gap:8px">
-          ${e.iop?.od || e.iop?.os ? `
-          <div style="background:#F9FAFB;border:1px solid #F3F4F6;border-radius:8px;padding:11px 13px">
-            <div style="font-size:.58rem;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:#9CA3AF;margin-bottom:3px">IOP — OD</div>
-            <div style="font-size:1.05rem;font-weight:800;color:#1C1C1C;font-family:monospace">${e.iop?.od || '—'} <span style="font-size:.67rem;font-weight:400;color:#9CA3AF">mmHg</span></div>
-          </div>
-          <div style="background:#F9FAFB;border:1px solid #F3F4F6;border-radius:8px;padding:11px 13px">
-            <div style="font-size:.58rem;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:#9CA3AF;margin-bottom:3px">IOP — OS</div>
-            <div style="font-size:1.05rem;font-weight:800;color:#1C1C1C;font-family:monospace">${e.iop?.os || '—'} <span style="font-size:.67rem;font-weight:400;color:#9CA3AF">mmHg</span></div>
-          </div>` : ''}
-          ${e.pd ? `
-          <div style="background:#F9FAFB;border:1px solid #F3F4F6;border-radius:8px;padding:11px 13px">
-            <div style="font-size:.58rem;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:#9CA3AF;margin-bottom:3px">PD</div>
-            <div style="font-size:1.05rem;font-weight:800;color:#1C1C1C;font-family:monospace">${e.pd} <span style="font-size:.67rem;font-weight:400;color:#9CA3AF">mm</span></div>
-          </div>` : ''}
-        </div>` : ''}
-
-        <!-- Diagnosis + Lens -->
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
-          <div style="background:#F9FAFB;border:1px solid #F3F4F6;border-radius:8px;padding:12px 14px">
-            <div style="font-size:.6rem;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:#9CA3AF;margin-bottom:5px">Diagnosis</div>
-            <div style="font-size:.9rem;font-weight:700;color:#1C1C1C">${e.diagnosis || '—'}</div>
-            ${e.recommendation ? `<div style="font-size:.78rem;color:#6B7280;margin-top:4px;line-height:1.5">${e.recommendation}</div>` : ''}
-          </div>
-          <div style="background:#F9FAFB;border:1px solid #F3F4F6;border-radius:8px;padding:12px 14px">
-            <div style="font-size:.6rem;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:#9CA3AF;margin-bottom:5px">Lens Prescription</div>
-            <div style="font-size:.88rem;font-weight:700;color:#1C1C1C">${e.lensType || '—'}</div>
-            ${e.lensMaterial && e.lensMaterial !== 'N/A' ? `<div style="font-size:.78rem;color:#6B7280;margin-top:2px">${e.lensMaterial}</div>` : ''}
-            ${e.lensCoating && e.lensCoating.length ? `<div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:5px">${e.lensCoating.map(c=>`<span style="background:#FFF7ED;color:#C2410C;font-size:.68rem;font-weight:600;padding:2px 7px;border-radius:20px;border:1px solid #FDE68A">${c}</span>`).join('')}</div>` : ''}
-          </div>
-        </div>
-
-        ${e.testResults ? `
-        <div>
-          <div style="font-size:.63rem;font-weight:700;text-transform:uppercase;letter-spacing:.1em;color:#9CA3AF;margin-bottom:5px">Test Results</div>
-          <div style="background:#F9FAFB;border:1px solid #F3F4F6;border-radius:8px;padding:11px 13px;font-size:.8rem;color:#374151;line-height:1.65">${e.testResults}</div>
-        </div>` : ''}
-
-        ${e.remarks ? `
-        <div>
-          <div style="font-size:.63rem;font-weight:700;text-transform:uppercase;letter-spacing:.1em;color:#9CA3AF;margin-bottom:5px">Doctor's Remarks</div>
-          <div style="font-size:.83rem;color:#374151;font-style:italic;padding-left:12px;border-left:3px solid #E8760A">"${e.remarks}"</div>
-        </div>` : ''}
-
-        <div style="display:flex;align-items:center;gap:8px;padding:9px 13px;background:#F0FDF4;border:1px solid #BBF7D0;border-radius:8px">
-          ${icon('check-circle','icon-sm')}
-          <span style="font-size:.77rem;color:#059669;font-weight:500">Prescription valid until <strong>${expiryStr}</strong></span>
-        </div>
-      </div>
-    </div>
-    <div class="modal-footer">
-      <button class="btn-ghost" onclick="window.closeModal()">Close</button>
-      <button class="btn-ghost" onclick="window.printExamRecord('${e.id}');window.closeModal()">
-        ${icon('printer','icon-sm')} Print
-      </button>
-      <button class="btn-primary" style="color:#fff;background:#0891b2;border-color:#0891b2"
-              onclick="window.closeModal();window.generateClearanceFromRecord('${e.id}')">
-        ${icon('award','icon-sm')} Generate Clearance
-      </button>
-    </div>`, 'modal-lg')
+  viewExamDetail(e.patientId, examId)
 }
 window.viewExamRecord = viewExamRecord
 
@@ -7690,7 +8185,7 @@ function printExamRecord(examId) {
   if (!r) { toast('Record not found.', 'error'); return }
   const p = patients.find(pt => pt.id === r.patientId) || {
     id: r.patientId, name: r.patientName,
-    gender: '—', age: '—', dob: null, contact: '—', email: '', address: '', bloodType: '', medicalHistory: ''
+    gender: '—', age: '—', dob: null, contact: '—', email: '', address: ''
   }
   const e = (p.examinations||[]).find(ex => ex.id === examId) || r
   _openExamPrintWindow(p, e)
@@ -8012,7 +8507,6 @@ function _openExamPrintWindow(p, e) {
   const secLbl  = txt => `<div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:#999;margin:10px 0 4px">${txt}</div>`
   const noteBox = txt => `<div style="background:#fffbf0;border:1px solid #fde68a;border-radius:6px;padding:9px 12px;font-size:11px;color:#444;line-height:1.6;margin-bottom:12px">${txt}</div>`
 
-  const showAdd = e.od?.add && e.od.add !== '0.00'
   const examDate = _fmtDt(e.date)
   const dob      = _fmtDt(p.dob)
   const generated = new Date().toLocaleDateString('en-PH',{year:'numeric',month:'long',day:'numeric',hour:'2-digit',minute:'2-digit'})
@@ -8026,7 +8520,7 @@ function _openExamPrintWindow(p, e) {
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>Optical Examination — ${p.name}</title>
+  <title>Optical Examination: ${p.name}</title>
   <style>
     /* margin:0 so Chrome has no page-margin band left to draw its own
        print header/footer (URL, date, page number) into — the same
@@ -8107,14 +8601,12 @@ function _openExamPrintWindow(p, e) {
       <div class="pt-meta">
         <span>${p.gender||'—'}, ${p.age||'—'} yrs</span>
         ${p.dob ? `<span>DOB: ${dob}</span>` : ''}
-        ${p.bloodType ? `<span style="font-weight:700;color:#DC2626">Blood Type: ${p.bloodType}</span>` : ''}
       </div>
       <div class="pt-meta" style="margin-top:3px">
         ${p.contact ? `<span>${p.contact}</span>` : ''}
         ${p.email ? `<span>${p.email}</span>` : ''}
       </div>
       ${p.address ? `<div class="pt-addr">${p.address}</div>` : ''}
-      ${p.medicalHistory ? `<div class="pt-addr" style="margin-top:4px;color:#888"><strong>Medical History:</strong> ${p.medicalHistory}</div>` : ''}
     </div>
     <div class="issuer">
       <div class="iss-lbl">Examined By</div>
@@ -8136,11 +8628,11 @@ function _openExamPrintWindow(p, e) {
         </tr>
       </thead>
       <tbody>
+        ${eyeRow('VA (Uncorrected)', e.od?.vaUncorrected, e.os?.vaUncorrected)}
+        ${eyeRow('VA (Corrected)', e.od?.va, e.os?.va)}
         ${eyeRow('Sphere (SPH)', e.od?.sph, e.os?.sph)}
         ${eyeRow('Cylinder (CYL)', e.od?.cyl, e.os?.cyl)}
         ${eyeRow('Axis', e.od?.axis, e.os?.axis)}
-        ${eyeRow('Visual Acuity', e.od?.va, e.os?.va)}
-        ${showAdd ? eyeRow('Add Power', e.od?.add, e.os?.add) : ''}
       </tbody>
     </table>
   </div>
@@ -8149,11 +8641,11 @@ function _openExamPrintWindow(p, e) {
   ${(e.iop?.od || e.iop?.os || e.pd) ? `<div class="info-grid">
     ${e.iop?.od || e.iop?.os ? `
     <div class="info-box">
-      <div class="ib-lbl">IOP — OD</div>
+      <div class="ib-lbl">IOP (OD)</div>
       <div class="ib-val">${e.iop?.od||'—'} <span class="ib-unit">mmHg</span></div>
     </div>
     <div class="info-box">
-      <div class="ib-lbl">IOP — OS</div>
+      <div class="ib-lbl">IOP (OS)</div>
       <div class="ib-val">${e.iop?.os||'—'} <span class="ib-unit">mmHg</span></div>
     </div>` : ''}
     ${e.pd ? `
@@ -8163,25 +8655,15 @@ function _openExamPrintWindow(p, e) {
     </div>` : ''}
   </div>` : ''}
 
-  <!-- DIAGNOSIS & LENS -->
-  ${secLbl('Clinical Assessment')}
-  <div class="diag-grid">
-    <div class="diag-box">
-      <div class="db-lbl">Diagnosis</div>
-      <div class="db-val">${e.diagnosis||'—'}</div>
-      ${e.recommendation ? `<div class="db-sub">${e.recommendation}</div>` : ''}
-    </div>
-    <div class="diag-box">
-      <div class="db-lbl">Lens Prescription</div>
-      <div class="db-val" style="font-size:13px">${e.lensType||'—'}${e.lensMaterial && e.lensMaterial!=='N/A' ? ' / '+e.lensMaterial : ''}</div>
-      ${e.lensCoating?.length ? `<div style="margin-top:5px">${e.lensCoating.map(pill).join('')}</div>` : ''}
-      ${e.frameSelection && e.frameSelection!=='N/A — monitoring only' ? `<div class="db-sub" style="margin-top:5px">Frame: ${e.frameSelection}</div>` : ''}
-    </div>
+  <!-- DIAGNOSIS -->
+  ${secLbl('Diagnosis')}
+  <div class="diag-box">
+    <div class="db-val">${e.diagnosis||'—'}</div>
   </div>
 
-  ${e.prescriptionDetails ? secLbl('Prescription Notes') + noteBox(e.prescriptionDetails) : ''}
+  ${e.externalFindings   ? secLbl('External / Internal Findings') + noteBox(e.externalFindings) : ''}
   ${e.testResults        ? secLbl('Test Results')       + noteBox(e.testResults)        : ''}
-  ${e.remarks ? `<div class="remarks-block">"${e.remarks}"<br><span style="font-size:10px;color:#aaa;font-style:normal">— ${e.doctor}</span></div>` : ''}
+  ${e.remarks ? `<div class="remarks-block">"${e.remarks}"<br><span style="font-size:10px;color:#aaa;font-style:normal">by ${e.doctor}</span></div>` : ''}
 
   <!-- SIGNATURES -->
   <div class="sig-grid">
@@ -8222,10 +8704,11 @@ function _openRxPrintWindow(p, rx) {
 
   const rxDate    = _fmtDt(rx.date)
   const dob       = _fmtDt(p.dob)
-  const expiry    = new Date(rx.date.includes('T') ? rx.date : rx.date+'T00:00:00')
-  expiry.setFullYear(expiry.getFullYear() + 1)
-  const isExpired = expiry < new Date()
-  const expiryStr = _fmtDt(expiry.toISOString().slice(0,10))
+  const expiry    = rx.expiryDate ? new Date(rx.expiryDate.includes('T') ? rx.expiryDate : rx.expiryDate+'T00:00:00')
+                    : (() => { const d = new Date(rx.date.includes('T') ? rx.date : rx.date+'T00:00:00'); d.setFullYear(d.getFullYear()+1); return d })()
+  const isExpired = (rx.status === 'expired') || (rx.status !== 'superseded' && expiry < new Date())
+  const statusLabel = rx.status === 'superseded' ? 'Superseded' : (isExpired ? 'Expired' : 'Valid')
+  const expiryStr = _fmtDt(localDateStr(expiry))
   const generated = new Date().toLocaleDateString('en-PH',{year:'numeric',month:'long',day:'numeric',hour:'2-digit',minute:'2-digit'})
   const logoAbsUrl = new URL(window._clinicLogoUrl || 'assets/images/logo/clinic-logo.png', document.baseURI).href
   const qrDataUrl = _makeQRDataUrl(p.qrData, 90)
@@ -8234,7 +8717,7 @@ function _openRxPrintWindow(p, rx) {
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>Prescription — ${p.name}</title>
+  <title>Prescription: ${p.name}</title>
   <style>
     /* margin:0 so Chrome has no page-margin band left to draw its own
        print header/footer (URL, date, page number) into — the same
@@ -8272,6 +8755,11 @@ function _openRxPrintWindow(p, rx) {
     .diag-box  { background: #f9f9f9; border: 1px solid #eee; border-radius: 8px; padding: 12px 14px; margin-bottom: 16px; }
     .db-lbl    { font-size: 10px; text-transform: uppercase; letter-spacing: .05em; color: #aaa; margin-bottom: 4px; }
     .db-val    { font-size: 16px; font-weight: 800; color: #111; }
+    .info-grid { display: grid; gap: 10px; margin-bottom: 16px; }
+    .info-box  { background: #f9f9f9; border: 1px solid #eee; border-radius: 8px; padding: 10px 12px; }
+    .ib-lbl    { font-size: 10px; text-transform: uppercase; letter-spacing: .05em; color: #aaa; margin-bottom: 3px; }
+    .ib-val    { font-size: 16px; font-weight: 800; color: #111; }
+    .ib-unit   { font-size: 10px; color: #aaa; font-weight: 400; }
     .remarks-block { border-top: 1px solid #eee; padding-top: 12px; margin-top: 8px; font-style: italic; font-size: 13px; color: #555; }
     .sig-grid  { display: grid; grid-template-columns: 1fr 1fr; gap: 50px; margin-top: 26px; padding-top: 16px; border-top: 1px dashed #ccc; page-break-before: avoid; }
     .sig-line  { border-top: 1px solid #111; padding-top: 7px; text-align: center; font-size: 11px; font-weight: 700; text-transform: uppercase; }
@@ -8308,7 +8796,6 @@ function _openRxPrintWindow(p, rx) {
       <div class="pt-meta">
         <span>${p.gender||'—'}, ${p.age||'—'} yrs</span>
         ${p.dob ? `<span>DOB: ${dob}</span>` : ''}
-        ${p.bloodType ? `<span style="font-weight:700;color:#DC2626">Blood Type: ${p.bloodType}</span>` : ''}
       </div>
       ${(p.contact || p.email) ? `<div class="pt-meta" style="margin-top:3px">
         ${p.contact ? `<span>${p.contact}</span>` : ''}
@@ -8318,16 +8805,17 @@ function _openRxPrintWindow(p, rx) {
     <div class="issuer">
       <div class="iss-lbl">Issued By</div>
       <div class="iss-name">${rx.doctor||'—'}</div>
+      ${rx.prcLicense ? `<div class="iss-date">PRC License No. ${rx.prcLicense}</div>` : ''}
       <div class="iss-date">${rxDate}</div>
-      <div class="iss-id">${rx.id}</div>
-      <div class="valid-pill" style="${isExpired ? 'background:#FEE2E2;color:#DC2626' : 'background:#ECFDF5;color:#059669'}">
-        ${isExpired ? 'Expired' : 'Valid until ' + expiryStr}
+      <div class="iss-id">Rx No. ${rx.id}</div>
+      <div class="valid-pill" style="${statusLabel === 'Valid' ? 'background:#ECFDF5;color:#059669' : (statusLabel === 'Superseded' ? 'background:#F3F4F6;color:#6B7280' : 'background:#FEE2E2;color:#DC2626')}">
+        ${statusLabel === 'Valid' ? 'Valid until ' + expiryStr : statusLabel}
       </div>
     </div>
   </div>
 
   <!-- REFRACTION -->
-  ${secLbl('Refraction Prescription')}
+  ${secLbl('Final Refraction')}
   <div class="tbl-border">
     <table>
       <thead class="tbl-hdr">
@@ -8341,24 +8829,35 @@ function _openRxPrintWindow(p, rx) {
         ${eyeRow('Sphere (SPH)', rx.od?.sph, rx.os?.sph)}
         ${eyeRow('Cylinder (CYL)', rx.od?.cyl, rx.os?.cyl)}
         ${eyeRow('Axis', rx.od?.axis, rx.os?.axis)}
+        ${(rx.od?.add || rx.os?.add) ? eyeRow('Add Power', rx.od?.add, rx.os?.add) : ''}
       </tbody>
     </table>
   </div>
 
-  ${rx.lensType && rx.lensType !== '—' ? `
+  <div class="info-grid" style="grid-template-columns:repeat(${[rx.pd,rx.lensType,rx.lensMaterial].filter(Boolean).length || 1},1fr)">
+    ${rx.pd ? `<div class="info-box"><div class="ib-lbl">Pupillary Distance</div><div class="ib-val">${rx.pd} <span class="ib-unit">mm</span></div></div>` : ''}
+    ${rx.lensType ? `<div class="info-box"><div class="ib-lbl">Lens Type</div><div class="db-val" style="font-size:14px">${rx.lensType}</div></div>` : ''}
+    ${rx.lensMaterial ? `<div class="info-box"><div class="ib-lbl">Lens Material</div><div class="db-val" style="font-size:14px">${rx.lensMaterial}</div></div>` : ''}
+  </div>
+
+  ${rx.frameSelection ? `
   <div class="diag-box">
-    <div class="db-lbl">Lens Type</div>
-    <div class="db-val">${rx.lensType}</div>
+    <div class="db-lbl">Frame Selection</div>
+    <div class="db-val" style="font-size:14px">${rx.frameSelection}</div>
   </div>` : ''}
 
-  ${rx.remarks ? `<div class="remarks-block">"${rx.remarks}"<br><span style="font-size:10px;color:#aaa;font-style:normal">— ${rx.doctor}</span></div>` : ''}
+  ${rx.lensCoating && rx.lensCoating.length ? `
+  <div class="diag-box">
+    <div class="db-lbl">Lens Coating</div>
+    <div>${rx.lensCoating.map(c=>`<span style="display:inline-block;background:#FFF7ED;color:#C2410C;font-size:10px;font-weight:700;padding:2px 9px;border-radius:20px;margin:2px 4px 0 0;border:1px solid #fde68a">${c}</span>`).join('')}</div>
+  </div>` : ''}
 
   <!-- SIGNATURES -->
   <div class="sig-grid">
     <div>
       <div style="height:32px"></div>
       <div class="sig-line">${rx.doctor||'Examining Doctor'}</div>
-      <div class="sig-sub">Optometrist / Examining Doctor</div>
+      <div class="sig-sub">Optometrist / Examining Doctor${rx.prcLicense ? ' (PRC ' + rx.prcLicense + ')' : ''}</div>
     </div>
     <div>
       <div style="height:32px"></div>
@@ -8385,49 +8884,31 @@ function printRxRecord(patientId, rxId) {
 window.printRxRecord = printRxRecord
 
 // ════════════════════════════════════════════════════════════════
-//  PATIENT — VIEW PRESCRIPTION DETAIL (from the compact Rx list)
+//  PATIENT — VIEW PRESCRIPTION DETAIL (canonical prescription view)
 // ════════════════════════════════════════════════════════════════
-// Not its own modal anymore — it had its own scroll problems (buttons
-// baked into the scrollable content instead of a real .modal-footer, see
-// git history) that kept resurfacing. Every prescription is generated
-// from an examination, and viewPrescriptionModal() (below) already
-// renders that exam's prescription correctly and scrolls properly, so
-// this just finds the matching exam and opens that instead of
-// maintaining a second, parallel implementation of the same document.
+// The single canonical rendering of a prescription — the issued
+// document, not the exam that produced it. Must NOT show uncorrected
+// acuity, external findings, or the doctor's narrative notes (see
+// database/schema.sql's `prescriptions` CREATE TABLE comment).
+// viewPrescriptionModal()/printPrescription() (exam-keyed callers) both
+// resolve to this same implementation instead of maintaining a second,
+// parallel one.
 function viewPrescriptionDetail(patientId, rxId) {
   const p  = patients.find(p => p.id === patientId)
   if (!p) return
   const rx = (p.prescriptions || []).find(r => r.id === rxId)
-  if (!rx) return
+  if (!rx) { toast('Prescription not found.', 'error'); return }
 
-  const matchExam = (p.examinations || []).find(e => e.date === rx.date && e.doctor === rx.doctor)
-                   || (p.examinations || []).find(e => e.date === rx.date)
-  if (!matchExam) {
-    toast('Could not find the exam record behind this prescription.', 'error')
-    return
-  }
-  window.viewPrescriptionModal(patientId, matchExam.id)
-}
-window.viewPrescriptionDetail = viewPrescriptionDetail
-
-// ════════════════════════════════════════════════════════════════
-//  OPTICAL EXAMINATION — VIEW PRESCRIPTION MODAL
-// ════════════════════════════════════════════════════════════════
-function viewPrescriptionModal(patientId, examId) {
-  const p = patients.find(p => p.id === patientId)
-  if (!p) return
-  const e = p.examinations.find(e => e.id === examId)
-  if (!e) return
-
-  const rxDate = new Date(e.date.includes('T') ? e.date : e.date + 'T00:00:00')
+  const rxDate = new Date(rx.date.includes('T') ? rx.date : rx.date + 'T00:00:00')
   const rxDateStr = rxDate.toLocaleDateString('en-PH', {year:'numeric',month:'long',day:'numeric'})
-  const expiryDate = new Date(rxDate)
-  expiryDate.setFullYear(expiryDate.getFullYear() + 1)
+  const expiryDate = rx.expiryDate ? new Date(rx.expiryDate.includes('T') ? rx.expiryDate : rx.expiryDate+'T00:00:00')
+                     : (() => { const d = new Date(rxDate); d.setFullYear(d.getFullYear()+1); return d })()
   const expiryStr = expiryDate.toLocaleDateString('en-PH', {year:'numeric',month:'long',day:'numeric'})
-  const isExpired = expiryDate < new Date()
-  const docRecord = doctors.find(d => d.name === e.doctor)
+  const statusLabel = rx.status === 'superseded' ? 'Superseded' : (rx.status === 'expired' || expiryDate < new Date() ? 'Expired' : 'Valid')
+  const statusColor = statusLabel === 'Valid' ? { bg:'#ECFDF5', fg:'#059669' } : (statusLabel === 'Superseded' ? { bg:'#F3F4F6', fg:'#6B7280' } : { bg:'#FEE2E2', fg:'#DC2626' })
+  const docRecord = doctors.find(d => d.name === rx.doctor)
   const docPhoto  = docRecord?.photoUrl || null
-  const docInits  = (e.doctor||'Dr').split(' ').slice(0,2).map(w=>w[0]||'').join('').toUpperCase()
+  const docInits  = (rx.doctor||'Dr').split(' ').slice(0,2).map(w=>w[0]||'').join('').toUpperCase()
 
   const eyeField = (label, val, isLast) => `
     <div style="padding:11px 8px;${isLast ? '' : 'border-right:1px solid #F3F4F6;'}text-align:center;flex:1;min-width:0">
@@ -8449,8 +8930,8 @@ function viewPrescriptionModal(patientId, examId) {
           <div style="font-size:1rem;font-weight:900;color:#fff;letter-spacing:-.01em">Cana Optical Clinic</div>
         </div>
         <div style="text-align:right;flex-shrink:0">
-          <div style="font-size:.65rem;color:rgba(255,255,255,.35);text-transform:uppercase;letter-spacing:.05em;margin-bottom:2px">Rx ID</div>
-          <div style="font-size:.72rem;font-family:monospace;color:rgba(255,255,255,.55)">${e.id}</div>
+          <div style="font-size:.65rem;color:rgba(255,255,255,.35);text-transform:uppercase;letter-spacing:.05em;margin-bottom:2px">Rx No.</div>
+          <div style="font-size:.72rem;font-family:monospace;color:rgba(255,255,255,.55)">${rx.id}</div>
         </div>
       </div>
 
@@ -8469,7 +8950,6 @@ function viewPrescriptionModal(patientId, examId) {
               <div style="display:flex;flex-wrap:wrap;gap:5px 12px">
                 ${p.gender || p.age ? `<span style="font-size:.73rem;color:#555">${[p.gender, p.age ? p.age + ' yrs' : ''].filter(Boolean).join(', ')}</span>` : ''}
                 ${p.contact ? `<span style="font-size:.73rem;color:#555">${p.contact}</span>` : ''}
-                ${p.bloodType ? `<span style="font-size:.73rem;font-weight:700;color:#DC2626">BT ${p.bloodType}</span>` : ''}
               </div>
               ${p.address ? `<div style="font-size:.68rem;color:#9CA3AF;margin-top:3px">${p.address}</div>` : ''}
             </div>
@@ -8477,16 +8957,17 @@ function viewPrescriptionModal(patientId, examId) {
           <div class="rx-issued-block" style="text-align:right;flex-shrink:0;min-width:150px;display:flex;align-items:center;justify-content:flex-end;gap:8px">
             <div>
               <div style="font-size:.62rem;color:#9CA3AF;text-transform:uppercase;letter-spacing:.04em;margin-bottom:2px">Issued By</div>
-              <div style="font-size:.85rem;font-weight:700;color:#111">${e.doctor}</div>
+              <div style="font-size:.85rem;font-weight:700;color:#111">${rx.doctor}</div>
+              ${rx.prcLicense ? `<div style="font-size:.68rem;color:#9CA3AF;margin-top:1px">PRC ${rx.prcLicense}</div>` : ''}
               <div style="font-size:.72rem;color:#6B7280;margin-top:2px">${rxDateStr}</div>
               <div style="margin-top:8px">
-                <span style="font-size:.68rem;font-weight:700;padding:3px 9px;border-radius:20px;${isExpired ? 'background:#FEE2E2;color:#DC2626' : 'background:#ECFDF5;color:#059669'}">
-                ${isExpired ? 'Expired' : 'Valid until ' + expiryStr}
+                <span style="font-size:.68rem;font-weight:700;padding:3px 9px;border-radius:20px;background:${statusColor.bg};color:${statusColor.fg}">
+                ${statusLabel === 'Valid' ? 'Valid until ' + expiryStr : statusLabel}
               </span>
               </div>
             </div>
             ${docPhoto
-              ? `<div class="rx-doc-avatar" style="width:36px;height:36px;border-radius:50%;overflow:hidden;flex-shrink:0"><img src="${docPhoto}" alt="${e.doctor}" style="width:100%;height:100%;object-fit:cover;border-radius:50%;display:block"></div>`
+              ? `<div class="rx-doc-avatar" style="width:36px;height:36px;border-radius:50%;overflow:hidden;flex-shrink:0"><img src="${docPhoto}" alt="${rx.doctor}" style="width:100%;height:100%;object-fit:cover;border-radius:50%;display:block"></div>`
               : `<div class="rx-doc-avatar" style="width:36px;height:36px;border-radius:50%;background:#1C1C1C;display:flex;align-items:center;justify-content:center;font-size:.7rem;font-weight:800;color:#E8760A;flex-shrink:0;letter-spacing:.02em">${docInits}</div>`
             }
           </div>
@@ -8494,114 +8975,104 @@ function viewPrescriptionModal(patientId, examId) {
 
         <!-- OD/OS Rx values -->
         <div>
-          <div style="font-size:.63rem;font-weight:700;text-transform:uppercase;letter-spacing:.1em;color:#9CA3AF;margin-bottom:8px">Refraction Prescription</div>
+          <div style="font-size:.63rem;font-weight:700;text-transform:uppercase;letter-spacing:.1em;color:#9CA3AF;margin-bottom:8px">Final Refraction</div>
           <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
             <div style="border:1.5px solid #86EFAC;border-radius:10px;overflow:hidden">
               <div style="background:#F0FDF4;padding:8px 12px;border-bottom:1px solid #86EFAC;display:flex;align-items:center;gap:6px">
                 <div style="width:7px;height:7px;border-radius:50%;background:#22C55E;flex-shrink:0"></div>
-                <span style="font-size:.65rem;font-weight:800;text-transform:uppercase;letter-spacing:.07em;color:#059669">OD — Right Eye</span>
+                <span style="font-size:.65rem;font-weight:800;text-transform:uppercase;letter-spacing:.07em;color:#059669">OD (Right Eye)</span>
               </div>
               <div style="display:flex;background:#fff">
-                ${eyeField('SPH', e.od?.sph, false)}
-                ${eyeField('CYL', e.od?.cyl, false)}
-                ${eyeField('AXIS', e.od?.axis, false)}
-                ${eyeField('VA', e.od?.va, true)}
+                ${eyeField('SPH', rx.od?.sph, false)}
+                ${eyeField('CYL', rx.od?.cyl, false)}
+                ${eyeField('AXIS', rx.od?.axis, true)}
               </div>
-              ${e.od?.add ? `<div style="padding:7px 12px;border-top:1px solid #BBF7D0;background:#F0FDF4;display:flex;align-items:center;justify-content:space-between"><span style="font-size:.6rem;color:#9CA3AF;font-weight:700;text-transform:uppercase">Add Power</span><span style="font-size:.88rem;font-weight:800;font-family:monospace;color:#059669">${e.od.add}</span></div>` : ''}
+              ${rx.od?.add ? `<div style="padding:7px 12px;border-top:1px solid #BBF7D0;background:#F0FDF4;display:flex;align-items:center;justify-content:space-between"><span style="font-size:.6rem;color:#9CA3AF;font-weight:700;text-transform:uppercase">Add Power</span><span style="font-size:.88rem;font-weight:800;font-family:monospace;color:#059669">${rx.od.add}</span></div>` : ''}
             </div>
             <div style="border:1.5px solid #FDE68A;border-radius:10px;overflow:hidden">
               <div style="background:#FFF7ED;padding:8px 12px;border-bottom:1px solid #FDE68A;display:flex;align-items:center;gap:6px">
                 <div style="width:7px;height:7px;border-radius:50%;background:#E8760A;flex-shrink:0"></div>
-                <span style="font-size:.65rem;font-weight:800;text-transform:uppercase;letter-spacing:.07em;color:#B45309">OS — Left Eye</span>
+                <span style="font-size:.65rem;font-weight:800;text-transform:uppercase;letter-spacing:.07em;color:#B45309">OS (Left Eye)</span>
               </div>
               <div style="display:flex;background:#fff">
-                ${eyeField('SPH', e.os?.sph, false)}
-                ${eyeField('CYL', e.os?.cyl, false)}
-                ${eyeField('AXIS', e.os?.axis, false)}
-                ${eyeField('VA', e.os?.va, true)}
+                ${eyeField('SPH', rx.os?.sph, false)}
+                ${eyeField('CYL', rx.os?.cyl, false)}
+                ${eyeField('AXIS', rx.os?.axis, true)}
               </div>
-              ${e.os?.add ? `<div style="padding:7px 12px;border-top:1px solid #FEF3C7;background:#FFFBEB;display:flex;align-items:center;justify-content:space-between"><span style="font-size:.6rem;color:#9CA3AF;font-weight:700;text-transform:uppercase">Add Power</span><span style="font-size:.88rem;font-weight:800;font-family:monospace;color:#E8760A">${e.os.add}</span></div>` : ''}
+              ${rx.os?.add ? `<div style="padding:7px 12px;border-top:1px solid #FEF3C7;background:#FFFBEB;display:flex;align-items:center;justify-content:space-between"><span style="font-size:.6rem;color:#9CA3AF;font-weight:700;text-transform:uppercase">Add Power</span><span style="font-size:.88rem;font-weight:800;font-family:monospace;color:#E8760A">${rx.os.add}</span></div>` : ''}
             </div>
           </div>
         </div>
 
-        <!-- IOP + PD + Lens row -->
-        ${(e.iop?.od || e.iop?.os || e.pd || e.lensType) ? `
-        <div style="display:grid;grid-template-columns:${[e.iop?.od||e.iop?.os?'1fr':'',e.pd?'1fr':'',e.lensType?'1fr':''].filter(Boolean).join(' ')};gap:8px">
-          ${e.iop?.od || e.iop?.os ? `
+        <!-- PD + Lens row -->
+        ${(rx.pd || rx.lensType || rx.lensMaterial) ? `
+        <div style="display:grid;grid-template-columns:${[rx.pd?'1fr':'',rx.lensType?'1fr':'',rx.lensMaterial?'1fr':''].filter(Boolean).join(' ')};gap:8px">
+          ${rx.pd ? `
           <div style="background:#F9FAFB;border:1px solid #F3F4F6;border-radius:8px;padding:9px 12px">
-            <div style="font-size:.58rem;color:#9CA3AF;text-transform:uppercase;letter-spacing:.06em;margin-bottom:3px">IOP (OD / OS)</div>
-            <div style="font-size:.85rem;font-weight:700;color:#1C1C1C;font-family:monospace">${e.iop?.od||'—'} / ${e.iop?.os||'—'} <span style="font-size:.65rem;font-weight:400;color:#9CA3AF">mmHg</span></div>
+            <div style="font-size:.58rem;color:#9CA3AF;text-transform:uppercase;letter-spacing:.06em;margin-bottom:3px">Pupillary Distance</div>
+            <div style="font-size:.85rem;font-weight:700;color:#1C1C1C;font-family:monospace">${rx.pd} <span style="font-size:.65rem;font-weight:400;color:#9CA3AF">mm</span></div>
           </div>` : ''}
-          ${e.pd ? `
-          <div style="background:#F9FAFB;border:1px solid #F3F4F6;border-radius:8px;padding:9px 12px">
-            <div style="font-size:.58rem;color:#9CA3AF;text-transform:uppercase;letter-spacing:.06em;margin-bottom:3px">PD</div>
-            <div style="font-size:.85rem;font-weight:700;color:#1C1C1C;font-family:monospace">${e.pd} <span style="font-size:.65rem;font-weight:400;color:#9CA3AF">mm</span></div>
-          </div>` : ''}
-          ${e.lensType ? `
+          ${rx.lensType ? `
           <div style="background:#F9FAFB;border:1px solid #F3F4F6;border-radius:8px;padding:9px 12px">
             <div style="font-size:.58rem;color:#9CA3AF;text-transform:uppercase;letter-spacing:.06em;margin-bottom:3px">Lens Type</div>
-            <div style="font-size:.82rem;font-weight:700;color:#1C1C1C">${e.lensType}</div>
+            <div style="font-size:.82rem;font-weight:700;color:#1C1C1C">${rx.lensType}</div>
+          </div>` : ''}
+          ${rx.lensMaterial ? `
+          <div style="background:#F9FAFB;border:1px solid #F3F4F6;border-radius:8px;padding:9px 12px">
+            <div style="font-size:.58rem;color:#9CA3AF;text-transform:uppercase;letter-spacing:.06em;margin-bottom:3px">Lens Material</div>
+            <div style="font-size:.82rem;font-weight:700;color:#1C1C1C">${rx.lensMaterial}</div>
           </div>` : ''}
         </div>` : ''}
 
-        ${e.prescriptionDetails ? `
+        ${rx.frameSelection ? `
         <div>
-          <div style="font-size:.63rem;font-weight:700;color:#9CA3AF;text-transform:uppercase;letter-spacing:.08em;margin-bottom:5px">Prescription Notes</div>
-          <div style="font-size:.8rem;color:#374151;background:#FFFBF5;border:1px solid #FDE68A;border-radius:8px;padding:10px 13px;line-height:1.65">${e.prescriptionDetails}</div>
+          <div style="font-size:.63rem;font-weight:700;color:#9CA3AF;text-transform:uppercase;letter-spacing:.08em;margin-bottom:5px">Frame Selection</div>
+          <div style="font-size:.85rem;color:#1C1C1C;font-weight:600">${rx.frameSelection}</div>
         </div>` : ''}
 
-        ${e.lensCoating && e.lensCoating.length ? `
+        ${rx.lensCoating && rx.lensCoating.length ? `
         <div>
-          <div style="font-size:.63rem;font-weight:700;color:#9CA3AF;text-transform:uppercase;letter-spacing:.08em;margin-bottom:5px">Lens Coatings</div>
+          <div style="font-size:.63rem;font-weight:700;color:#9CA3AF;text-transform:uppercase;letter-spacing:.08em;margin-bottom:5px">Lens Coating</div>
           <div style="display:flex;gap:6px;flex-wrap:wrap">
-            ${e.lensCoating.map(c=>`<span style="background:#FFF7ED;color:#C2410C;font-size:.72rem;font-weight:600;padding:3px 10px;border-radius:20px;border:1px solid #FDE68A">${c}</span>`).join('')}
+            ${rx.lensCoating.map(c=>`<span style="background:#FFF7ED;color:#C2410C;font-size:.72rem;font-weight:600;padding:3px 10px;border-radius:20px;border:1px solid #FDE68A">${c}</span>`).join('')}
           </div>
         </div>` : ''}
-
-        ${e.remarks ? `
-        <div style="border-top:1px solid #F3F4F6;padding-top:14px">
-          <div style="font-size:.63rem;font-weight:700;color:#9CA3AF;text-transform:uppercase;letter-spacing:.08em;margin-bottom:5px">Doctor's Remarks</div>
-          <div style="font-size:.82rem;color:#374151;font-style:italic;padding-left:12px;border-left:3px solid #E8760A">"${e.remarks}"</div>
-        </div>` : ''}
-
-        <!-- Signature lines -->
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:24px;padding-top:16px;border-top:1px dashed #E5E7EB">
-          <div style="text-align:center">
-            <div style="height:28px"></div>
-            <div style="border-top:1px solid #374151;padding-top:5px;font-size:.77rem;color:#374151;font-weight:600">${e.doctor}</div>
-            <div style="font-size:.67rem;color:#9CA3AF;margin-top:2px">Optometrist / Examining Doctor</div>
-          </div>
-          <div style="text-align:center">
-            <div style="height:28px"></div>
-            <div style="border-top:1px solid #374151;padding-top:5px;font-size:.77rem;color:#374151;font-weight:600">${p.name}</div>
-            <div style="font-size:.67rem;color:#9CA3AF;margin-top:2px">Patient Signature &amp; Date</div>
-          </div>
-        </div>
 
       </div>
     </div>
     <div class="modal-footer">
       <button class="btn-secondary" onclick="window.closeModal()">Close</button>
-      <button class="btn-ghost" onclick="window.viewExamDetail('${patientId}','${examId}')">
-        ${icon('eye','icon-sm')} Full Results
-      </button>
-      <button class="btn-primary" onclick="window.printPrescription('${patientId}','${examId}')">
+      ${rx.examId ? `<button class="btn-ghost" onclick="window.viewExamDetail('${patientId}','${rx.examId}')">
+        ${icon('eye','icon-sm')} Exam Record
+      </button>` : ''}
+      ${state.role !== 'patient' ? `<button class="btn-primary" onclick="window.printRxRecord('${patientId}','${rx.id}')">
         ${icon('printer','icon-sm')} Print Prescription
-      </button>
+      </button>` : ''}
     </div>`, 'modal-lg')
+}
+window.viewPrescriptionDetail = viewPrescriptionDetail
+
+// ════════════════════════════════════════════════════════════════
+//  OPTICAL EXAMINATION — VIEW/PRINT PRESCRIPTION (exam-keyed callers)
+// ════════════════════════════════════════════════════════════════
+// Both resolve the exam's linked prescription (via prescriptions.examId)
+// and hand off to the canonical prescriptions-table implementation above
+// — avoids maintaining a second, parallel rendering of the same document.
+function viewPrescriptionModal(patientId, examId) {
+  const p = patients.find(p => p.id === patientId)
+  if (!p) return
+  const rx = (p.prescriptions || []).find(r => r.examId === examId)
+  if (!rx) { toast('No prescription was issued for this exam.', 'info'); return }
+  viewPrescriptionDetail(patientId, rx.id)
 }
 window.viewPrescriptionModal = viewPrescriptionModal
 
-// ════════════════════════════════════════════════════════════════
-//  OPTICAL EXAMINATION — PRINT PRESCRIPTION
-// ════════════════════════════════════════════════════════════════
 function printPrescription(patientId, examId) {
   const p = patients.find(pt => pt.id === patientId)
   if (!p) return
-  const e = p.examinations.find(ex => ex.id === examId)
-  if (!e) return
-  _openExamPrintWindow(p, e)
+  const rx = (p.prescriptions || []).find(r => r.examId === examId)
+  if (!rx) { toast('No prescription was issued for this exam.', 'info'); return }
+  printRxRecord(patientId, rx.id)
 }
 window.printPrescription = printPrescription
 
@@ -8863,7 +9334,12 @@ function buildDocCalCells(year, month, docDays) {
     const isPast   = new Date(year, month, d) < new Date(todayY, todayM, todayD)
     const dateStr  = `${year}-${String(month+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`
     const avail    = (docDays || []).includes(dayAbb)
-    const hasAppts = doc ? appointments.some(a => a.date === dateStr && a.doctorId === doc.id && !['cancelled','disapproved'].includes(a.status)) : false
+    // Same {time, patientName, status} shape showCalTip() (the patient
+    // Doctor Availability calendar's hover tooltip, below) already expects
+    // — reused as-is instead of building a second tooltip renderer.
+    const dayAppts = doc ? appointments.filter(a => a.date === dateStr && a.doctorId === doc.id && !['cancelled','disapproved'].includes(a.status))
+                          .map(a => ({ time: a.time, patientName: a.patientName, status: a.status })) : []
+    const hasAppts = dayAppts.length > 0
     const blockedReason = blockedByDate[dateStr]
     const isHoliday   = !blockedReason && !!phHolidays[dateStr]
     const holidayName = phHolidays[dateStr] || ''
@@ -8877,8 +9353,11 @@ function buildDocCalCells(year, month, docDays) {
     const titleAttr = blockedReason ? `title="Blocked: ${blockedReason.replace(/"/g,'&quot;')}"` :
                       isHoliday ? `title="PH Holiday: ${holidayName.replace(/"/g,'&quot;')}"` : ''
     const inner = isHoliday ? `${d}<span class="cal-holiday-lbl">${holidayName}</span>` : String(d)
+    const hoverEvt = hasAppts
+      ? `onmouseenter="window.showCalTip(this,'${JSON.stringify(dayAppts).replace(/'/g,'&#39;').replace(/"/g,'&quot;')}')" onmouseleave="window.hideCalTip()"`
+      : ''
 
-    cells += `<div class="cal-day ${cls}" style="${fadeStyle}" ${titleAttr}
+    cells += `<div class="cal-day ${cls}" style="${fadeStyle}" ${titleAttr} ${hoverEvt}
       onclick="window.docSchedClickDay('${dateStr}','${avail}','${dayAbb}',this)">${inner}</div>`
   }
   return cells
@@ -9003,120 +9482,11 @@ function docSchedClickDay(dateStr, availStr, dayAbb, cellEl) {
 }
 window.docSchedClickDay = docSchedClickDay
 
-// Doctor schedule page — "Upcoming Appointments" panel with an adjustable
-// Week/Month scope (mirrors the range toggle on the dashboard charts).
-// Pulls from the real, backend-synced `appointments` array — no mock data.
-// Paginated by date group (a handful of days per page) rather than by row,
-// so each page still reads as a clean mini day-by-day agenda.
-const DOC_UPCOMING_DAYS_PER_PAGE = 5
-let _docUpcomingScope = 'week'
-let _docUpcomingPage  = 1
-
-function renderDoctorUpcoming(scope) {
-  if (scope && scope !== _docUpcomingScope) {
-    _docUpcomingScope = scope
-    _docUpcomingPage  = 1
-  }
-  _renderDoctorUpcomingList()
-}
-window.renderDoctorUpcoming = renderDoctorUpcoming
-
-function docUpcomingGoPage(delta) {
-  _docUpcomingPage += delta
-  _renderDoctorUpcomingList()
-}
-window.docUpcomingGoPage = docUpcomingGoPage
-
-function _renderDoctorUpcomingList() {
-  const scope = _docUpcomingScope
-
-  document.querySelectorAll('.doc-upcoming-scope-btn').forEach(btn => {
-    btn.classList.toggle('active', btn.dataset.scope === scope)
-  })
-
-  const subEl  = document.getElementById('doc-upcoming-sub')
-  const listEl = document.getElementById('doc-upcoming-list')
-  if (!listEl) return
-
-  const doc = doctors.find(d => d.id === state.user?.id)
-  const now = new Date()
-  const todayStr = localDateStr(now)
-
-  let start, end, rangeLabel
-  if (scope === 'week') {
-    start = new Date(now); start.setDate(now.getDate() - now.getDay())
-    end   = new Date(start); end.setDate(start.getDate() + 6)
-    rangeLabel = `${start.toLocaleDateString('en-PH',{month:'short',day:'numeric'})} – ${end.toLocaleDateString('en-PH',{month:'short',day:'numeric',year:'numeric'})}`
-  } else {
-    start = new Date(now.getFullYear(), now.getMonth(), 1)
-    end   = new Date(now.getFullYear(), now.getMonth() + 1, 0)
-    rangeLabel = start.toLocaleDateString('en-PH', { month:'long', year:'numeric' })
-  }
-  const startStr = localDateStr(start)
-  const endStr   = localDateStr(end)
-
-  const timeVal = t => { if (!t) return 0; const cl = t.includes('PM') && !t.startsWith('12'); const [h, m] = t.replace(/ [AP]M$/, '').split(':').map(Number); return (cl ? h + 12 : (t.includes('AM') && h === 12 ? 0 : h)) * 60 + m }
-
-  const list = appointments
-    .filter(a => doc && a.doctorId === doc.id && a.date >= startStr && a.date <= endStr && !['cancelled', 'disapproved'].includes(a.status))
-    .sort((a, b) => a.date.localeCompare(b.date) || timeVal(a.time) - timeVal(b.time))
-
-  if (subEl) subEl.textContent = `${rangeLabel} · ${list.length} appointment${list.length !== 1 ? 's' : ''}`
-
-  if (!list.length) {
-    listEl.innerHTML = `<div class="table-empty">No appointments scheduled ${scope === 'week' ? 'this week' : 'this month'}.</div>`
-    return
-  }
-
-  // Group by date so the list reads like a mini day-by-day agenda
-  const byDate = {}
-  list.forEach(a => { (byDate[a.date] = byDate[a.date] || []).push(a) })
-  const dateKeys = Object.keys(byDate).sort()
-
-  const totalPages = Math.max(1, Math.ceil(dateKeys.length / DOC_UPCOMING_DAYS_PER_PAGE))
-  if (_docUpcomingPage > totalPages) _docUpcomingPage = totalPages
-  if (_docUpcomingPage < 1) _docUpcomingPage = 1
-  const pageStart = (_docUpcomingPage - 1) * DOC_UPCOMING_DAYS_PER_PAGE
-  const pageDates = dateKeys.slice(pageStart, pageStart + DOC_UPCOMING_DAYS_PER_PAGE)
-
-  const days = pageDates.map(dateStr => {
-    const dt       = new Date(dateStr + 'T00:00:00')
-    const isToday  = dateStr === todayStr
-    const dayLabel = dt.toLocaleDateString('en-PH', { weekday: 'short', month: 'short', day: 'numeric' })
-    const dayAppts = byDate[dateStr]
-
-    const rows = dayAppts.map(a => `
-      <div class="doc-upcoming-row">
-        <div style="width:64px;flex-shrink:0;font-size:.78rem;font-weight:700;color:#374151;white-space:nowrap">${a.time}</div>
-        ${avatar(a.patientName, 'patient-avatar', patients.find(p => p.id === a.patientId)?.photoUrl || null)}
-        <div style="flex:1;min-width:0">
-          <div style="font-size:.85rem;font-weight:600;color:#1C1C1C;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${a.patientName}</div>
-          <div style="font-size:.75rem;color:#9CA3AF">${a.type}</div>
-        </div>
-        ${badge(a.status)}
-      </div>`).join('')
-
-    return `
-      <div class="doc-upcoming-day">
-        <span style="font-size:.72rem;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:${isToday ? '#E8760A' : '#6B7280'}">${dayLabel}${isToday ? ' · Today' : ''}</span>
-        <span style="font-size:.7rem;color:#9CA3AF">${dayAppts.length} appt${dayAppts.length !== 1 ? 's' : ''}</span>
-      </div>
-      ${rows}`
-  }).join('')
-
-  const pager = totalPages > 1 ? `
-    <div style="display:flex;align-items:center;justify-content:space-between;padding:12px 20px;border-top:1px solid #F3F4F6">
-      <span style="font-size:.78rem;color:#6B7280">Days ${pageStart + 1}–${Math.min(pageStart + DOC_UPCOMING_DAYS_PER_PAGE, dateKeys.length)} of ${dateKeys.length}</span>
-      <div style="display:flex;gap:4px">
-        <button class="btn-icon" title="Previous days" ${_docUpcomingPage === 1 ? 'disabled style="opacity:.4;cursor:not-allowed"' : ''}
-                onclick="window.docUpcomingGoPage(-1)">${icon('chevron-left','icon-sm')}</button>
-        <button class="btn-icon" title="Next days" ${_docUpcomingPage === totalPages ? 'disabled style="opacity:.4;cursor:not-allowed"' : ''}
-                onclick="window.docUpcomingGoPage(1)">${icon('chevron-right','icon-sm')}</button>
-      </div>
-    </div>` : ''
-
-  listEl.innerHTML = days + pager
-}
+// renderDoctorUpcoming()/_renderDoctorUpcomingList() (the "Upcoming
+// Appointments" panel that used to sit below the calendar on My Schedule)
+// were removed here — that panel duplicated My Appointments → Upcoming's
+// data on the same page in a second format, so the section itself was
+// removed from pageDoctorSchedule() (pages.js) rather than kept in sync.
 
 // Staff/Admin schedule page — update all doctor calendar grids in place
 function schedGoMonth(year, month) {
@@ -10782,7 +11152,7 @@ function exportLog() {
   const csv = [header, ...rows].map(r => r.join(',')).join('\n')
   const a   = document.createElement('a')
   a.href    = 'data:text/csv;charset=utf-8,' + encodeURIComponent(csv)
-  a.download = `cana-activity-log-${new Date().toISOString().slice(0, 10)}.csv`
+  a.download = `cana-activity-log-${localDateStr()}.csv`
   a.click()
   toast(`Exported ${filtered.length} log entr${filtered.length !== 1 ? 'ies' : 'y'}.`, 'success')
 }

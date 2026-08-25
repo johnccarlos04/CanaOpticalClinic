@@ -5,43 +5,76 @@
 // ================================================================
 
 // ── Password policy (shared by every screen that sets a password) ─
+// Order matches the compact pill row's left-to-right reading order —
+// "8 Chars · A-Z · a-z · 123 · @#$" — not validation priority.
 const PW_POLICY_RULES = [
-  { key: 'len',   label: 'At least 8 characters',     test: v => v.length >= 8 },
-  { key: 'lower', label: 'One lowercase letter (a-z)', test: v => /[a-z]/.test(v) },
-  { key: 'upper', label: 'One uppercase letter (A-Z)', test: v => /[A-Z]/.test(v) },
-  { key: 'num',   label: 'One number (0-9)',           test: v => /[0-9]/.test(v) },
-  { key: 'special', label: 'One special character (!@#$%^&*...)', test: v => /[^A-Za-z0-9]/.test(v) },
+  { key: 'len',     shortLabel: '8 Chars', label: 'At least 8 characters',                test: v => v.length >= 8 },
+  { key: 'upper',   shortLabel: 'A-Z',     label: 'One uppercase letter (A-Z)',           test: v => /[A-Z]/.test(v) },
+  { key: 'lower',   shortLabel: 'a-z',     label: 'One lowercase letter (a-z)',           test: v => /[a-z]/.test(v) },
+  { key: 'num',     shortLabel: '123',     label: 'One number (0-9)',                     test: v => /[0-9]/.test(v) },
+  { key: 'special', shortLabel: '@#$',     label: 'One special character (!@#$%^&*...)',  test: v => /[^A-Za-z0-9]/.test(v) },
 ]
 function pwPolicyValid(v) {
   return PW_POLICY_RULES.every(r => r.test(v || ''))
 }
+// "Premium password UI" pattern — a live strength label + bar above a
+// single-row set of compact requirement pills, instead of a 5-line
+// checklist. Replaced the old stacked checklist for two reasons: it reads
+// faster at a glance (one strength word instead of scanning 5 lines), and
+// it's dramatically shorter — the register wizard's Step 3 (password +
+// confirm + terms, all inside a fixed-height, internally-scrolling card;
+// see .auth-form-panel's CSS comment) was the tightest-fit screen in the
+// app for exactly this reason.
 function pwChecklistHtml(idPrefix) {
-  return `<div class="pw-checklist" id="${idPrefix}-checklist">` +
-    PW_POLICY_RULES.map(r => `
-      <div class="pw-check-item" id="${idPrefix}-chk-${r.key}">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/></svg>
-        <span>${r.label}</span>
-      </div>`).join('') +
-    `</div>`
+  return `
+    <div class="pw-strength-block" id="${idPrefix}-checklist">
+      <div class="pw-strength-row">
+        <span class="pw-strength-label">Password Strength</span>
+        <span class="pw-strength-word" id="${idPrefix}-strength-word"></span>
+      </div>
+      <div class="pw-strength-bar"><div class="pw-strength-fill" id="${idPrefix}-strength-fill"></div></div>
+      <div class="pw-reqs-row">` +
+        PW_POLICY_RULES.map(r => `
+        <span class="pw-req-pill" id="${idPrefix}-chk-${r.key}" title="${r.label}">
+          <span class="pw-req-dot"></span>${r.shortLabel}
+        </span>`).join('') +
+      `</div>
+    </div>`
 }
+// 5 criteria → 3 tiers (Weak/Fair/Strong) — matches the reference pattern's
+// single strength word rather than mapping every possible count to its own
+// label, which reads as noisier without actually being more informative.
+const PW_STRENGTH_TIERS = [
+  { max: 2, word: 'Weak',   color: '#DC2626', fill: 25  },
+  { max: 4, word: 'Fair',   color: '#D97706', fill: 60  },
+  { max: 5, word: 'Strong', color: '#059669', fill: 100 },
+]
 function updatePwChecklist(idPrefix, value) {
   const v = value || ''
+  const hasInput = v.length > 0
+  let metCount = 0
   PW_POLICY_RULES.forEach(r => {
-    const item = document.getElementById(`${idPrefix}-chk-${r.key}`)
-    if (!item) return
-    const svg = item.querySelector('svg')
-    const met = r.test(v)
-    const hasInput = v.length > 0
-    item.classList.toggle('met', met)
-    item.classList.toggle('unmet', hasInput && !met)
-    if (svg) {
-      svg.innerHTML = met
-        ? '<polyline points="20 6 9 17 4 12"/>'
-        : hasInput
-          ? '<line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>'
-          : '<circle cx="12" cy="12" r="9"/>'
-    }
+    const pill = document.getElementById(`${idPrefix}-chk-${r.key}`)
+    const met  = r.test(v)
+    if (met) metCount++
+    if (pill) pill.classList.toggle('met', met)
   })
+
+  const wordEl = document.getElementById(`${idPrefix}-strength-word`)
+  const fillEl = document.getElementById(`${idPrefix}-strength-fill`)
+  if (!wordEl || !fillEl) return
+
+  if (!hasInput) {
+    wordEl.textContent = ''
+    fillEl.style.width      = '0%'
+    fillEl.style.background = '#E5E7EB'
+    return
+  }
+  const tier = PW_STRENGTH_TIERS.find(t => metCount <= t.max) || PW_STRENGTH_TIERS[PW_STRENGTH_TIERS.length - 1]
+  wordEl.textContent      = tier.word
+  wordEl.style.color      = tier.color
+  fillEl.style.width      = tier.fill + '%'
+  fillEl.style.background = tier.color
 }
 window.pwPolicyValid     = pwPolicyValid
 window.pwChecklistHtml   = pwChecklistHtml
@@ -173,7 +206,6 @@ async function handleRegister() {
   const gender  = document.getElementById('reg-gender').value
   const address = document.getElementById('reg-address').value.trim()
   const contact = document.getElementById('reg-contact').value.trim()
-  const blood   = document.getElementById('reg-blood').value
   const email   = document.getElementById('reg-email').value.trim()
   const pass    = document.getElementById('reg-password').value
   const confirm = document.getElementById('reg-confirm').value
@@ -207,7 +239,7 @@ async function handleRegister() {
     const res  = await fetch('api/auth/register.php', {
       method:  'POST',
       headers: { 'Content-Type': 'application/json' },
-      body:    JSON.stringify({ firstName: first, middleName: middle, lastName: last, dob, gender, address, contact, bloodType: blood, email, password: pass }),
+      body:    JSON.stringify({ firstName: first, middleName: middle, lastName: last, dob, gender, address, contact, email, password: pass }),
     })
     const data = await res.json()
 
@@ -352,6 +384,15 @@ function _regGoToStep(n) {
     if (p) p.style.display = i === n ? '' : 'none'
   }
 
+  // .auth-form-panel scrolls internally (fixed-height card — see its CSS
+  // comment), and that scroll position otherwise carries over unchanged
+  // across a step switch. Landing on the new step already scrolled down
+  // (e.g. from having scrolled to reach "Next" on a tall step) pushes its
+  // own title/top content out of view for no reason the user did on this
+  // step — always start each step at its own top.
+  const formPanel = document.querySelector('#register-screen .auth-form-panel')
+  if (formPanel) formPanel.scrollTop = 0
+
   // Clear error banner and any field highlights on every step transition
   const errEl = document.getElementById('reg-error')
   if (errEl) errEl.style.display = 'none'
@@ -400,7 +441,7 @@ function _regGoToStep(n) {
   window._regStep = n
 }
 
-function regNextStep() {
+async function regNextStep() {
   const step   = window._regStep
   const errEl  = document.getElementById('reg-error')
   const errMsg = document.getElementById('reg-error-msg')
@@ -421,6 +462,22 @@ function regNextStep() {
     if (!last)  markError('reg-last')
     if (!dob)   markError('reg-dob-trigger') // visible custom-picker button — the real reg-dob is a hidden input now
     if (!gender) markError('reg-gender-trigger') // visible custom-select button — the real reg-gender is a hidden input now
+    // reg-dob (the hidden input) only ever gets a value from a genuinely
+    // valid, in-range typed/picked date — _dobTextCommit() (main.js)
+    // rejects anything else (an impossible calendar date, or one outside
+    // the min/max range, e.g. a typo'd year) and leaves the hidden value
+    // empty, marking the field .error itself. That collapses into the
+    // same "dob is empty" case as never having touched the field at all,
+    // so a typed-but-rejected date silently got the generic "fill in all
+    // required fields" message instead of one that actually explains why
+    // Next is still blocked. Checking the *visible* text field separately
+    // tells the two apart.
+    const dobTyped = (document.getElementById('reg-dob-text')?.value || '').trim()
+    if (!dob && dobTyped) {
+      markError('reg-dob-trigger')
+      if (errMsg) errMsg.textContent = 'Please enter a valid date of birth.'
+      if (errEl)  errEl.style.display = 'flex'; return
+    }
     if (!first || !last || !dob || !gender) {
       if (errMsg) errMsg.textContent = 'Please fill in all required fields.'
       if (errEl)  errEl.style.display = 'flex'; return
@@ -447,6 +504,35 @@ function regNextStep() {
     if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
       if (errMsg) errMsg.textContent = !email ? 'Please fill in all required fields.' : 'Please enter a valid email address.'
       if (errEl)  errEl.style.display = 'flex'; return
+    }
+
+    // Catch an already-registered email right here, instead of only
+    // failing at final submission after steps 2-3 are already filled out.
+    if (window._regCheckEmailBusy) return
+    window._regCheckEmailBusy = true
+    const nextBtn = document.getElementById('reg-nav-next')
+    const originalLabel = nextBtn ? nextBtn.innerHTML : ''
+    if (nextBtn) { nextBtn.disabled = true; nextBtn.textContent = 'Checking…' }
+    try {
+      const r = await fetch('api/auth/check-email.php', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email })
+      })
+      const d = await r.json()
+      if (d.exists) {
+        markError('reg-email')
+        if (errMsg) errMsg.textContent = 'An account with this email already exists. Please sign in instead, or use a different email address.'
+        if (errEl)  errEl.style.display = 'flex'
+        return
+      }
+    } catch (_) {
+      // Network/server hiccup — don't hard-block the wizard over it.
+      // register.php still enforces this same check at final submission
+      // either way, so a stale/skipped check here is never unsafe, just
+      // occasionally a step later than it could have been.
+    } finally {
+      window._regCheckEmailBusy = false
+      if (nextBtn) { nextBtn.disabled = false; nextBtn.innerHTML = originalLabel }
     }
   }
 
@@ -574,15 +660,16 @@ function showRegister() {
   // the underlying hidden input, and recompute the 18+ cutoff each time the
   // form opens rather than once at page load.
   if (window.resetDobField) window.resetDobField('reg-dob')
-  const t = new Date()
-  const maxDob = new Date(t.getFullYear() - 18, t.getMonth(), t.getDate())
-  if (window.setDobFieldMax) window.setDobFieldMax('reg-dob', maxDob.toISOString().slice(0, 10))
-  // reg-gender/reg-blood are also the custom select (see main.js) now — a
-  // direct .value = '' reset would clear the hidden input but leave the
-  // visible trigger button still showing whatever was last picked.
-  // resetSelectField('reg-blood') correctly lands on "Unknown" (its ''
-  // option) rather than a blank placeholder, since that's a real match.
-  if (window.resetSelectField) { window.resetSelectField('reg-gender'); window.resetSelectField('reg-blood') }
+  // window.maxDobFor18() (main.js) already computes this exact cutoff via
+  // localDateStr() — not .toISOString(), which converts to UTC first and
+  // lands on the wrong calendar day in a UTC+8 timezone during early
+  // morning hours. Reuse it instead of recomputing (and re-risking) the
+  // same date here.
+  if (window.setDobFieldMax) window.setDobFieldMax('reg-dob', window.maxDobFor18 ? window.maxDobFor18() : localDateStr(new Date(new Date().getFullYear() - 18, new Date().getMonth(), new Date().getDate())))
+  // reg-gender is also the custom select (see main.js) now — a direct
+  // .value = '' reset would clear the hidden input but leave the visible
+  // trigger button still showing whatever was last picked.
+  if (window.resetSelectField) window.resetSelectField('reg-gender')
   document.getElementById('reg-error').style.display = 'none'
   const termsCb = document.getElementById('reg-terms-agree')
   if (termsCb) { termsCb.checked = false; termsCb.disabled = true }
@@ -1328,10 +1415,9 @@ async function evSubmitOTP() {
         id: p.id, firstName: p.firstName, lastName: p.lastName,
         name: p.name, gender: p.gender, dob: p.dob, age: p.age,
         contact: p.contact, email: p.email, password: '',
-        address: p.address, bloodType: p.bloodType,
+        address: p.address,
         registeredDate: p.registeredDate, lastVisit: '—',
         qrData: p.qrData, status: 'active', occupation: '',
-        medicalHistory: '', opticalHistory: '',
         consultations: [], examinations: [], prescriptions: [],
       })
     }
