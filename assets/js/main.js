@@ -7924,11 +7924,24 @@ window.toggleConsultEntry = toggleConsultEntry
 // ════════════════════════════════════════════════════════════════
 //  OPTICAL EXAMINATION — VIEW EXAM DETAIL MODAL
 // ════════════════════════════════════════════════════════════════
+// examinations has no dedicated Ishihara column (see database/schema.sql)
+// — the wizard's saveNewExam() folds it into test_results as a trailing
+// "Ishihara: Normal/Deficient" clause instead. Split it back out so it can
+// render as its own block rather than buried in a paragraph of free text.
+function _splitIshihara(testResults) {
+  if (!testResults) return { plain: '', ishihara: null }
+  const m = testResults.match(/^(.*?)(?:\.\s*)?Ishihara:\s*(Normal|Deficient)\.?\s*$/i)
+  if (!m) return { plain: testResults, ishihara: null }
+  return { plain: m[1].trim(), ishihara: m[2] }
+}
+window._splitIshihara = _splitIshihara
+
 function viewExamDetail(patientId, examId) {
   const p = patients.find(p => p.id === patientId)
   if (!p) return
   const e = p.examinations.find(e => e.id === examId)
   if (!e) return
+  const { plain: testResultsPlain, ishihara } = _splitIshihara(e.testResults)
 
   const statusColor = { completed:'#059669', pending:'#D97706', cancelled:'#DC2626' }
   const sc = statusColor[e.status] || '#059669'
@@ -8070,11 +8083,18 @@ function viewExamDetail(patientId, examId) {
           <div style="font-size:1rem;font-weight:800;color:#1C1C1C">${e.diagnosis || '—'}</div>
         </div>
 
+        <!-- Ishihara -->
+        ${ishihara ? `
+        <div style="display:flex;align-items:center;gap:8px;background:#F9FAFB;border:1px solid #F3F4F6;border-radius:8px;padding:11px 13px;font-size:.8rem;color:#374151">
+          <span style="font-weight:600;color:#6B7280">Ishihara Test:</span>
+          <span style="font-size:.72rem;font-weight:700;padding:2px 10px;border-radius:20px;${ishihara === 'Normal' ? 'background:#DCFCE7;color:#16A34A' : 'background:#FEF3C7;color:#B45309'}">${ishihara}</span>
+        </div>` : ''}
+
         <!-- Test Results -->
-        ${e.testResults ? `
+        ${testResultsPlain ? `
         <div>
           <div style="font-size:.63rem;font-weight:700;text-transform:uppercase;letter-spacing:.1em;color:#9CA3AF;margin-bottom:6px">Test Results</div>
-          <div style="background:#F9FAFB;border:1px solid #F3F4F6;border-radius:8px;padding:11px 13px;font-size:.8rem;color:#374151;line-height:1.65">${e.testResults}</div>
+          <div style="background:#F9FAFB;border:1px solid #F3F4F6;border-radius:8px;padding:11px 13px;font-size:.8rem;color:#374151;line-height:1.65">${testResultsPlain}</div>
         </div>` : ''}
 
         <!-- Clinical Remarks -->
@@ -8191,6 +8211,80 @@ function printExamRecord(examId) {
   _openExamPrintWindow(p, e)
 }
 window.printExamRecord = printExamRecord
+
+// ════════════════════════════════════════════════════════════════
+//  OPTICAL EXAMINATION — DELETE (exam + its linked consultation/Rx)
+// ════════════════════════════════════════════════════════════════
+// Same "type DELETE to confirm" pattern as confirmPermDelete() above, for
+// the same reason: this is permanent and cascades to the linked
+// consultation/prescription (see api/examinations/delete.php), not just
+// this one row — worth a harder confirmation than a plain "Are you sure?".
+function confirmDeleteExam(examId, patientId, patientName) {
+  showModal(`
+    <div class="modal-header">
+      <div class="modal-title" style="display:flex;align-items:center;gap:10px">
+        <div style="width:32px;height:32px;border-radius:50%;background:#fee2e2;display:flex;align-items:center;justify-content:center;flex-shrink:0;color:#dc2626">
+          ${icon('alert-triangle','icon-sm')}
+        </div>
+        Delete Examination Record
+      </div>
+      <button class="modal-close" onclick="window.closeModal()">&times;</button>
+    </div>
+    <div class="modal-body">
+      <div style="background:#fef2f2;border:1px solid #fecaca;color:#991b1b;border-radius:8px;padding:12px;font-size:.85rem;margin-bottom:16px">
+        This action cannot be undone. Examination <strong>${examId}</strong> for <strong>${patientName}</strong>, along with its linked consultation and prescription (if any), will be permanently removed.
+      </div>
+      <div class="form-group" style="margin:0">
+        <label class="form-label">Type <strong>DELETE</strong> to confirm</label>
+        <input id="exam-delete-confirm" class="form-input" placeholder="DELETE"
+               oninput="var ok=this.value==='DELETE';var btn=document.getElementById('exam-delete-btn');btn.disabled=!ok;btn.style.opacity=ok?'1':'.45';btn.style.pointerEvents=ok?'auto':'none'">
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn-secondary" onclick="window.closeModal()">Cancel</button>
+      <button id="exam-delete-btn"
+              style="background:#DC2626;color:white;border:none;border-radius:8px;padding:9px 20px;font-family:'Poppins',sans-serif;font-size:.85rem;font-weight:600;cursor:pointer;opacity:.45;pointer-events:none;display:inline-flex;align-items:center;gap:6px"
+              disabled
+              onclick="window.doDeleteExam('${examId}','${patientId}')">
+        ${icon('trash','icon-sm')} Delete Forever
+      </button>
+    </div>`)
+}
+window.confirmDeleteExam = confirmDeleteExam
+
+async function doDeleteExam(examId, patientId) {
+  const btn = document.getElementById('exam-delete-btn')
+  if (btn) { btn.disabled = true; btn.textContent = 'Deleting…' }
+  try {
+    const r = await fetch('api/examinations/delete.php', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ examId, patientId })
+    })
+    const d = await r.json()
+    if (!d.success) { toast(d.message || 'Failed to delete examination.', 'error'); return }
+  } catch (_) {
+    toast('Network error. Examination not deleted.', 'error')
+    return
+  } finally {
+    if (btn) { btn.disabled = false; btn.innerHTML = icon('trash','icon-sm') + ' Delete Forever' }
+  }
+
+  // Keep local state consistent — drop the exam and anything that linked
+  // to it (the consultation via exam_id backfill, the prescription via
+  // exam_id) rather than waiting on a full reload.
+  const p = patients.find(pt => pt.id === patientId)
+  if (p) {
+    p.examinations  = (p.examinations  || []).filter(e => e.id !== examId)
+    p.consultations = (p.consultations || []).filter(c => c.examId !== examId)
+    p.prescriptions = (p.prescriptions || []).filter(rx => rx.examId !== examId)
+  }
+
+  closeModal()
+  toast('Examination record deleted.', 'success')
+  renderPage()
+}
+window.doDeleteExam = doDeleteExam
 
 function generateClearanceFromRecord(examId) {
   const e = getExamRecords().find(r => r.id === examId)
@@ -8506,6 +8600,7 @@ function _openExamPrintWindow(p, e) {
   const pill    = txt => `<span style="display:inline-block;background:#E8760A;color:#fff;font-size:10px;font-weight:700;padding:2px 9px;border-radius:20px;margin:2px 3px 2px 0">${txt}</span>`
   const secLbl  = txt => `<div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:#999;margin:10px 0 4px">${txt}</div>`
   const noteBox = txt => `<div style="background:#fffbf0;border:1px solid #fde68a;border-radius:6px;padding:9px 12px;font-size:11px;color:#444;line-height:1.6;margin-bottom:12px">${txt}</div>`
+  const { plain: testResultsPlain, ishihara } = _splitIshihara(e.testResults)
 
   const examDate = _fmtDt(e.date)
   const dob      = _fmtDt(p.dob)
@@ -8662,7 +8757,8 @@ function _openExamPrintWindow(p, e) {
   </div>
 
   ${e.externalFindings   ? secLbl('External / Internal Findings') + noteBox(e.externalFindings) : ''}
-  ${e.testResults        ? secLbl('Test Results')       + noteBox(e.testResults)        : ''}
+  ${ishihara ? noteBox(`<strong>Ishihara Test:</strong> <span style="display:inline-block;background:${ishihara === 'Normal' ? '#dcfce7' : '#fef3c7'};color:${ishihara === 'Normal' ? '#16a34a' : '#b45309'};font-size:11px;font-weight:700;padding:2px 10px;border-radius:20px">${ishihara}</span>`) : ''}
+  ${testResultsPlain     ? secLbl('Test Results')       + noteBox(testResultsPlain)      : ''}
   ${e.remarks ? `<div class="remarks-block">"${e.remarks}"<br><span style="font-size:10px;color:#aaa;font-style:normal">by ${e.doctor}</span></div>` : ''}
 
   <!-- SIGNATURES -->

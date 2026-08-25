@@ -2695,6 +2695,15 @@ input[type="date"].form-input::-webkit-datetime-edit-year-field {
   }
 }
 
+/* Exam record row action icons — same wrapping pattern as
+   .appt-actions-row above, but always on (not just <=768px): Examination
+   Records can show up to 5 icons (View/Print/Edit/Clearance/Delete) in a
+   column that's narrower than Appointments' own Actions column even on
+   desktop. max-width fits exactly 4 buttons (4 * 32px + 3 * 4px gap =
+   140px) before the 5th wraps to its own row, instead of every icon
+   shrinking to fit one cramped line. */
+.exam-actions-row { display: flex; gap: 4px; align-items: center; flex-wrap: wrap; max-width: 145px; }
+
 .form-select {
   width: 100%;
   padding: 11px 38px 11px 14px;

@@ -801,7 +801,7 @@ function pagePatientList() {
 //  SHARED — PATIENT VIEW (Admin, Staff, Doctor)
 // ════════════════════════════════════════════════════════════════
 function pagePatientView() {
-  const { role, params } = st()
+  const { role, params, user } = st()
   const p = getPatientById(params.patientId)
   if (!p) return `<div class="page-body"><div class="alert-error">No matching patient record found. Please verify the patient ID or search again.</div></div>`
 
@@ -892,6 +892,9 @@ function pagePatientView() {
         <button class="btn-icon" title="View Results" onclick="window.viewExamDetail('${p.id}','${e.id}')">${ic('eye','icon-sm')}</button>
         ${role !== 'patient' ? `<button class="btn-ghost" onclick="window.navigate('${role === 'doctor' ? 'edit-examination' : 'examination'}',{patientId:'${p.id}',examId:'${e.id}'})"
           style="font-size:.72rem;padding:4px 10px;flex-shrink:0;white-space:nowrap">${ic('edit','icon-sm')} Edit</button>` : ''}
+        ${(role === 'admin' || role === 'staff' || (role === 'doctor' && e.doctor === user?.name)) ? `
+        <button class="btn-icon" title="Delete" style="color:#DC2626"
+                onclick="window.confirmDeleteExam('${e.id}','${p.id}','${p.name.replace(/'/g,"\\'")}')">${ic('trash','icon-sm')}</button>` : ''}
       </div>`).join('')}
     </div>` : emptyState('eye', 'No examination records', 'No examination records on file.')
 
@@ -3373,7 +3376,7 @@ function pageExamination() {
         <p class="page-subtitle">${p ? p.name + ' · ' + p.id : 'Patient'} ${exam.id ? '· ' + exam.id : ''}</p>
       </div>
     </div>
-    <div style="display:flex;align-items:center;gap:8px">
+    <div style="display:flex;align-items:center;gap:8px;align-self:center">
       <span style="font-size:.75rem;background:#FFF7ED;color:#C2410C;padding:4px 12px;border-radius:20px;font-weight:600">View Only (Doctor access required to edit)</span>
     </div>
   </div>
@@ -3533,8 +3536,8 @@ function pageExamRecords() {
             <td data-label="Date" style="font-size:.82rem;white-space:nowrap">${fmtDate(e.date)}</td>
             <td data-label="Diagnosis" style="font-size:.82rem;max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${e.diagnosis}">${e.diagnosis}</td>
             <td data-label="Status">${badge(e.status || 'completed')}</td>
-            <td data-label="Actions" style="white-space:nowrap">
-              <div style="display:flex;gap:4px;align-items:center">
+            <td data-label="Actions">
+              <div class="exam-actions-row">
                 <button class="btn-icon" title="View Details"
                         onclick="window.viewExamRecord('${e.id}')">
                   ${ic('eye','icon-sm')}
@@ -3543,11 +3546,21 @@ function pageExamRecords() {
                         onclick="window.printExamRecord('${e.id}')">
                   ${ic('printer','icon-sm')}
                 </button>
+                <button class="btn-icon" title="Edit"
+                        onclick="window.navigate('${role === 'doctor' ? 'edit-examination' : 'examination'}',{patientId:'${e.patientId}',examId:'${e.id}'})">
+                  ${ic('edit','icon-sm')}
+                </button>
                 ${(role === 'admin' || role === 'doctor') ? `
                 <button class="btn-icon" title="Generate Clearance"
                         style="color:#0891b2"
                         onclick="window.generateClearanceFromRecord('${e.id}')">
                   ${ic('award','icon-sm')}
+                </button>` : ''}
+                ${(role === 'admin' || role === 'staff' || (role === 'doctor' && e.doctor === user?.name)) ? `
+                <button class="btn-icon" title="Delete"
+                        style="color:#DC2626"
+                        onclick="window.confirmDeleteExam('${e.id}','${e.patientId}','${e.patientName.replace(/'/g,"\\'")}')">
+                  ${ic('trash','icon-sm')}
                 </button>` : ''}
               </div>
             </td>
