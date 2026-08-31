@@ -4,6 +4,7 @@
 //  POST (no body required) — destroys the PHP session.
 // ================================================================
 
+require_once '../../config/db.php';
 require_once '../helpers.php';
 
 requireMethod('POST');
