@@ -325,7 +325,26 @@ function startSession(int $days = 1): void {
             error_log('[startSession] DB save handler unavailable, falling back to file sessions: ' . $e->getMessage());
         }
 
+        // Grab this BEFORE session_start() runs — session_start() consumes/
+        // rewrites $_COOKIE's session entry as part of resuming, so it has
+        // to be captured here to still mean "did the browser send one" below.
+        $hadCookie = !empty($_COOKIE[session_name()]);
+
         session_start();
+
+        // The one signal none of the logging so far could actually catch:
+        // the browser sent a session cookie (it believes it's still logged
+        // in) but PHP came back with nothing for it — meaning the server
+        // lost track of a session the client never gave up on itself. A
+        // request with NO cookie at all is completely normal (a public
+        // page, a fresh visitor, someone who already properly logged out)
+        // and logged nowhere near this often — only the "should be valid
+        // but isn't" case is worth a line, right at the moment it happens
+        // rather than reconstructed after the fact from a stale row.
+        if ($hadCookie && empty($_SESSION)) {
+            $uri = $_SERVER['REQUEST_URI'] ?? '(unknown)';
+            error_log("[startSession] browser sent a session cookie but PHP found no session data for it — request: {$uri}");
+        }
     }
 }
 
