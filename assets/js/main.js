@@ -2113,7 +2113,14 @@ function reCalRender() {
   // since no date before today is ever a valid reschedule target anyway.
   const now  = new Date()
   const prev = document.getElementById('re-cal-prev')
-  if (prev) prev.style.opacity = (_reCal.year === now.getFullYear() && _reCal.month === now.getMonth()) ? '0.3' : '1'
+  if (prev) {
+    const atStart = _reCal.year === now.getFullYear() && _reCal.month === now.getMonth()
+    prev.style.opacity = atStart ? '0.3' : '1'
+    // Dimming alone still left the pointer cursor on hover, reading as
+    // clickable even though the click just silently no-ops — same fix as
+    // the calendar day cells (amc-unavailable, global.css).
+    prev.style.cursor = atStart ? 'not-allowed' : 'pointer'
+  }
 }
 window.reCalRender = reCalRender
 
@@ -2422,7 +2429,11 @@ function rsCalRender() {
   // (amcRender(), main.js) — Prev fades once already on the current month.
   const now  = new Date()
   const prev = document.getElementById('rs-cal-prev')
-  if (prev) prev.style.opacity = (_rsCal.year === now.getFullYear() && _rsCal.month === now.getMonth()) ? '0.3' : '1'
+  if (prev) {
+    const atStart = _rsCal.year === now.getFullYear() && _rsCal.month === now.getMonth()
+    prev.style.opacity = atStart ? '0.3' : '1'
+    prev.style.cursor  = atStart ? 'not-allowed' : 'pointer'
+  }
 }
 window.rsCalRender = rsCalRender
 
@@ -4587,14 +4598,25 @@ function amcRender() {
   const lbl = document.getElementById('amc-month-label')
   if (lbl) lbl.textContent = new Date(year, month, 1).toLocaleDateString('en-PH', { month:'long', year:'numeric' })
   const prev = document.getElementById('amc-prev')
-  if (prev) prev.style.opacity = (year===todayY && month===todayM) ? '0.3' : '1'
+  if (prev) {
+    const atStart = year===todayY && month===todayM
+    prev.style.opacity = atStart ? '0.3' : '1'
+    // Dimming alone still left the pointer cursor on hover, reading as
+    // clickable even though amcGoMonth() just silently no-ops — same fix
+    // as the calendar day cells (amc-unavailable, global.css).
+    prev.style.cursor = atStart ? 'not-allowed' : 'pointer'
+  }
   // Same dimming treatment as Prev above, mirrored for the other end of
   // the range — dims once the view is already on the last month that
   // contains any bookable date, so there's a visible cue before a patient
   // clicks Next into an entirely dead month (amcGoMonth() also blocks the
   // click itself; this is just the "why isn't this doing anything" tell).
   const next = document.getElementById('amc-next')
-  if (next) next.style.opacity = (_wiz.mode !== 'staff' && year === maxDate.getFullYear() && month === maxDate.getMonth()) ? '0.3' : '1'
+  if (next) {
+    const atEnd = _wiz.mode !== 'staff' && year === maxDate.getFullYear() && month === maxDate.getMonth()
+    next.style.opacity = atEnd ? '0.3' : '1'
+    next.style.cursor  = atEnd ? 'not-allowed' : 'pointer'
+  }
 
   const phHolidays = getPHHolidays(year)
   const blockedMap = {}

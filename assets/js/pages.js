@@ -6655,7 +6655,7 @@ function pagePatientDoctorAvail() {
     // month, since every earlier month is entirely in the past anyway.
     const isBase  = viewYear === baseYear && viewMonth === baseMonth
     return `
-      <button class="btn-icon" style="opacity:${isBase ? '.3' : '1'}" onclick="window.patCalNavMonth('${doctor.id}',-1)">${ic('chevron-left','icon-sm')}</button>
+      <button class="btn-icon" style="opacity:${isBase ? '.3' : '1'};cursor:${isBase ? 'not-allowed' : 'pointer'}" onclick="window.patCalNavMonth('${doctor.id}',-1)">${ic('chevron-left','icon-sm')}</button>
       <span style="font-size:.85rem;font-weight:600;color:#1C1C1C;min-width:130px;text-align:center">${label}</span>
       <button class="btn-icon" onclick="window.patCalNavMonth('${doctor.id}',1)">${ic('chevron-right','icon-sm')}</button>`
   }
