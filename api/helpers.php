@@ -314,7 +314,15 @@ function startSession(int $days = 1): void {
             session_set_save_handler(new DbSessionHandler(getDB()), true);
         } catch (Throwable $e) {
             // DB unreachable — fall back to PHP's default file handler
-            // rather than fatal-erroring the whole request.
+            // rather than fatal-erroring the whole request. Railway's own
+            // container filesystem doesn't survive a restart and isn't
+            // shared across replicas, so a session that falls back here
+            // even once can look randomly signed-out later with nothing
+            // in the sessions table to explain why. Logged specifically
+            // because that failure mode was previously invisible — this
+            // is the one place to confirm from Railway's log viewer
+            // whether it's actually happening, and how often.
+            error_log('[startSession] DB save handler unavailable, falling back to file sessions: ' . $e->getMessage());
         }
 
         session_start();

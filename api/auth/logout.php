@@ -22,19 +22,31 @@ $sid    = session_id();
 // desktop while this is a phone, or a different network entirely) is
 // never touched, so this still never signs out anywhere else on the
 // account, matching this app's own multi-device design elsewhere.
-if ($userId && $sid) {
+// Logged at every step — this whole cascade was landing as a silent no-op
+// in at least one real case with no way to tell why from the outside.
+// $shortSid keeps the log readable without printing a full raw session id.
+$shortSid = $sid ? substr($sid, 0, 8) . '…' : '(none)';
+if (!$userId || !$sid) {
+    error_log("[logout] skipped cascade — userId=" . ($userId ?: '(none)') . " sid={$shortSid} (session wasn't recognized as logged in on this request)");
+} else {
     try {
         $pdo = getDB();
         $cur = $pdo->prepare('SELECT user_agent, ip_address FROM sessions WHERE id = ? LIMIT 1');
         $cur->execute([$sid]);
         $row = $cur->fetch();
-        if ($row && $row['user_agent'] && $row['ip_address']) {
-            $pdo->prepare('DELETE FROM sessions WHERE user_id = ? AND user_agent = ? AND ip_address = ?')
-                ->execute([$userId, $row['user_agent'], $row['ip_address']]);
+        if (!$row) {
+            error_log("[logout] cascade found no sessions row for sid={$shortSid} userId={$userId} — nothing to base the cascade on (own row was never written, or already gone)");
+        } elseif (!$row['user_agent'] || !$row['ip_address']) {
+            error_log("[logout] cascade skipped — sid={$shortSid} userId={$userId} row has a blank user_agent or ip_address");
+        } else {
+            $del = $pdo->prepare('DELETE FROM sessions WHERE user_id = ? AND user_agent = ? AND ip_address = ?');
+            $del->execute([$userId, $row['user_agent'], $row['ip_address']]);
+            error_log("[logout] cascade deleted {$del->rowCount()} row(s) for userId={$userId}, ip={$row['ip_address']}");
         }
-    } catch (PDOException) {
+    } catch (PDOException $e) {
         // Non-critical — session_destroy() below still signs this device
         // out for real even if this extra cleanup pass fails.
+        error_log("[logout] cascade query failed: " . $e->getMessage());
     }
 }
 

@@ -163,7 +163,23 @@ const HAD_SESSION_KEY = '_canaopticalclinic_hadSession'
 // stopping working. A normal manual "Sign Out" click passes nothing.
 async function logout(reason) {
   _stopSystemPolling()
-  try { await fetch('api/auth/logout.php', { method: 'POST' }) } catch (_) {}
+  // A single fire-and-forget fetch here used to mean: any transient network
+  // blip (a phone switching WiFi↔mobile data mid-request, a weak signal, a
+  // backgrounded tab suspending the request) threw, got silently swallowed
+  // by the catch below, and the app moved on as if logout had succeeded —
+  // clearing local state and showing the login screen — while the actual
+  // session row was never touched server-side, leaving it stuck in
+  // Security & Sign-in indefinitely with zero indication anything went
+  // wrong. Retrying a couple of times closes most of that gap without
+  // risking trapping someone on the page if the network is genuinely down
+  // (still gives up and logs out locally after 3 attempts either way).
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    try {
+      const r = await fetch('api/auth/logout.php', { method: 'POST' })
+      if (r.ok) break
+    } catch (_) { /* try again below, or give up after the last attempt */ }
+    if (attempt < 3) await new Promise(res => setTimeout(res, 400 * attempt))
+  }
   try { localStorage.removeItem(HAD_SESSION_KEY) } catch (_) {}
 
   if (window.closeModal) window.closeModal()
