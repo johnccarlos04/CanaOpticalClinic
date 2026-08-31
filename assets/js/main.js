@@ -7404,9 +7404,10 @@ async function loadActiveSessionsPage() {
 
     const groupIcon = type => type === 'tablet' ? 'tablet' : type === 'phone' ? 'smartphone' : 'monitor'
     const osLabel = g => {
-      if (g.type === 'tablet') return g.os === 'iOS' ? 'iPad(s)' : `${g.os} tablet(s)`
-      if (g.type === 'phone')  return `${g.os} phone(s)`
-      return `${g.os} computer(s)`
+      const many = g.sessions.length > 1
+      if (g.type === 'tablet') return g.os === 'iOS' ? (many ? 'iPads' : 'iPad') : `${g.os} tablet${many ? 's' : ''}`
+      if (g.type === 'phone')  return `${g.os} phone${many ? 's' : ''}`
+      return `${g.os} computer${many ? 's' : ''}`
     }
 
     wrap.innerHTML = groups.map(g => `
