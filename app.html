@@ -10,7 +10,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700;800&display=block" rel="stylesheet">
-  <link rel="stylesheet" href="assets/css/global.css?v=202608070b">
+  <link rel="stylesheet" href="assets/css/global.css?v=202608070f">
   <style>
     .badge-no-show {
       display: inline-flex !important;
@@ -738,14 +738,24 @@
 
         </div>
 
+        <!-- Single combined hint — placed above both checkboxes since
+             users scan top to bottom and should see this before reaching
+             the links it's talking about, not after. Swaps its text to
+             whichever document(s) are still locked instead of showing two
+             near-identical stacked boxes, which read as cluttered/
+             repetitive once there were two checkboxes to gate. See
+             _regUpdateConsentHint() (auth.js). -->
+        <div class="reg-terms-hint" id="reg-terms-hint">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16" style="flex-shrink:0"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+          <span id="reg-terms-hint-text">Click the Terms &amp; Conditions and Data Privacy Act Notice links below, and read each to the bottom, to unlock their checkboxes.</span>
+        </div>
+
         <div class="reg-terms">
           <input type="checkbox" id="reg-terms-agree" class="chk" disabled
                  title="Read the Terms &amp; Conditions to unlock this checkbox"
                  onchange="window._regUpdateConsentHint()">
           <span>
-            I have read and agree to the <a href="#" class="reg-terms-link" onclick="event.preventDefault();window.openTermsModal()">Terms &amp; Conditions</a>,
-            and I am entrusting my personal information and account credentials to Cana Optical Clinic
-            for the purpose of registration, appointment booking, and patient care.
+            I have read and agree to the <a href="#" class="reg-terms-link" onclick="event.preventDefault();window.openTermsModal()">Terms &amp; Conditions</a>.
           </span>
         </div>
 
@@ -754,24 +764,13 @@
                  title="Read the Data Privacy Act Notice to unlock this checkbox"
                  onchange="window._regUpdateConsentHint()">
           <span>
-            I have read and agree to the <a href="#" class="reg-terms-link" onclick="event.preventDefault();window.openPrivacyModal()">Data Privacy Act Notice</a>,
-            and I consent to the collection, use, and storage of my personal and sensitive personal
-            information by Cana Optical Clinic in accordance with Republic Act No. 10173.
+            I have read and agree to the <a href="#" class="reg-terms-link" onclick="event.preventDefault();window.openPrivacyModal()">Data Privacy Act Notice</a>, and consent to the processing of my personal data under RA 10173.
           </span>
-        </div>
-
-        <!-- Single combined hint — swaps its text to whichever document(s)
-             are still locked instead of showing two near-identical stacked
-             boxes, which read as cluttered/repetitive once there were two
-             checkboxes to gate. See _regUpdateConsentHint() (auth.js). -->
-        <div class="reg-terms-hint" id="reg-terms-hint">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16" style="flex-shrink:0"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
-          <span id="reg-terms-hint-text">Click the Terms &amp; Conditions and Data Privacy Act Notice links above, and read each to the bottom, to unlock their checkboxes.</span>
         </div>
 
         <!-- QR notice -->
         <div class="qr-notice">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18" style="color:#E8760A;flex-shrink:0"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><path d="M14 14h3v3h3v3h-3v-3h-3z"/></svg>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16" style="color:#E8760A;flex-shrink:0"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><path d="M14 14h3v3h3v3h-3v-3h-3z"/></svg>
           <p>A unique QR code will be generated for quick clinic check-in.</p>
         </div>
 
@@ -871,14 +870,14 @@
 <script src="assets/js/clinic-data.js"></script>
 <script src="assets/js/analytics-data.js"></script>
 <script src="assets/js/db.js?v=20260806e"></script>
-<script src="assets/js/auth.js?v=20260806n"></script>
+<script src="assets/js/auth.js?v=20260806o"></script>
 <script src="assets/js/charts.js"></script>
 <script src="assets/js/pagination.js?v=20260806a"></script>
 <script src="assets/js/sortable.js"></script>
-<script src="assets/js/router.js?v=20260806r"></script>
-<script src="assets/js/pages.js?v=20260806dy"></script>
+<script src="assets/js/router.js?v=20260806t"></script>
+<script src="assets/js/pages.js?v=202608070r"></script>
 <script src="api/badge-fix.php"></script>
-<script src="assets/js/main.js?v=202608070j"></script>
+<script src="assets/js/main.js?v=2026080720"></script>
 <script>
   // If navigated here with #register, set a flag so restoreSession()
   // opens the register screen instead of login when no session exists

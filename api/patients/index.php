@@ -166,6 +166,8 @@ try {
             'status'         => $p['status'] ?? 'active',
             'noShowCount'    => (int)($p['no_show_count'] ?? 0),
             'bookingRestricted' => (bool)($p['booking_restricted'] ?? false),
+            'deletionRequestedAt' => $p['deletion_requested_at']   ?? null,
+            'deletionRequestReason' => $p['deletion_request_reason'] ?? '',
             'photoUrl'       => $photoMap[(int)($p['user_id'] ?? 0)] ?? null,
             'examinations'   => $examsByPt[$pid] ?? [],
             'prescriptions'  => $rxByPt[$pid]   ?? [],

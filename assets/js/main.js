@@ -849,6 +849,27 @@ function clinicTimeOpts() {
 }
 window.clinicTimeOpts = clinicTimeOpts
 
+// Same "h:mm AM/PM" list, but bounded to the clinic's OWN already-
+// configured operating hours (Consultation Settings' morning start /
+// afternoon end) instead of the generic 7 AM–9:30 PM business-hours
+// window — used specifically for a doctor's individual Start/End Time in
+// the Doctor Schedule modal (openSetScheduleModal() below), since a
+// doctor obviously can't be scheduled before the clinic opens or after it
+// closes. clinicTimeOpts() itself stays the wider generic range because
+// Consultation Settings' own morning/afternoon pickers use it to DEFINE
+// those hours in the first place — they can't be bounded by the very
+// setting they're setting. Falls back to the generic range if the clinic
+// hours haven't loaded/parsed yet, rather than handing back an empty picker.
+function doctorScheduleTimeOpts() {
+  const startMin = _clockToMinutes(consultationSettings.morningStart)
+  const endMin   = _clockToMinutes(consultationSettings.afternoonEnd)
+  if (startMin == null || endMin == null || endMin <= startMin) return clinicTimeOpts()
+  const out = []
+  for (let t = startMin; t <= endMin; t += 30) out.push(_minutesToClock(t))
+  return out
+}
+window.doctorScheduleTimeOpts = doctorScheduleTimeOpts
+
 let _custOpenId = null
 let _custHighlight = -1  // index of the keyboard-highlighted row, independent of the picked value
 let _custTypeahead  = ''
@@ -2087,13 +2108,26 @@ function reCalRender() {
   // Staff retain discretion over booking-window timing (see the function's
   // own doc comment) — enforceAdvanceWindow:false.
   if (grid) grid.innerHTML = _buildRescheduleCalCells(doctor, _reCal.year, _reCal.month, _reCal.selectedDate, 'window.reCalSelectDate', false)
+  // Same dimming treatment as the booking wizard's own calendar
+  // (amcRender(), main.js) — Prev fades once already on the current month,
+  // since no date before today is ever a valid reschedule target anyway.
+  const now  = new Date()
+  const prev = document.getElementById('re-cal-prev')
+  if (prev) prev.style.opacity = (_reCal.year === now.getFullYear() && _reCal.month === now.getMonth()) ? '0.3' : '1'
 }
 window.reCalRender = reCalRender
 
 function reCalGoMonth(delta) {
-  _reCal.month += delta
-  if (_reCal.month > 11) { _reCal.year++; _reCal.month = 0 }
-  if (_reCal.month < 0)  { _reCal.year--; _reCal.month = 11 }
+  const now = new Date()
+  let month = _reCal.month + delta
+  let year  = _reCal.year
+  if (month > 11) { year++; month = 0 }
+  if (month < 0)  { year--; month = 11 }
+  // Can't reschedule to a date before today, so a month entirely in the
+  // past has nothing to navigate to — same guard as the booking wizard's
+  // own calendar (amcGoMonth()).
+  if (year < now.getFullYear() || (year === now.getFullYear() && month < now.getMonth())) return
+  _reCal.year = year; _reCal.month = month
   reCalRender()
 }
 window.reCalGoMonth = reCalGoMonth
@@ -2246,15 +2280,19 @@ function rescheduleAppt(id) {
         .appt-mini-cal { display:grid; grid-template-columns:repeat(7,minmax(0,1fr)); gap:3px; min-width:0; }
         .amc-hdr { text-align:center; font-size:.65rem; font-weight:700; color:#9CA3AF; padding:4px 0; text-transform:uppercase; }
         .amc-day { aspect-ratio:1; display:flex; align-items:center; justify-content:center; border-radius:6px;
-          font-size:.8rem; cursor:pointer; position:relative; color:#374151;
+          font-size:.88rem; cursor:pointer; position:relative; color:#374151;
           transition:background-color .15s, color .15s; }
         .amc-day:hover:not(.amc-past):not(.amc-empty):not(.amc-far) { background:#FFF0DC; }
         .amc-day.amc-avail { background:#ECFDF5; color:#065F46; font-weight:600; }
-        .amc-day.amc-unavailable { background:#F3F4F6; color:#9CA3AF; }
+        .amc-day.amc-unavailable { background:#F3F4F6; color:#9CA3AF; cursor:default; }
         .amc-day.amc-today { outline:2px solid #E8760A; font-weight:700; }
         .amc-day.amc-selected { background:#E8760A !important; color:#fff !important; font-weight:700; }
-        .amc-day.amc-past { opacity:.35; cursor:default; }
-        .amc-day.amc-far { opacity:.3; cursor:default; background:#f9fafb; }
+        /* Solid, legible muted colors instead of opacity — same fix as the
+           booking wizard's own calendar (.amc-day.amc-past, pages.js):
+           opacity used to fade the day NUMBER along with the background,
+           reading as barely legible instead of a clearly-muted color. */
+        .amc-day.amc-past { color:#C1C7D0; cursor:default; }
+        .amc-day.amc-far { color:#C1C7D0; cursor:default; background:#f9fafb; }
         .amc-day.amc-empty { cursor:default; }
         .amc-day.amc-holiday { background:#FFF1F2; color:#f43f5e; cursor:default; font-weight:600; }
         .amc-holiday-lbl { position:absolute; left:2px; right:2px; top:calc(50% + 8px); font-size:.7rem; line-height:1.15; text-align:center; overflow:hidden; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; font-weight:600; padding:0 1px; }
@@ -2277,7 +2315,7 @@ function rescheduleAppt(id) {
         <label class="form-label">New Date</label>
         <input type="hidden" id="re-date" value="${defaultDate}">
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
-          <button type="button" class="btn-icon" onclick="window.reCalGoMonth(-1)">${icon('chevron-left','icon-sm')}</button>
+          <button type="button" class="btn-icon" id="re-cal-prev" onclick="window.reCalGoMonth(-1)">${icon('chevron-left','icon-sm')}</button>
           <span id="re-cal-month-label" style="font-size:.85rem;font-weight:700;color:#1C1C1C"></span>
           <button type="button" class="btn-icon" onclick="window.reCalGoMonth(1)">${icon('chevron-right','icon-sm')}</button>
         </div>
@@ -2287,6 +2325,7 @@ function rescheduleAppt(id) {
         <div class="appt-mini-cal" id="re-cal-cells"></div>
         <div style="display:flex;gap:12px;margin-top:10px;flex-wrap:wrap">
           <span style="display:flex;align-items:center;gap:5px;font-size:.7rem;color:#6B7280"><span style="width:10px;height:10px;border-radius:3px;background:#ECFDF5;border:1px solid #6EE7B7;display:inline-block"></span>Available</span>
+          <span style="display:flex;align-items:center;gap:5px;font-size:.7rem;color:#6B7280"><span style="width:10px;height:10px;border-radius:3px;background:#F3F4F6;display:inline-block"></span>Unavailable</span>
           <span style="display:flex;align-items:center;gap:5px;font-size:.7rem;color:#6B7280"><span style="width:10px;height:10px;border-radius:3px;background:#FEE2E2;border:1px solid #FCA5A5;display:inline-block"></span>Doctor Unavailable</span>
           <span style="display:flex;align-items:center;gap:5px;font-size:.7rem;color:#6B7280"><span style="width:10px;height:10px;border-radius:3px;background:#FFF1F2;border:1px solid #fda4af;display:inline-block"></span>PH Holiday</span>
         </div>
@@ -2379,13 +2418,24 @@ function rsCalRender() {
   // Patients rescheduling themselves stay inside the clinic's advance-
   // booking window, same as any other self-service booking — enforceAdvanceWindow:true.
   if (grid) grid.innerHTML = _buildRescheduleCalCells(doctor, _rsCal.year, _rsCal.month, _rsCal.selectedDate, 'window.rsCalSelectDate', true)
+  // Same dimming treatment as the booking wizard's own calendar
+  // (amcRender(), main.js) — Prev fades once already on the current month.
+  const now  = new Date()
+  const prev = document.getElementById('rs-cal-prev')
+  if (prev) prev.style.opacity = (_rsCal.year === now.getFullYear() && _rsCal.month === now.getMonth()) ? '0.3' : '1'
 }
 window.rsCalRender = rsCalRender
 
 function rsCalGoMonth(delta) {
-  _rsCal.month += delta
-  if (_rsCal.month > 11) { _rsCal.year++; _rsCal.month = 0 }
-  if (_rsCal.month < 0)  { _rsCal.year--; _rsCal.month = 11 }
+  const now = new Date()
+  let month = _rsCal.month + delta
+  let year  = _rsCal.year
+  if (month > 11) { year++; month = 0 }
+  if (month < 0)  { year--; month = 11 }
+  // Same guard as the booking wizard's own calendar (amcGoMonth()) — a
+  // month entirely before today has nothing to reschedule to.
+  if (year < now.getFullYear() || (year === now.getFullYear() && month < now.getMonth())) return
+  _rsCal.year = year; _rsCal.month = month
   rsCalRender()
 }
 window.rsCalGoMonth = rsCalGoMonth
@@ -2545,15 +2595,19 @@ function requestReschedule(id) {
         .appt-mini-cal { display:grid; grid-template-columns:repeat(7,minmax(0,1fr)); gap:3px; min-width:0; }
         .amc-hdr { text-align:center; font-size:.65rem; font-weight:700; color:#9CA3AF; padding:4px 0; text-transform:uppercase; }
         .amc-day { aspect-ratio:1; display:flex; align-items:center; justify-content:center; border-radius:6px;
-          font-size:.8rem; cursor:pointer; position:relative; color:#374151;
+          font-size:.88rem; cursor:pointer; position:relative; color:#374151;
           transition:background-color .15s, color .15s; }
         .amc-day:hover:not(.amc-past):not(.amc-empty):not(.amc-far) { background:#FFF0DC; }
         .amc-day.amc-avail { background:#ECFDF5; color:#065F46; font-weight:600; }
-        .amc-day.amc-unavailable { background:#F3F4F6; color:#9CA3AF; }
+        .amc-day.amc-unavailable { background:#F3F4F6; color:#9CA3AF; cursor:default; }
         .amc-day.amc-today { outline:2px solid #E8760A; font-weight:700; }
         .amc-day.amc-selected { background:#E8760A !important; color:#fff !important; font-weight:700; }
-        .amc-day.amc-past { opacity:.35; cursor:default; }
-        .amc-day.amc-far { opacity:.3; cursor:default; background:#f9fafb; }
+        /* Solid, legible muted colors instead of opacity — same fix as the
+           booking wizard's own calendar (.amc-day.amc-past, pages.js):
+           opacity used to fade the day NUMBER along with the background,
+           reading as barely legible instead of a clearly-muted color. */
+        .amc-day.amc-past { color:#C1C7D0; cursor:default; }
+        .amc-day.amc-far { color:#C1C7D0; cursor:default; background:#f9fafb; }
         .amc-day.amc-empty { cursor:default; }
         .amc-day.amc-holiday { background:#FFF1F2; color:#f43f5e; cursor:default; font-weight:600; }
         .amc-holiday-lbl { position:absolute; left:2px; right:2px; top:calc(50% + 8px); font-size:.7rem; line-height:1.15; text-align:center; overflow:hidden; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; font-weight:600; padding:0 1px; }
@@ -2579,7 +2633,7 @@ function requestReschedule(id) {
         <label class="form-label">Preferred New Date <span style="color:#DC2626">*</span></label>
         <input type="hidden" id="rs-date" value="">
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
-          <button type="button" class="btn-icon" onclick="window.rsCalGoMonth(-1)">${icon('chevron-left','icon-sm')}</button>
+          <button type="button" class="btn-icon" id="rs-cal-prev" onclick="window.rsCalGoMonth(-1)">${icon('chevron-left','icon-sm')}</button>
           <span id="rs-cal-month-label" style="font-size:.85rem;font-weight:700;color:#1C1C1C"></span>
           <button type="button" class="btn-icon" onclick="window.rsCalGoMonth(1)">${icon('chevron-right','icon-sm')}</button>
         </div>
@@ -2589,6 +2643,7 @@ function requestReschedule(id) {
         <div class="appt-mini-cal" id="rs-cal-cells"></div>
         <div style="display:flex;gap:12px;margin-top:10px;flex-wrap:wrap">
           <span style="display:flex;align-items:center;gap:5px;font-size:.7rem;color:#6B7280"><span style="width:10px;height:10px;border-radius:3px;background:#ECFDF5;border:1px solid #6EE7B7;display:inline-block"></span>Available</span>
+          <span style="display:flex;align-items:center;gap:5px;font-size:.7rem;color:#6B7280"><span style="width:10px;height:10px;border-radius:3px;background:#F3F4F6;display:inline-block"></span>Unavailable</span>
           <span style="display:flex;align-items:center;gap:5px;font-size:.7rem;color:#6B7280"><span style="width:10px;height:10px;border-radius:3px;background:#FEE2E2;border:1px solid #FCA5A5;display:inline-block"></span>Doctor Unavailable</span>
           <span style="display:flex;align-items:center;gap:5px;font-size:.7rem;color:#6B7280"><span style="width:10px;height:10px;border-radius:3px;background:#FFF1F2;border:1px solid #fda4af;display:inline-block"></span>PH Holiday</span>
         </div>
@@ -4039,22 +4094,48 @@ function wizJump(targetStep) {
 }
 window.wizJump = wizJump
 
-// A patient with zero completed examination records has never actually
-// been seen at the clinic yet — showing them a list of named doctors this
-// early leaks doctor identities/schedules to someone with no track record
-// with any of them, for no real benefit (they have no informed reason to
-// prefer one over another). First-time patients still see the preference
-// gate (pages.js appointmentWizardHtml) but not the actual choice — just a
-// single-button notice explaining they'll be matched with any available
-// optometrist, so that policy is something they're told, not something
-// that happens invisibly.
-function _isFirstTimePatient() {
-  if (state.role !== 'patient' || !state.user) return false
-  const me = patients.find(p => p.id === state.user.id)
-  const completedExams = (me?.examinations || []).filter(e => (e.status || 'completed') === 'completed')
-  return completedExams.length === 0
+// Scans forward from today (up to ~2 months) for the first date that
+// would actually render as a clickable "Available" cell in amcRender() —
+// mirrors that function's own bookability logic (Sunday, PH holidays,
+// clinic days, min/max advance window, "does any doctor even work this
+// day") rather than duplicating it loosely. Used to pick which month the
+// calendar opens on by default: today's own month can easily have zero
+// bookable dates left in it (every day already past, or the one day left
+// is a holiday — see wizInitStaff()'s own follow-up-date checks for the
+// same three reasons), which used to just leave staff/patients staring at
+// an all-gray dead month with no indication of where to look next.
+function _earliestBookableDate(prefillDays) {
+  const now = new Date()
+  const todayY = now.getFullYear(), todayM = now.getMonth(), todayD = now.getDate()
+  const isStaffMode = _wiz.mode === 'staff'
+  const maxDate = isStaffMode ? null : maxAdvanceDate(new Date(todayY, todayM, todayD))
+  const minAdv  = isStaffMode ? 0 : minAdvanceDays()
+  const dayNames = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat']
+  const dayNamesFull = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday']
+  const hasPrefill = !!(prefillDays && prefillDays.length)
+
+  for (let i = 0; i <= 60; i++) {
+    const d = new Date(todayY, todayM, todayD + i)
+    if (maxDate && d > maxDate) break
+    if (i < minAdv) continue
+    const dow = d.getDay()
+    if (dow === 0) continue // clinic never open Sundays
+    const dateStr = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`
+    if (getPHHolidays(d.getFullYear())[dateStr]) continue
+    const isClinicDay = (dayNamesFull[dow] && (consultationSettings.clinicDays || []).includes(dayNamesFull[dow]))
+    if (!isClinicDay) continue
+    if (hasPrefill) {
+      if (!prefillDays.includes(dayNames[dow])) continue
+    } else {
+      const noDoctorThisDay = !doctors.some(doc =>
+        (doc.days || []).includes(dayNames[dow]) && !(doc.blockedDates || []).some(b => b.date === dateStr)
+      )
+      if (noDoctorThisDay) continue
+    }
+    return d
+  }
+  return null // nothing bookable within range — leave the caller's own fallback in place
 }
-window._isFirstTimePatient = _isFirstTimePatient
 
 // ── Calendar init ─────────────────────────────────────────────────
 function amcInit() {
@@ -4062,9 +4143,16 @@ function amcInit() {
   const prefill = window._patCalPrefill || null
   window._patCalPrefill = null  // consume once
 
+  // Default the visible month to wherever the earliest actually-bookable
+  // date falls, not blindly "today" — a prefill (below) still overrides
+  // this with its own specific date when there is one.
+  const earliest = _earliestBookableDate()
+  const defaultCalYear  = earliest ? earliest.getFullYear() : now.getFullYear()
+  const defaultCalMonth = earliest ? earliest.getMonth()    : now.getMonth()
+
   Object.assign(_wiz, { step:0, selectedDate:'', selectedDateLabel:'', selectedDateShort:'',
     doctorId:'', doctorName:'', doctorSpec:'', _prefillDays:[], time:'', type:'', notes:'',
-    calYear: now.getFullYear(), calMonth: now.getMonth(), anyDoctor: false })
+    calYear: defaultCalYear, calMonth: defaultCalMonth, anyDoctor: false })
 
   // Relabel the stepper's Doctor dot back to default in case a previous
   // visit to this page left it saying "Any Doctor" (see wizChooseDoctorPref()).
@@ -4083,12 +4171,8 @@ function amcInit() {
     if (prefEl) prefEl.style.display = 'none'
     if (mainEl) mainEl.style.display = ''
   } else {
-    // Always shown otherwise, first-time patient or not — a first-timer
-    // just sees a different, single-button notice inside it instead of the
-    // real doctor-name/no-doctor-name choice (see appointmentWizardHtml(),
-    // pages.js), so the "you'll be matched with any available optometrist"
-    // policy is something they're actually told, not something that just
-    // happens silently with no acknowledgment.
+    // Always shown otherwise — every patient gets the real doctor-name/
+    // no-doctor-name choice (see appointmentWizardHtml(), pages.js).
     if (prefEl) prefEl.style.display = ''
     if (mainEl) mainEl.style.display = 'none'
   }
@@ -4144,9 +4228,20 @@ function wizInitStaff(patientId, patientName) {
   const prefill = window._staffCalPrefill || null
   window._staffCalPrefill = null  // consume once
 
+  // Set ahead of the Object.assign below so _earliestBookableDate() (which
+  // reads _wiz.mode to grant staff their usual advance-booking-window
+  // exemption) sees the right mode already — same default-month reasoning
+  // as amcInit()'s own call: today's month can have zero bookable dates
+  // left in it, most often because staff opened this on a day that's
+  // itself the month's last remaining date and also a holiday.
+  _wiz.mode = 'staff'
+  const earliest = _earliestBookableDate()
+  const defaultCalYear  = earliest ? earliest.getFullYear() : now.getFullYear()
+  const defaultCalMonth = earliest ? earliest.getMonth()    : now.getMonth()
+
   Object.assign(_wiz, { step:0, selectedDate:'', selectedDateLabel:'', selectedDateShort:'',
     doctorId:'', doctorName:'', doctorSpec:'', _prefillDays:[], time:'', type:'',
-    notes:'', calYear: now.getFullYear(), calMonth: now.getMonth(),
+    notes:'', calYear: defaultCalYear, calMonth: defaultCalMonth,
     mode: 'staff', patientId, patientName, initialStatus: 'approved', anyDoctor: false })
 
   const set = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = val }
@@ -4379,6 +4474,16 @@ function amcGoMonth(dir) {
   if (m < 0) { m = 11; y-- }
   if (m > 11) { m = 0; y++ }
   if (y < now.getFullYear() || (y === now.getFullYear() && m < now.getMonth())) return
+  // Same discretion staff/admin already get elsewhere (amcRender()'s own
+  // isFar check) — the Maximum Advance Booking window is a patient
+  // self-service policy only, never enforced server-side for any role.
+  // Without this, a patient could keep clicking Next straight past the
+  // bookable window into a month where literally every date is disabled —
+  // a dead end with nothing to click, not just a longer scroll.
+  if (_wiz.mode !== 'staff') {
+    const maxDate = maxAdvanceDate(now)
+    if (y > maxDate.getFullYear() || (y === maxDate.getFullYear() && m > maxDate.getMonth())) return
+  }
   _wiz.calYear = y; _wiz.calMonth = m
   amcRender()
 }
@@ -4444,10 +4549,28 @@ function _buildRescheduleCalCells(doctor, year, month, selectedDate, onSelectFn,
     const tooltip = (tooSoon && !isPast) ? `title="${minAdvanceTooltip()}"` :
                     isBlocked ? `title="Doctor unavailable: ${String(blockedReason).replace(/"/g,'&quot;')}"` :
                     isHoliday ? `title="Clinic closed: ${holidayName}"` :
+                    (isFar && !isPast) ? `title="Beyond the maximum booking window."` :
                     (!docAvail && !isPast && !isSun) ? `title="This doctor does not work on this day."` : ''
+    // Same inline-label convention as the booking wizard's own calendar
+    // (amcRender()) — a hover title="" alone never reaches a touch-screen
+    // patient, so every reason a date is blocked gets a short label under
+    // the day number too, not just a tooltip.
+    // No inline "Not Available" label here (unlike Too Soon/Too Far above)
+    // — on a single-doctor calendar like this one, the days that doctor
+    // doesn't work are usually the MAJORITY of the month, not the
+    // exception, so repeating that label on every other cell read as
+    // noise rather than useful. A plain "Unavailable" legend entry (see
+    // the modal's own legend, main.js) covers it instead — same reasoning
+    // as the wizard's own calendar leaving amc-blocked/"Doctor
+    // Unavailable" unlabeled for the analogous reason (see amcRender()'s
+    // own comment on that).
     const inner = isHoliday && !isPast
       ? `${d}<span class="amc-holiday-lbl">${holidayName}</span>`
-      : String(d)
+      : (tooSoon && !isPast)
+        ? `${d}<span class="amc-holiday-lbl">Too Soon</span>`
+        : (isFar && !isPast)
+          ? `${d}<span class="amc-holiday-lbl">Too Far</span>`
+          : String(d)
     cells += `<div class="${cls}" data-date="${dateStr}" ${onclick} ${tooltip}>${inner}</div>`
   }
   return cells
@@ -4465,6 +4588,13 @@ function amcRender() {
   if (lbl) lbl.textContent = new Date(year, month, 1).toLocaleDateString('en-PH', { month:'long', year:'numeric' })
   const prev = document.getElementById('amc-prev')
   if (prev) prev.style.opacity = (year===todayY && month===todayM) ? '0.3' : '1'
+  // Same dimming treatment as Prev above, mirrored for the other end of
+  // the range — dims once the view is already on the last month that
+  // contains any bookable date, so there's a visible cue before a patient
+  // clicks Next into an entirely dead month (amcGoMonth() also blocks the
+  // click itself; this is just the "why isn't this doing anything" tell).
+  const next = document.getElementById('amc-next')
+  if (next) next.style.opacity = (_wiz.mode !== 'staff' && year === maxDate.getFullYear() && month === maxDate.getMonth()) ? '0.3' : '1'
 
   const phHolidays = getPHHolidays(year)
   const blockedMap = {}
@@ -4472,6 +4602,21 @@ function amcRender() {
     const doc = doctors.find(d => d.id === _wiz.doctorId)
     ;(doc?.blockedDates || []).forEach(b => { blockedMap[b.date] = b.reason || 'Unavailable' })
   }
+  // How many of the patient's own appointments already fall on each date —
+  // mirrors create.php's own max-appointments-per-patient-per-day cap
+  // (patient self-service only; staff/admin booking on a patient's behalf
+  // keep the same discretion they already have around every other date
+  // restriction on this calendar). Blocking it here up front means a
+  // patient who's already booked that day finds out before filling in the
+  // rest of the wizard, not after, at the very last "Confirm" step.
+  const myApptCountByDate = {}
+  if (_wiz.mode !== 'staff') {
+    appointments.forEach(a => {
+      if (['cancelled','disapproved'].includes(a.status)) return
+      myApptCountByDate[a.date] = (myApptCountByDate[a.date] || 0) + 1
+    })
+  }
+  const maxPerPatientDay = consultationSettings.maxApptsPerPatientPerDay || 1
   const firstDay  = new Date(year, month, 1).getDay()
   const daysInMon = new Date(year, month + 1, 0).getDate()
   let cells = ''
@@ -4501,7 +4646,12 @@ function amcRender() {
     // regardless of the clinic's Minimum Advance Booking policy, which only
     // governs self-service patient bookings.
     const tooSoon   = _wiz.mode !== 'staff' && daysOut < minAdvanceDays()
-    const isDisabled = isPast || tooSoon || isHoliday || isBlocked
+    // Patient already has as many appointments on this date as the clinic
+    // allows per day (Consultation Settings) — see create.php's own
+    // matching check, which this mirrors so the date is blocked here up
+    // front instead of only failing at the very last "Confirm" step.
+    const isAlreadyBooked = (myApptCountByDate[dateStr] || 0) >= maxPerPatientDay
+    const isDisabled = isPast || tooSoon || isHoliday || isBlocked || isAlreadyBooked
     // If doctor prefilled, restrict to their available days; otherwise fall
     // back to the clinic-wide Clinic Days setting (Consultation Settings) —
     // but that's just the clinic's general policy, it doesn't guarantee any
@@ -4542,17 +4692,30 @@ function amcRender() {
     if (isDisabled || isSun || (hasPrefill && !docAvail)) cls += ' amc-past'
     if (isFar)                                            cls += ' amc-far'
     if (noDoctorThisDay && !isPast && !isHoliday)         cls += ' amc-past'
+    if (isAlreadyBooked && !isPast && !isHoliday)         cls += ' amc-past'
     const clickable = !isDisabled && !isFar && docAvail && !isSun
     const onclick   = clickable ? `onclick="window.amcSelectDate('${dateStr}','${dayNames[dow]}')"` : ''
-    const tooltip   = (tooSoon && !isPast) ? `title="${minAdvanceTooltip()}"` :
+    const tooltip   = (isAlreadyBooked && !isPast && !isHoliday) ? `title="You already have ${maxPerPatientDay === 1 ? 'an appointment' : maxPerPatientDay + ' appointments'} scheduled this day."` :
+                      (tooSoon && !isPast) ? `title="${minAdvanceTooltip()}"` :
                       isBlocked ? `title="Doctor unavailable: ${String(blockedReason).replace(/"/g,'&quot;')}"` :
                       isHoliday ? `title="Clinic closed: ${holidayName}"` :
-                      (noDoctorThisDay && !isPast) ? `title="No doctors are available on this day."` : ''
+                      (noDoctorThisDay && !isPast) ? `title="No doctors are available on this day."` :
+                      (isFar && !isPast) ? `title="Beyond the maximum booking window."` : ''
+    // Every other reason a date is blocked already gets its own small label
+    // under the day number (holiday name, No Doctor, Booked below) — these
+    // two were the only ones still relying on a hover-only title="", which
+    // never reaches a touch-screen patient at all.
     const inner     = isHoliday && !isPast
       ? `${d}<span class="amc-holiday-lbl">${holidayName}</span>`
-      : (noDoctorThisDay && !isPast)
-        ? `${d}<span class="amc-nodoc-lbl">No Doctor</span>`
-        : String(d)
+      : (isAlreadyBooked && !isPast)
+        ? `${d}<span class="amc-nodoc-lbl">Booked</span>`
+        : (noDoctorThisDay && !isPast)
+          ? `${d}<span class="amc-nodoc-lbl">No Doctor</span>`
+          : (tooSoon && !isPast)
+            ? `${d}<span class="amc-nodoc-lbl">Too Soon</span>`
+            : (isFar && !isPast)
+              ? `${d}<span class="amc-nodoc-lbl">Too Far</span>`
+              : String(d)
     cells += `<div class="${cls}" data-date="${dateStr}" ${onclick} ${tooltip}>${inner}</div>`
   }
   const grid = document.getElementById('amc-cells')
@@ -5170,17 +5333,6 @@ function syncApptSubmitState() {
   btn.disabled = !(agree && agree.checked)
 }
 window.syncApptSubmitState = syncApptSubmitState
-
-// Staff/admin review step — Initial Status pill toggle (replaces the old
-// plain <select>, which was easy to miss/skip past when scanning the page).
-function setInitialStatus(value, btnEl) {
-  _wiz.initialStatus = value
-  const hidden = document.getElementById('ca-initial-status')
-  if (hidden) hidden.value = value
-  document.querySelectorAll('.init-status-pill').forEach(b => b.classList.remove('selected'))
-  btnEl.classList.add('selected')
-}
-window.setInitialStatus = setInitialStatus
 
 // ── Appointment Policy modal ───────────────────────────────────────
 // Same pattern as the registration page's Terms & Conditions modal: the
@@ -6752,6 +6904,115 @@ window.doArchivePatient      = doArchivePatient
 window.togglePatientStatus   = togglePatientStatus
 
 // ════════════════════════════════════════════════════════════════
+//  PATIENT SELF-SERVICE — Request Account Deletion (patient role only)
+//  Only ever sends a request to admin/staff (api/patients/request-
+//  deletion.php) — never deletes anything itself. Admin/staff fulfills it
+//  by archiving the patient as normal (which now also clears the flag,
+//  see api/archive/create.php), or dismisses it (dismissDeletionRequest()
+//  below) to leave the account untouched.
+// ════════════════════════════════════════════════════════════════
+function openRequestDeletionModal() {
+  showModal(`
+    <div class="modal-header">
+      <div class="modal-title" style="display:flex;align-items:center;gap:8px">
+        <div style="width:32px;height:32px;border-radius:8px;background:#FEE2E2;display:flex;align-items:center;justify-content:center;color:#DC2626">
+          ${icon('user-x','icon-sm')}
+        </div>
+        Request Account Deletion
+      </div>
+      <button class="modal-close" onclick="window.closeModal()">&times;</button>
+    </div>
+    <div class="modal-body">
+      <p style="font-size:.88rem;color:#6b7280;margin-bottom:16px">
+        This sends a request to clinic staff — it doesn't delete anything right away. Your account and records stay exactly as they are until staff reviews it, and you can cancel this request any time before then.
+      </p>
+      <div class="form-group" style="margin:0">
+        <label class="form-label">Reason <span style="color:#9CA3AF;font-weight:400">(optional)</span></label>
+        <textarea id="del-req-reason" class="form-textarea" style="border-radius:8px;min-height:80px" maxlength="500"
+                  placeholder="Let the clinic know why, if you'd like…"></textarea>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn-secondary" onclick="window.closeModal()">Cancel</button>
+      <button id="submit-del-req-btn" class="btn-primary" style="background:#DC2626"
+              onclick="window.submitDeletionRequest(this)">
+        ${icon('user-x','icon-sm')}<span>Send Request</span>
+      </button>
+    </div>`)
+}
+window.openRequestDeletionModal = openRequestDeletionModal
+
+async function submitDeletionRequest(btnEl) {
+  const reason = (document.getElementById('del-req-reason') || {}).value?.trim() || ''
+  if (btnEl) { btnEl.disabled = true; btnEl.textContent = 'Sending…' }
+  try {
+    const r = await fetch('api/patients/request-deletion.php', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ reason })
+    })
+    const d = await r.json()
+    if (!d.success) {
+      toast(d.message || 'Could not send the request.', 'error')
+      if (btnEl) { btnEl.disabled = false; btnEl.innerHTML = `${icon('user-x','icon-sm')}<span>Send Request</span>` }
+      return
+    }
+    if (state.user) { state.user.deletionRequestedAt = new Date().toISOString(); state.user.deletionRequestReason = reason }
+    closeModal()
+    toast('Deletion request sent. Clinic staff will review it.', 'success')
+    renderPage()
+  } catch (_) {
+    toast('Network error. Please try again.', 'error')
+    if (btnEl) { btnEl.disabled = false; btnEl.innerHTML = `${icon('user-x','icon-sm')}<span>Send Request</span>` }
+  }
+}
+window.submitDeletionRequest = submitDeletionRequest
+
+async function cancelDeletionRequest(btnEl) {
+  if (btnEl) { btnEl.disabled = true; btnEl.textContent = 'Cancelling…' }
+  try {
+    const r = await fetch('api/patients/cancel-deletion-request.php', { method: 'POST' })
+    const d = await r.json()
+    if (!d.success) {
+      toast(d.message || 'Could not cancel the request.', 'error')
+      if (btnEl) { btnEl.disabled = false; btnEl.innerHTML = `${icon('x','icon-sm')} Cancel Request` }
+      return
+    }
+    if (state.user) { state.user.deletionRequestedAt = null; state.user.deletionRequestReason = '' }
+    toast('Deletion request cancelled.', 'success')
+    renderPage()
+  } catch (_) {
+    toast('Network error. Please try again.', 'error')
+    if (btnEl) { btnEl.disabled = false; btnEl.innerHTML = `${icon('x','icon-sm')} Cancel Request` }
+  }
+}
+window.cancelDeletionRequest = cancelDeletionRequest
+
+// Admin/staff — declines the request without archiving the patient.
+async function dismissDeletionRequest(patientId, btnEl) {
+  if (btnEl) { btnEl.disabled = true; btnEl.textContent = 'Dismissing…' }
+  try {
+    const r = await fetch('api/patients/dismiss-deletion-request.php', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ patientId })
+    })
+    const d = await r.json()
+    if (!d.success) {
+      toast(d.message || 'Could not dismiss the request.', 'error')
+      if (btnEl) { btnEl.disabled = false; btnEl.innerHTML = `${icon('x','icon-sm')} Dismiss Request` }
+      return
+    }
+    const p = patients.find(p => p.id === patientId)
+    if (p) { p.deletionRequestedAt = null; p.deletionRequestReason = '' }
+    toast('Deletion request dismissed. The account remains active.', 'success')
+    renderPage()
+  } catch (_) {
+    toast('Network error. Please try again.', 'error')
+    if (btnEl) { btnEl.disabled = false; btnEl.innerHTML = `${icon('x','icon-sm')} Dismiss Request` }
+  }
+}
+window.dismissDeletionRequest = dismissDeletionRequest
+
+// ════════════════════════════════════════════════════════════════
 //  CONTACT MESSAGES — view / read state / delete
 // ════════════════════════════════════════════════════════════════
 function openContactMessageModal(id) {
@@ -7450,7 +7711,14 @@ async function revokeSession(id, btnEl) {
       if (btnEl) { btnEl.disabled = false; btnEl.textContent = 'Sign Out' }
       return
     }
-    toast('That device has been signed out.', 'success')
+    // revokeSessionByShortId() (api/helpers.php) also sweeps any other
+    // session that's the exact same browser + IP as the one just picked —
+    // almost always just leftover duplicate rows from repeatedly logging
+    // back in on that same device (see listSessions()'s own dedup, which
+    // only ever hides those from the list, never deletes them). Reflect
+    // that in the toast when it actually cleaned up more than one row.
+    const n = d.revokedCount || 1
+    toast(n > 1 ? `That device has been signed out (${n} sessions cleared).` : 'That device has been signed out.', 'success')
     loadActiveSessionsPage()
   } catch (_) {
     toast('Network error. Please try again.', 'error')
@@ -7989,9 +8257,9 @@ function openSetScheduleModal(doctorId) {
         </div></div>
       <div class="form-row-2">
         <div class="form-group"><label class="form-label">Start Time</label>
-          ${window.timeFieldHtml('sched-start', { value: d ? (d.hours || '8:00 AM – 5:00 PM').split('–')[0].trim() : '8:00 AM', options: window.clinicTimeOpts() })}</div>
+          ${window.timeFieldHtml('sched-start', { value: d ? (d.hours || '8:00 AM – 5:00 PM').split('–')[0].trim() : '8:00 AM', options: window.doctorScheduleTimeOpts() })}</div>
         <div class="form-group"><label class="form-label">End Time</label>
-          ${window.timeFieldHtml('sched-end', { value: d ? ((d.hours || '8:00 AM – 5:00 PM').split('–')[1]?.trim() ?? '5:00 PM') : '5:00 PM', options: window.clinicTimeOpts() })}</div>
+          ${window.timeFieldHtml('sched-end', { value: d ? ((d.hours || '8:00 AM – 5:00 PM').split('–')[1]?.trim() ?? '5:00 PM') : '5:00 PM', options: window.doctorScheduleTimeOpts() })}</div>
       </div>
       <div class="form-group" style="display:flex;align-items:center;justify-content:space-between">
         <label class="form-label" style="margin:0">Mark as Available</label>
@@ -9194,23 +9462,21 @@ function downloadClearancePDF(patientName, examId) {
   wrap.appendChild(clone)
   document.body.appendChild(wrap)
 
-  // html2pdf/html2canvas has no CSS print pipeline to center against — it
-  // just rasterizes the clone and drops it at the page's top margin. So the
-  // vertical centering has to be computed manually here: measure the actual
-  // rendered height, then split whatever's left on an A4 page evenly above
-  // and below it (falling back to the plain corner margin if the content is
-  // tall enough that there's nothing meaningful left to split).
-  const pageHeightMm    = 297
-  const contentHeightMm = clone.offsetHeight * 25.4 / 96
-  const leftoverMm      = pageHeightMm - contentHeightMm
-  const vMarginMm       = leftoverMm > pdfMarginMm * 2 ? leftoverMm / 2 : pdfMarginMm
-
+  // Used to compute a large top/bottom margin here to vertically center
+  // the certificate on the page — but splitting the leftover height evenly
+  // above and below it meant a short certificate got a big margin pair,
+  // and that extra margin (added on top of the already-measured content
+  // height) could push the total just past one page, spilling a near-empty
+  // second page. Plain top alignment (the same fixed margin on every side,
+  // matching the horizontal one) reads as a normal document instead of one
+  // floating mid-page, and — since nothing inflates the total height
+  // beyond the content's own — keeps this to the single page it actually needs.
   const safeName = (patientName || 'Patient').replace(/[^a-z0-9]+/gi, '-').replace(/^-+|-+$/g, '')
   const filename = `Clearance-${safeName}-${examId || ''}.pdf`
 
   window.html2pdf()
     .set({
-      margin:      [vMarginMm, pdfMarginMm, vMarginMm, pdfMarginMm],
+      margin:      pdfMarginMm,
       filename,
       image:       { type: 'jpeg', quality: 0.98 },
       html2canvas: { scale: 2, backgroundColor: '#ffffff', useCORS: true, windowWidth: contentWidthPx, width: contentWidthPx, x: 0, y: 0 },
@@ -9260,20 +9526,32 @@ function _openExamPrintWindow(p, e) {
   <meta charset="UTF-8">
   <title>Optical Examination: ${p.name}</title>
   <style>
-    /* margin:0 so Chrome has no page-margin band left to draw its own
-       print header/footer (URL, date, page number) into — the same
-       visual margin is restored via body padding below instead. */
-    @page { size: A4; margin: 0; }
+    /* A real @page margin, not margin:0 + a manual body padding standing in
+       for it — that padding-based approach looked fine on a short document
+       but any body/element padding only ever renders on the very first and
+       very last page a print job spans, never in between (a CSS print
+       fragmentation guarantee, not a bug) — so the moment this document
+       ran even one line past a page, that line landed flush against the
+       physical edge with no margin at all, on every side. @page's own
+       margin is the one box the spec guarantees gets reapplied on every
+       page a document spans, exactly like the Dashboard and Reports
+       printables already rely on for the same reason. */
+    @page { size: A4; margin: 16mm 20mm; }
     * { box-sizing: border-box; margin: 0; padding: 0; }
+    /* Used to wrap the content in display:table/table-cell purely to get
+       vertical-align:top (plus, at one point, an explicit height:297mm to
+       give that vertical-align something to resolve against). Neither is
+       needed for plain top-aligned content — ordinary block flow already
+       starts at the top with zero special CSS — and the table/table-cell
+       route came with real print-pagination risk: a table-cell can resolve
+       its own height against the page box in ways a plain block never
+       does, which was still spilling an almost-entirely-blank second page
+       for a document comfortably shorter than one page even after the
+       explicit height was removed. Plain block content, no table anywhere,
+       removes that whole class of quirk — the margin the old .pg-inner
+       padding gave now comes from @page above instead, which (unlike body
+       padding) actually repeats on every page a document spans. */
     body { font-family: Arial, Helvetica, sans-serif; color: #111; font-size: 14px; line-height: 1.65; background: #fff; }
-    /* Table/table-cell layout is far more reliably honored by Chrome's
-       print engine than flexbox height resolution, which tends to collapse
-       to content-size during pagination — vertical-align:top here just
-       starts the content flush with the page's top margin instead of the
-       centered layout this used to have (which floated a short record
-       mid-page and looked worse the longer it got). */
-    .pg       { display: table; width: 100%; height: 297mm; }
-    .pg-inner { display: table-cell; vertical-align: top; padding: 16mm 20mm; }
     table { width: 100%; border-collapse: collapse; }
     .clinic-hdr  { display: flex; align-items: center; gap: 14px; border-bottom: 3px solid #E8760A; padding-bottom: 14px; margin-bottom: 20px; }
     .clinic-hdr-text { text-align: left; }
@@ -9296,15 +9574,27 @@ function _openExamPrintWindow(p, e) {
     .iss-id    { font-size: 10px; font-family: monospace; color: #bbb; margin-top: 2px; }
     .tbl-hdr th { background: #f5f5f5; padding: 9px 12px; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; }
     .tbl-border { border: 1px solid #eee; border-radius: 10px; overflow: hidden; margin-bottom: 16px; }
+    /* min-width:0 overrides a CSS grid item's default min-width:auto —
+       without it, a 1fr track refuses to shrink below its content's
+       intrinsic width (a long lens type/material string, a pasted
+       "Received By" name, etc.), which was pushing the whole grid — and
+       the page itself — wider than A4 instead of just wrapping, forcing
+       the print preview into a horizontal scrollbar with content actually
+       getting clipped off the right edge when printed for real. Same
+       fix, same reasoning as every other min-width:0 already used
+       elsewhere in this app's own flex/grid layouts. overflow-wrap on the
+       value classes below is the second half of it — even with room to
+       shrink into, a single unbroken long value still needs somewhere to
+       break. */
     .info-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; margin-bottom: 16px; }
-    .info-box  { background: #f9f9f9; border: 1px solid #eee; border-radius: 8px; padding: 10px 12px; }
+    .info-box  { background: #f9f9f9; border: 1px solid #eee; border-radius: 8px; padding: 10px 12px; min-width: 0; }
     .ib-lbl    { font-size: 10px; text-transform: uppercase; letter-spacing: .05em; color: #aaa; margin-bottom: 3px; }
-    .ib-val    { font-size: 16px; font-weight: 800; color: #111; }
+    .ib-val    { font-size: 16px; font-weight: 800; color: #111; overflow-wrap: anywhere; }
     .ib-unit   { font-size: 10px; color: #aaa; font-weight: 400; }
     .diag-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 16px; }
-    .diag-box  { background: #f9f9f9; border: 1px solid #eee; border-radius: 8px; padding: 12px 14px; }
+    .diag-box  { background: #f9f9f9; border: 1px solid #eee; border-radius: 8px; padding: 12px 14px; min-width: 0; }
     .db-lbl    { font-size: 10px; text-transform: uppercase; letter-spacing: .05em; color: #aaa; margin-bottom: 4px; }
-    .db-val    { font-size: 16px; font-weight: 800; color: #111; margin-bottom: 3px; }
+    .db-val    { font-size: 16px; font-weight: 800; color: #111; margin-bottom: 3px; overflow-wrap: anywhere; }
     .db-sub    { font-size: 11px; color: #555; }
     .remarks-block { border-top: 1px solid #eee; padding-top: 12px; margin-top: 8px; font-style: italic; font-size: 13px; color: #555; }
     .sig-grid  { display: grid; grid-template-columns: 1fr 1fr; gap: 50px; margin-top: 26px; padding-top: 16px; border-top: 1px dashed #ccc; page-break-before: avoid; }
@@ -9318,7 +9608,6 @@ function _openExamPrintWindow(p, e) {
   </style>
 </head>
 <body>
-<div class="pg"><div class="pg-inner">
 
   <!-- CLINIC HEADER -->
   <div class="clinic-hdr">
@@ -9427,7 +9716,6 @@ function _openExamPrintWindow(p, e) {
   <div class="prep-by">Prepared by: ${state.user?.name || '—'} &bull; ${preparedByLabel}</div>
   <div class="stamp">Exam ID: ${e.id} &bull; Printed: ${generated}</div>
 
-</div></div>
 </body></html>`
 
   _printHtmlDocument(html)
@@ -9442,11 +9730,11 @@ function _openRxPrintWindow(p, rx) {
   const _fmtDt = d => d ? new Date(d.includes('T') ? d : d+'T00:00:00').toLocaleDateString('en-PH',{year:'numeric',month:'long',day:'numeric'}) : '—'
   const eyeRow = (lbl, od, os) => `
     <tr>
-      <td style="padding:6px 10px;font-size:11px;color:#555;font-weight:600;border-bottom:1px solid #eee">${lbl}</td>
-      <td style="padding:6px 10px;font-size:12px;font-weight:800;color:#059669;text-align:center;border-bottom:1px solid #eee">${od||'—'}</td>
-      <td style="padding:6px 10px;font-size:12px;font-weight:800;color:#B45309;text-align:center;border-bottom:1px solid #eee">${os||'—'}</td>
+      <td style="padding:5px 10px;font-size:11px;color:#555;font-weight:600;border-bottom:1px solid #eee">${lbl}</td>
+      <td style="padding:5px 10px;font-size:12px;font-weight:800;color:#059669;text-align:center;border-bottom:1px solid #eee">${od||'—'}</td>
+      <td style="padding:5px 10px;font-size:12px;font-weight:800;color:#B45309;text-align:center;border-bottom:1px solid #eee">${os||'—'}</td>
     </tr>`
-  const secLbl = txt => `<div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:#999;margin:10px 0 4px">${txt}</div>`
+  const secLbl = txt => `<div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:#999;margin:7px 0 3px">${txt}</div>`
 
   const rxDate    = _fmtDt(rx.date)
   const dob       = _fmtDt(p.dob)
@@ -9466,63 +9754,87 @@ function _openRxPrintWindow(p, rx) {
   <meta charset="UTF-8">
   <title>Prescription: ${p.name}</title>
   <style>
-    /* margin:0 so Chrome has no page-margin band left to draw its own
-       print header/footer (URL, date, page number) into — the same
-       visual margin is restored via body padding below instead. */
-    @page { size: A4; margin: 0; }
+    /* A real @page margin, not margin:0 + a manual body padding standing in
+       for it — that padding-based approach looked fine on a short document
+       but any body/element padding only ever renders on the very first and
+       very last page a print job spans, never in between (a CSS print
+       fragmentation guarantee, not a bug) — so the moment this document
+       ran even one line past a page, that line landed flush against the
+       physical edge with no margin at all, on every side. @page's own
+       margin is the one box the spec guarantees gets reapplied on every
+       page a document spans, exactly like the Dashboard and Reports
+       printables already rely on for the same reason. */
+    @page { size: A4; margin: 16mm 20mm; }
     * { box-sizing: border-box; margin: 0; padding: 0; }
-    body { font-family: Arial, Helvetica, sans-serif; color: #111; font-size: 14px; line-height: 1.65; background: #fff; }
-    /* Table/table-cell layout is far more reliably honored by Chrome's
-       print engine than flexbox height resolution, which tends to collapse
-       to content-size during pagination — vertical-align:top here just
-       starts the content flush with the page's top margin instead of the
-       centered layout this used to have (which floated a short record
-       mid-page and looked worse the longer it got). */
-    .pg       { display: table; width: 100%; height: 297mm; }
-    .pg-inner { display: table-cell; vertical-align: top; padding: 16mm 20mm; }
+    /* Used to wrap the content in display:table/table-cell purely to get
+       vertical-align:top (plus, at one point, an explicit height:297mm to
+       give that vertical-align something to resolve against). Neither is
+       needed for plain top-aligned content — ordinary block flow already
+       starts at the top with zero special CSS — and the table/table-cell
+       route came with real print-pagination risk: a table-cell can resolve
+       its own height against the page box in ways a plain block never
+       does, which was still spilling an almost-entirely-blank second page
+       for a document comfortably shorter than one page even after the
+       explicit height was removed. Plain block content, no table anywhere,
+       removes that whole class of quirk — the margin the old .pg-inner
+       padding gave now comes from @page above instead, which (unlike body
+       padding) actually repeats on every page a document spans. */
+    /* Compacted from this document's original spacing — a prescription
+       with every optional section filled in (lens coating, dispensing
+       info, a long frame/lens value) was landing juuust over one page,
+       spilling only its last 2 lines onto an otherwise-empty page 2.
+       Trimmed margins/padding/line-height throughout claws that back
+       without needing to shrink any actual value text — the numbers
+       patients and staff actually read stay the same size. */
+    body { font-family: Arial, Helvetica, sans-serif; color: #111; font-size: 14px; line-height: 1.5; background: #fff; }
     table { width: 100%; border-collapse: collapse; }
-    .clinic-hdr  { display: flex; align-items: center; gap: 14px; border-bottom: 3px solid #E8760A; padding-bottom: 14px; margin-bottom: 20px; }
+    .clinic-hdr  { display: flex; align-items: center; gap: 14px; border-bottom: 3px solid #E8760A; padding-bottom: 10px; margin-bottom: 14px; }
     .clinic-hdr-text { text-align: left; }
     .clinic-name { font-size: 13px; font-weight: 700; color: #6B7280; text-transform: uppercase; letter-spacing: .04em; }
-    .clinic-logo { height: 70px; flex-shrink: 0; }
-    .clinic-name { font-size: 24px; font-weight: 900; color: #E8760A; letter-spacing: -.02em; }
-    .clinic-sub  { font-size: 16px; font-weight: 700; color: #1C1C1C; }
-    .clinic-doc  { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .1em; color: #bbb; margin-top: 6px; }
-    .patient-block { display: flex; gap: 18px; align-items: flex-start; padding: 16px 18px; background: #f9f9f9; border: 1px solid #eee; border-radius: 10px; margin-bottom: 18px; }
-    .avatar { width: 60px; height: 60px; border-radius: 50%; background: #E8760A; display: flex; align-items: center; justify-content: center; color: #fff; font-size: 21px; font-weight: 900; flex-shrink: 0; }
-    .pt-name   { font-size: 18px; font-weight: 800; color: #111; margin-bottom: 2px; }
-    .pt-id     { font-size: 11px; font-family: monospace; color: #aaa; margin-bottom: 5px; }
-    .pt-meta   { display: flex; flex-wrap: wrap; gap: 5px 14px; }
+    .clinic-logo { height: 58px; flex-shrink: 0; }
+    .clinic-name { font-size: 22px; font-weight: 900; color: #E8760A; letter-spacing: -.02em; }
+    .clinic-sub  { font-size: 15px; font-weight: 700; color: #1C1C1C; }
+    .clinic-doc  { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .1em; color: #bbb; margin-top: 4px; }
+    .patient-block { display: flex; gap: 16px; align-items: flex-start; padding: 12px 16px; background: #f9f9f9; border: 1px solid #eee; border-radius: 10px; margin-bottom: 12px; }
+    .avatar { width: 52px; height: 52px; border-radius: 50%; background: #E8760A; display: flex; align-items: center; justify-content: center; color: #fff; font-size: 19px; font-weight: 900; flex-shrink: 0; }
+    .pt-name   { font-size: 17px; font-weight: 800; color: #111; margin-bottom: 2px; }
+    .pt-id     { font-size: 11px; font-family: monospace; color: #aaa; margin-bottom: 4px; }
+    .pt-meta   { display: flex; flex-wrap: wrap; gap: 4px 14px; }
     .pt-meta span { font-size: 11px; color: #555; }
     .issuer    { text-align: right; flex-shrink: 0; min-width: 160px; }
     .iss-lbl   { font-size: 10px; text-transform: uppercase; letter-spacing: .05em; color: #bbb; margin-bottom: 3px; }
-    .iss-name  { font-size: 15px; font-weight: 700; color: #111; }
+    .iss-name  { font-size: 14px; font-weight: 700; color: #111; }
     .iss-date  { font-size: 11px; color: #888; }
     .iss-id    { font-size: 10px; font-family: monospace; color: #bbb; margin-top: 2px; }
-    .tbl-hdr th { background: #f5f5f5; padding: 9px 12px; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; }
-    .tbl-border { border: 1px solid #eee; border-radius: 10px; overflow: hidden; margin-bottom: 16px; }
-    .diag-box  { background: #f9f9f9; border: 1px solid #eee; border-radius: 8px; padding: 12px 14px; margin-bottom: 16px; }
-    .db-lbl    { font-size: 10px; text-transform: uppercase; letter-spacing: .05em; color: #aaa; margin-bottom: 4px; }
-    .db-val    { font-size: 16px; font-weight: 800; color: #111; }
-    .info-grid { display: grid; gap: 10px; margin-bottom: 16px; }
-    .info-box  { background: #f9f9f9; border: 1px solid #eee; border-radius: 8px; padding: 10px 12px; }
-    .ib-lbl    { font-size: 10px; text-transform: uppercase; letter-spacing: .05em; color: #aaa; margin-bottom: 3px; }
-    .ib-val    { font-size: 16px; font-weight: 800; color: #111; }
+    .tbl-hdr th { background: #f5f5f5; padding: 7px 12px; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; }
+    .tbl-border { border: 1px solid #eee; border-radius: 10px; overflow: hidden; margin-bottom: 12px; }
+    .diag-box  { background: #f9f9f9; border: 1px solid #eee; border-radius: 8px; padding: 9px 12px; margin-bottom: 12px; min-width: 0; }
+    .db-lbl    { font-size: 10px; text-transform: uppercase; letter-spacing: .05em; color: #aaa; margin-bottom: 3px; }
+    .db-val    { font-size: 15px; font-weight: 800; color: #111; overflow-wrap: anywhere; }
+    /* min-width:0 lets a grid item actually shrink below its own content's
+       intrinsic width instead of blowing the whole grid (and the page)
+       wider than A4 — see the matching comment on the Exam Record's own
+       copy of this CSS above. overflow-wrap on the value classes covers
+       an unbroken long value (a lens type, a pasted "Received By" name)
+       that still needs somewhere to break once it has room to shrink into. */
+    .info-grid { display: grid; gap: 8px; margin-bottom: 12px; }
+    .info-box  { background: #f9f9f9; border: 1px solid #eee; border-radius: 8px; padding: 8px 10px; min-width: 0; }
+    .ib-lbl    { font-size: 10px; text-transform: uppercase; letter-spacing: .05em; color: #aaa; margin-bottom: 2px; }
+    .ib-val    { font-size: 15px; font-weight: 800; color: #111; overflow-wrap: anywhere; }
     .ib-unit   { font-size: 10px; color: #aaa; font-weight: 400; }
-    .remarks-block { border-top: 1px solid #eee; padding-top: 12px; margin-top: 8px; font-style: italic; font-size: 13px; color: #555; }
-    .sig-grid  { display: grid; grid-template-columns: 1fr 1fr; gap: 50px; margin-top: 26px; padding-top: 16px; border-top: 1px dashed #ccc; page-break-before: avoid; }
-    .sig-line  { border-top: 1px solid #111; padding-top: 7px; text-align: center; font-size: 11px; font-weight: 700; text-transform: uppercase; }
-    .sig-sub   { font-size: 10px; color: #888; margin-top: 3px; text-align: center; }
+    .remarks-block { border-top: 1px solid #eee; padding-top: 10px; margin-top: 6px; font-style: italic; font-size: 13px; color: #555; }
+    .sig-grid  { display: grid; grid-template-columns: 1fr 1fr; gap: 50px; margin-top: 16px; padding-top: 12px; border-top: 1px dashed #ccc; page-break-before: avoid; }
+    .sig-line  { border-top: 1px solid #111; padding-top: 6px; text-align: center; font-size: 11px; font-weight: 700; text-transform: uppercase; }
+    .sig-sub   { font-size: 10px; color: #888; margin-top: 2px; text-align: center; }
     /* Credits whichever admin/staff/doctor actually clicked Print — this
        page is never reachable by a patient (both call sites gate the
        Print button to non-patient roles), so no role check needed here. */
-    .prep-by   { font-size: 10px; color: #888; text-align: right; margin-top: 12px; }
-    .stamp     { font-size: 10px; color: #ccc; text-align: right; font-family: monospace; margin-top: 16px; }
-    .valid-pill { display: inline-block; font-size: 10px; font-weight: 700; padding: 3px 10px; border-radius: 20px; margin-top: 5px; }
+    .prep-by   { font-size: 10px; color: #888; text-align: right; margin-top: 8px; }
+    .stamp     { font-size: 10px; color: #ccc; text-align: right; font-family: monospace; margin-top: 8px; }
+    .valid-pill { display: inline-block; font-size: 10px; font-weight: 700; padding: 3px 10px; border-radius: 20px; margin-top: 4px; }
   </style>
 </head>
 <body>
-<div class="pg"><div class="pg-inner">
 
   <!-- CLINIC HEADER -->
   <div class="clinic-hdr">
@@ -9633,7 +9945,6 @@ function _openRxPrintWindow(p, rx) {
   <div class="prep-by">Prepared by: ${state.user?.name || '—'} &bull; ${preparedByLabel}</div>
   <div class="stamp">Rx valid for 1 year from date of issue &bull; Printed: ${generated}</div>
 
-</div></div>
 </body></html>`
 
   _printHtmlDocument(html)
@@ -12087,8 +12398,16 @@ function _buildReportData(key, from, to) {
         title: 'Cancelled / Disapproved Appointment Report',
         headers: ['Patient', 'Doctor', 'Date', 'Reason / Notes', 'Status'],
         rows,
+        // max-width + overflow-wrap keeps a long unbroken reason (someone
+        // typing one giant run-on word with no spaces, e.g. filler text
+        // fed into the field for testing) from stretching the whole
+        // column — and the table with it — wider than the page instead of
+        // just wrapping like every other cell. Losing this column
+        // outright would mean losing the actual reason data, which is the
+        // one thing this report is for; constraining it fixes the layout
+        // without throwing away information.
         render: r => [r.patient, r.doctor, r.date,
-                      `<span style="font-size:.78rem;color:#6b7280">${r.reason}</span>`,
+                      `<span style="font-size:.78rem;color:#6b7280;display:inline-block;max-width:220px;overflow-wrap:anywhere">${r.reason}</span>`,
                       badge(r.status)]
       }
     }
@@ -12130,9 +12449,9 @@ function _buildReportCharts(key, from, to) {
       })
       const topSvc = Object.entries(svcCount).sort((a,b) => b[1]-a[1])
       return {
-        left:  { title: 'Patient Visits per Month', type: 'bar', labels: monthLabels,
+        left:  { title: 'Patient Visits per Month', categoryLabel: 'Month', type: 'bar', labels: monthLabels,
                  datasets: [{ label: 'Visits', data: visitsByMonth, backgroundColor: '#E8891C', borderRadius: 5 }] },
-        right: { title: 'Top Services Requested', type: 'bar', indexAxis: 'y',
+        right: { title: 'Top Services Requested', categoryLabel: 'Service', type: 'bar', indexAxis: 'y',
                  labels: topSvc.map(s=>s[0]),
                  datasets: [{ label: 'Requests', data: topSvc.map(s=>s[1]), backgroundColor: '#2563eb', borderRadius: 4 }] }
       }
@@ -12157,10 +12476,10 @@ function _buildReportCharts(key, from, to) {
         })
       })
       return {
-        left:  { title: 'Diagnosis Distribution', type: 'doughnut',
+        left:  { title: 'Diagnosis Distribution', categoryLabel: 'Diagnosis', type: 'doughnut',
                  labels: sorted.map(s=>s[0]),
-                 datasets: [{ data: sorted.map(s=>s[1]), backgroundColor: colors.slice(0,sorted.length), borderWidth: 2 }] },
-        right: { title: 'Top 3 Diagnoses by Month', type: 'bar', labels: monthLabels,
+                 datasets: [{ label: 'Cases', data: sorted.map(s=>s[1]), backgroundColor: colors.slice(0,sorted.length), borderWidth: 2 }] },
+        right: { title: 'Top 3 Diagnoses by Month', categoryLabel: 'Month', type: 'bar', labels: monthLabels,
                  datasets: top3.map((d,i) => ({
                    label: d.split(',')[0], data: monthly[i],
                    backgroundColor: colors[i], borderRadius: 4
@@ -12181,10 +12500,10 @@ function _buildReportCharts(key, from, to) {
       })
       const lenses = Object.entries(lensCount).sort((a,b)=>b[1]-a[1])
       return {
-        left:  { title: 'Prescriptions by Lens Type', type: 'pie',
+        left:  { title: 'Prescriptions by Lens Type', categoryLabel: 'Lens Type', type: 'pie',
                  labels: lenses.map(l=>l[0]),
-                 datasets: [{ data: lenses.map(l=>l[1]), backgroundColor: colors.slice(0,lenses.length), borderWidth: 2 }] },
-        right: { title: 'Prescriptions Issued per Month', type: 'line', labels: monthLabels,
+                 datasets: [{ label: 'Prescriptions', data: lenses.map(l=>l[1]), backgroundColor: colors.slice(0,lenses.length), borderWidth: 2 }] },
+        right: { title: 'Prescriptions Issued per Month', categoryLabel: 'Month', type: 'line', labels: monthLabels,
                  datasets: [{ label: 'Prescriptions', data: rxByMonth,
                    borderColor: '#E8891C', backgroundColor: 'rgba(232,137,28,.12)',
                    fill: true, tension: 0.4, pointRadius: 4, pointBackgroundColor: '#E8891C' }] }
@@ -12215,11 +12534,11 @@ function _buildReportCharts(key, from, to) {
       })
       const statuses = Object.entries(statusCount)
       return {
-        left:  { title: 'Appointment Status Breakdown', type: 'doughnut',
+        left:  { title: 'Appointment Status Breakdown', categoryLabel: 'Status', type: 'doughnut',
                  labels: statuses.map(([s]) => s.charAt(0).toUpperCase() + s.slice(1)),
-                 datasets: [{ data: statuses.map(([,v])=>v),
+                 datasets: [{ label: 'Appointments', data: statuses.map(([,v])=>v),
                    backgroundColor: statuses.map(([s])=>statusColors[s]||'#9ca3af'), borderWidth: 2 }] },
-        right: { title: 'Appointments by Time of Day', type: 'bar',
+        right: { title: 'Appointments by Time of Day', categoryLabel: 'Time of Day', type: 'bar',
                  labels: ['Morning (8–12)', 'Afternoon (1–5)'],
                  datasets: [{ label: 'Appointments', data: [morning, afternoon],
                    backgroundColor: ['#2563eb','#E8891C'], borderRadius: 6 }] }
@@ -12243,9 +12562,9 @@ function _buildReportCharts(key, from, to) {
       const docNames = Object.keys(byDoc)
       const docAvg   = Object.values(byDoc).map(v => Math.round(v.total / v.count))
       return {
-        left:  { title: 'Completed Appointments per Month', type: 'bar', labels: monthLabels,
+        left:  { title: 'Completed Appointments per Month', categoryLabel: 'Month', type: 'bar', labels: monthLabels,
                  datasets: [{ label: 'Completed', data: byMonth, backgroundColor: '#16a34a', borderRadius: 5 }] },
-        right: { title: 'Avg. Duration by Doctor', type: 'bar',
+        right: { title: 'Avg. Duration by Doctor', categoryLabel: 'Doctor', type: 'bar',
                  labels: docNames,
                  datasets: [{ label: 'Avg. Minutes', data: docAvg, backgroundColor: '#E8891C', borderRadius: 5 }] }
       }
@@ -12263,9 +12582,9 @@ function _buildReportCharts(key, from, to) {
       if (cancelledCount)   { labels.push('Cancelled');   data.push(cancelledCount);   bgColors.push('#dc2626') }
       if (disapprovedCount) { labels.push('Disapproved'); data.push(disapprovedCount); bgColors.push('#E8891C') }
       return {
-        left:  { title: 'Cancellations by Status', type: 'doughnut',
-                 labels, datasets: [{ data, backgroundColor: bgColors, borderWidth: 2 }] },
-        right: { title: 'Cancellations / Disapprovals by Month', type: 'bar', labels: monthLabels,
+        left:  { title: 'Cancellations by Status', categoryLabel: 'Status', type: 'doughnut',
+                 labels, datasets: [{ label: 'Total', data, backgroundColor: bgColors, borderWidth: 2 }] },
+        right: { title: 'Cancellations / Disapprovals by Month', categoryLabel: 'Month', type: 'bar', labels: monthLabels,
                  datasets: [{ label: 'Total', data: byMonth, backgroundColor: '#dc2626', borderRadius: 5 }] }
       }
     }
@@ -12274,9 +12593,6 @@ function _buildReportCharts(key, from, to) {
       return null
   }
 }
-
-var _rptChartLeft  = null
-var _rptChartRight = null
 
 function generateReport() {
   const key    = document.getElementById('rpt-type')?.value || ''
@@ -12403,6 +12719,32 @@ function resetReport() {
   if (_rptChartRight) { _rptChartRight.destroy(); _rptChartRight = null }
 }
 window.resetReport = resetReport
+
+// Table version of a chart config — used by printReport() (pages.js) only.
+// The on-screen Reports page keeps its real bar/doughnut/line charts (see
+// renderReportCharts() below); printing a live canvas doesn't work well
+// (rasterized, not text-selectable), so the print document gets a plain
+// data table restating the exact same numbers instead — same convention
+// the Dashboard's own printable report (printDashboardReport() above)
+// already uses. cfg.left/right carry categoryLabel (first column header)
+// + one or more named datasets (one column each), both built by
+// _buildReportCharts() alongside the Chart.js-specific fields.
+function _reportChartTableHtml(side) {
+  if (!side || !side.labels || !side.labels.length) {
+    return `<div style="text-align:center;padding:20px 0;color:#9ca3af;font-size:.82rem">No data available for this range.</div>`
+  }
+  const headers = [side.categoryLabel || 'Category', ...side.datasets.map(ds => ds.label || 'Count')]
+  const rows = side.labels.map((lbl, i) => [lbl, ...side.datasets.map(ds => ds.data[i] ?? 0)])
+  return `
+    <table>
+      <thead><tr>${headers.map(h => `<th>${h}</th>`).join('')}</tr></thead>
+      <tbody>${rows.map(r => `<tr>${r.map(c => `<td>${c}</td>`).join('')}</tr>`).join('')}</tbody>
+    </table>`
+}
+window._reportChartTableHtml = _reportChartTableHtml
+
+var _rptChartLeft  = null
+var _rptChartRight = null
 
 function renderReportCharts(key, from, to) {
   if (!window.Chart) return

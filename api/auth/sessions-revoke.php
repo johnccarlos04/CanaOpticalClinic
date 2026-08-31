@@ -38,11 +38,11 @@ if ($id === _sessionShortId(session_id())) {
 
 try {
     $pdo = getDB();
-    $revoked = revokeSessionByShortId($pdo, $userId, $id);
-    if (!$revoked) {
+    $revokedCount = revokeSessionByShortId($pdo, $userId, $id);
+    if ($revokedCount === 0) {
         jsonResponse(['success' => false, 'message' => 'That session was not found — it may already be signed out.']);
     }
-    jsonResponse(['success' => true]);
+    jsonResponse(['success' => true, 'revokedCount' => $revokedCount]);
 } catch (PDOException $e) {
     jsonResponse(['success' => false, 'message' => 'Database error.'], 500);
 }

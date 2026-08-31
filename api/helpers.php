@@ -400,8 +400,14 @@ function tagSessionOwner(PDO $pdo, int $userId): void {
     // exists, this is the same browser/device signing in again (a fresh
     // login after the old session expired or was signed out, "remember me"
     // renewing, etc.), not a new device — no notification needed for that.
-    // Not a perfect device fingerprint (a cleared/GC'd session for that
-    // same device would read as "new" again), but a reasonable one without
+    // Deliberately NOT auto-revoked: a User-Agent match can't tell "the
+    // same browser logging in again" apart from "a second tab of the same
+    // still-open session," and auto-revoking the latter silently signs a
+    // legitimate, currently-in-use tab out with no warning — Google's own
+    // Your Devices page doesn't do this either; it just lists every
+    // session and lets the account owner sign each one out manually. Not a
+    // perfect device fingerprint (a cleared/GC'd session for that same
+    // device would read as "new" again), but a reasonable one without
     // adding a separate persistent devices table.
     $knownDevice = false;
     if ($ua !== '') {
@@ -462,6 +468,29 @@ function listSessions(PDO $pdo, int $userId): array {
     $rows = $stmt->fetchAll();
     $currentSid = session_id();
 
+    // Repeated sign-ins from the exact same browser on the exact same
+    // device each get a brand-new PHP session id (an unavoidable, normal
+    // side effect of how sessions work) — without collapsing those here,
+    // this list would grow a near-duplicate "Chrome" row every time
+    // someone just reopens the app or logs back in, piling up fast.
+    // This only changes what gets RETURNED to the client — the rows
+    // themselves are never touched (no DELETE), so nothing is revoked and
+    // no device is ever forced signed out by this; an older duplicate
+    // simply stops being listed once a newer one for the same user_agent
+    // exists. This is deliberately NOT the same thing as the auto-revoke
+    // behavior tagSessionOwner() above explicitly decided against — that
+    // killed a still-open second tab outright; this only hides a listing
+    // row for what's realistically a dead, replaced session.
+    $seenAgents = [];
+    $deduped = [];
+    foreach ($rows as $r) {
+        $agent = $r['user_agent'] ?? '';
+        $isCurrent = $r['id'] === $currentSid;
+        if (!$isCurrent && $agent !== '' && isset($seenAgents[$agent])) continue;
+        if ($agent !== '') $seenAgents[$agent] = true;
+        $deduped[] = $r;
+    }
+
     return array_map(function (array $r) use ($currentSid): array {
         $parts = parseDeviceParts($r['user_agent'] ?? '');
         return [
@@ -475,24 +504,48 @@ function listSessions(PDO $pdo, int $userId): array {
             'lastActive' => $r['last_access'] ? date('Y-m-d H:i:s', (int)$r['last_access']) : null,
             'isCurrent'  => $r['id'] === $currentSid,
         ];
-    }, $rows);
+    }, $deduped);
 }
 
-// Revokes exactly one of $userId's own sessions, identified by the short
-// id listSessions() handed the client — scoped to `WHERE user_id = ?`
+// Revokes one of $userId's own sessions, identified by the short id
+// listSessions() handed the client — scoped to `WHERE user_id = ?`
 // throughout, so there is no way to list or revoke a different account's
-// session even by guessing/brute-forcing a short id. Returns true if a
-// session was actually found and removed.
-function revokeSessionByShortId(PDO $pdo, int $userId, string $shortId): bool {
-    $stmt = $pdo->prepare('SELECT id FROM sessions WHERE user_id = ?');
+// session even by guessing/brute-forcing a short id. Returns the number of
+// rows actually removed (0 if the short id didn't match anything).
+//
+// Also sweeps every OTHER session on the account that's the exact same
+// browser AND the exact same IP as the one picked — in practice almost
+// always just leftover duplicate rows from repeatedly logging back in on
+// the same device (listSessions() already hides these from the list via
+// its own dedup, but never deletes them — see that function's own
+// comment). Deleting them here is safe specifically because this is a
+// manual, explicit click on one particular row, not something that
+// happens automatically on login — the exact distinction that made
+// auto-revoking on a new sign-in unsafe (a still-open second tab could
+// get killed with no warning) doesn't apply to an intentional Sign Out
+// click. The current session is always excluded, so this can never sign
+// the caller themselves out; device+IP matching only runs when the target
+// row actually has both (an old row with a blank/unknown one never
+// cascades, so it can't sweep unrelated rows that merely share the same
+// blankness).
+function revokeSessionByShortId(PDO $pdo, int $userId, string $shortId): int {
+    $stmt = $pdo->prepare('SELECT id, user_agent, ip_address FROM sessions WHERE user_id = ?');
     $stmt->execute([$userId]);
-    foreach ($stmt->fetchAll(PDO::FETCH_COLUMN) as $sid) {
-        if (_sessionShortId($sid) === $shortId) {
-            $pdo->prepare('DELETE FROM sessions WHERE id = ? AND user_id = ?')->execute([$sid, $userId]);
-            return true;
+    foreach ($stmt->fetchAll() as $row) {
+        if (_sessionShortId($row['id']) !== $shortId) continue;
+        $currentSid = session_id();
+        if ($row['user_agent'] && $row['ip_address']) {
+            $del = $pdo->prepare(
+                'DELETE FROM sessions WHERE user_id = ? AND user_agent = ? AND ip_address = ? AND id != ?'
+            );
+            $del->execute([$userId, $row['user_agent'], $row['ip_address'], $currentSid]);
+        } else {
+            $del = $pdo->prepare('DELETE FROM sessions WHERE id = ? AND user_id = ?');
+            $del->execute([$row['id'], $userId]);
         }
+        return $del->rowCount();
     }
-    return false;
+    return 0;
 }
 
 // Revokes every session on the account EXCEPT $exceptSessionId — used by
@@ -618,6 +671,8 @@ function buildUserObject(string $role, array $p, string $email, array $days = []
             'lastVisit'      => $p['last_visit'] ?: '—',
             'noShowCount'    => (int)($p['no_show_count'] ?? 0),
             'bookingRestricted' => (bool)($p['booking_restricted'] ?? false),
+            'deletionRequestedAt' => $p['deletion_requested_at']   ?? null,
+            'deletionRequestReason' => $p['deletion_request_reason'] ?? '',
             'consultations'  => [],
             'examinations'   => [],
             'prescriptions'  => [],

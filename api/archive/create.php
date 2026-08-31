@@ -207,6 +207,16 @@ try {
     if ($userId) {
         $pdo->prepare('UPDATE users SET is_active = 0 WHERE id = ?')->execute([$userId]);
     }
+    // Archiving a patient IS how their own self-service deletion request
+    // (api/patients/request-deletion.php) actually gets fulfilled — clear
+    // the pending flag so it doesn't keep showing as an open request once
+    // this action, which already accomplishes what they asked for, has
+    // been taken.
+    if ($role === 'Patient') {
+        $pdo->prepare(
+            'UPDATE patients SET deletion_requested_at = NULL, deletion_request_reason = NULL WHERE id = ?'
+        )->execute([$profileId]);
+    }
 
     $id = 'AR' . date('YmdHis') . random_int(10, 99);
     $date = date('M j, Y');

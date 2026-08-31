@@ -397,10 +397,10 @@ function _regUpdateConsentHint() {
   }
   hint.style.display = 'flex'
   hintText.innerHTML = (termsLocked && privacyLocked)
-    ? 'Click the Terms &amp; Conditions and Data Privacy Act Notice links above, and read each to the bottom, to unlock their checkboxes.'
+    ? 'Click the Terms &amp; Conditions and Data Privacy Act Notice links below, and read each to the bottom, to unlock their checkboxes.'
     : termsLocked
-      ? 'Click the Terms &amp; Conditions link above and read to the bottom to unlock its checkbox.'
-      : 'Click the Data Privacy Act Notice link above and read to the bottom to unlock its checkbox.'
+      ? 'Click the Terms &amp; Conditions link below and read to the bottom to unlock its checkbox.'
+      : 'Click the Data Privacy Act Notice link below and read to the bottom to unlock its checkbox.'
 }
 window._regUpdateConsentHint = _regUpdateConsentHint
 

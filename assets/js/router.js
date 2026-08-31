@@ -698,8 +698,8 @@ function _notifTimeAgo(dateStr) {
 }
 window._notifTimeAgo = _notifTimeAgo
 
-const _NOTIF_ICON  = { approved:'check-circle', cancelled:'x-circle', disapproved:'x-circle', rescheduled:'calendar', new_appointment:'calendar', reschedule_request:'alert-circle', no_show:'alert-circle', reminder:'clock', waitlist_offer:'alert-circle', waitlist_removed:'x-circle', waitlist_join:'clock', waitlist_left:'x-circle', welcome:'home', info:'info', contact_message:'mail', follow_up_needed:'calendar', new_login:'monitor' }
-const _NOTIF_COLOR = { approved:'green', cancelled:'red', disapproved:'red', rescheduled:'blue', new_appointment:'orange', reschedule_request:'orange', no_show:'red', reminder:'orange', waitlist_offer:'orange', waitlist_removed:'red', waitlist_join:'orange', waitlist_left:'gray', welcome:'orange', info:'gray', contact_message:'orange', follow_up_needed:'orange', new_login:'orange' }
+const _NOTIF_ICON  = { approved:'check-circle', cancelled:'x-circle', disapproved:'x-circle', rescheduled:'calendar', new_appointment:'calendar', reschedule_request:'alert-circle', no_show:'alert-circle', reminder:'clock', waitlist_offer:'alert-circle', waitlist_removed:'x-circle', waitlist_join:'clock', waitlist_left:'x-circle', welcome:'home', info:'info', contact_message:'mail', follow_up_needed:'calendar', new_login:'monitor', appointment_confirmed:'check-circle', deletion_request:'user-x' }
+const _NOTIF_COLOR = { approved:'green', cancelled:'red', disapproved:'red', rescheduled:'blue', new_appointment:'orange', reschedule_request:'orange', no_show:'red', reminder:'orange', waitlist_offer:'orange', waitlist_removed:'red', waitlist_join:'orange', waitlist_left:'gray', welcome:'orange', info:'gray', contact_message:'orange', follow_up_needed:'orange', new_login:'orange', appointment_confirmed:'green', deletion_request:'red' }
 const _resolveNotifType = n => (n.type === 'info' && n.title?.toLowerCase().startsWith('welcome')) ? 'welcome' : n.type
 
 // Returns { page, params } so callers always pass an explicit filter,
@@ -711,43 +711,49 @@ function _notifNavTarget(type, role) {
                  :                     'patient-dashboard'
 
   // Route appointment notifications to the correct filter per role and type
-  const apptTypes = new Set(['approved','cancelled','disapproved','rescheduled','new_appointment','reschedule_request','no_show'])
+  const apptTypes = new Set(['approved','cancelled','disapproved','rescheduled','new_appointment','reschedule_request','no_show','appointment_confirmed'])
   if (apptTypes.has(type)) {
     // Patients: go to the filter that matches the status they were notified about
     if (role === 'patient') {
       const patientFilter = {
-        approved:            'approved',
-        cancelled:           'cancelled',
-        disapproved:         'disapproved',
-        rescheduled:         'approved',   // rescheduled stays approved
-        new_appointment:     'pending',
-        reschedule_request:  'all',
-        no_show:             'no-show',
+        approved:              'approved',
+        cancelled:             'cancelled',
+        disapproved:           'disapproved',
+        rescheduled:           'approved',   // rescheduled stays approved
+        new_appointment:       'pending',
+        reschedule_request:    'all',
+        no_show:               'no-show',
+        appointment_confirmed: 'approved',   // confirming attendance doesn't change status
       }[type] || 'all'
       return { page: 'patient-appts', params: { filter: patientFilter } }
     }
     // Doctors: filter by the relevant status
     if (role === 'doctor') {
       const doctorFilter = {
-        approved:           'approved',
-        cancelled:          'cancelled',
-        disapproved:        'disapproved',
-        rescheduled:        'approved',
-        new_appointment:    'pending',
-        reschedule_request: 'pending',
-        no_show:            'no-show',
+        approved:              'approved',
+        cancelled:             'cancelled',
+        disapproved:           'disapproved',
+        rescheduled:           'approved',
+        new_appointment:       'pending',
+        reschedule_request:    'pending',
+        no_show:               'no-show',
+        appointment_confirmed: 'approved',
       }[type] || ''
       return { page: 'doctor-appointments', params: { filter: doctorFilter } }
     }
-    // Admin / staff
+    // Admin / staff — "Patient Confirmed Attendance" (notifyAdminStaff(),
+    // api/appointments/confirm.php) is admin/staff-only in practice, but
+    // filtered here like every other role for consistency rather than
+    // special-cased outside apptTypes.
     const staffFilter = {
-      new_appointment:    'pending',
-      reschedule_request: 'pending',
-      approved:           'approved',
-      cancelled:          'cancelled',
-      disapproved:        'disapproved',
-      rescheduled:        'approved',
-      no_show:            'no-show',
+      new_appointment:       'pending',
+      reschedule_request:    'pending',
+      approved:              'approved',
+      cancelled:             'cancelled',
+      disapproved:           'disapproved',
+      rescheduled:           'approved',
+      no_show:               'no-show',
+      appointment_confirmed: 'approved',
     }[type] || ''
     return { page: 'appointments', params: { filter: staffFilter } }
   }
@@ -766,6 +772,10 @@ function _notifNavTarget(type, role) {
   const map = {
     record:          role === 'patient' ? 'patient-exam-history'  : 'patient-list',
     prescription:    role === 'patient' ? 'patient-prescriptions' : 'patient-list',
+    // "Account Deletion Requested" (api/patients/request-deletion.php) is
+    // admin/staff-only in practice — routes to the Patient Records list,
+    // which now flags any patient with a pending request.
+    deletion_request: 'patient-list',
     welcome:         dashPage,
     info:            dashPage,
     // Patients are notified of contact replies by email — the in-app

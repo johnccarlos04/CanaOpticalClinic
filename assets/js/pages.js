@@ -212,12 +212,17 @@ function apptStatusCell(a) {
   return `<div style="display:flex;flex-wrap:wrap;gap:4px;align-items:center">${badge(a.status)}${apptSubBadges(a)}</div>`
 }
 
-function apptActions(a, role) {
+// hidePatient means every row already belongs to the one patient whose own
+// profile this table is embedded in (see appointmentsTable()'s own
+// hidePatient — the Patient Profile page's Appointments tab passes it in
+// alongside this same flag) — so a "Patient Record" button that just
+// navigates back to the page already on screen has nothing to do there.
+function apptActions(a, role, hidePatient = false) {
   if (role === 'patient') return ''
   if (role === 'doctor')  return `
     <div style="display:flex;gap:4px">
       <button class="btn-icon" title="View Details" onclick="window.viewAppt('${a.id}')">${ic('eye','icon-sm')}</button>
-      <button class="btn-icon" title="Patient Record" onclick="window.navigate('patient-view',{patientId:'${a.patientId}',patientName:'${a.patientName}'})">${ic('user','icon-sm')}</button>
+      ${hidePatient ? '' : `<button class="btn-icon" title="Patient Record" onclick="window.navigate('patient-view',{patientId:'${a.patientId}',patientName:'${a.patientName}'})">${ic('user','icon-sm')}</button>`}
     </div>`
   return `
     <div style="display:flex;flex-direction:column;gap:4px;align-items:flex-start">
@@ -231,7 +236,7 @@ function apptActions(a, role) {
         ${a.status === 'approved' ? `
           <button class="btn-icon" title="Mark Completed" style="color:#059669" onclick="window.markApptCompleted('${a.id}')">${ic('check-circle','icon-sm')}</button>
           <button class="btn-icon" title="Mark No-Show" style="color:#6D28D9" onclick="window.confirmMarkNoShow('${a.id}')">${ic('user-x','icon-sm')}</button>
-          <button class="btn-icon" title="Reschedule" onclick="window.rescheduleAppt('${a.id}')">${ic('refresh-cw','icon-sm')}</button>
+          <button class="btn-icon" title="Reschedule" style="color:#D97706" onclick="window.rescheduleAppt('${a.id}')">${ic('refresh-cw','icon-sm')}</button>
           <button class="btn-icon" title="Cancel" style="color:#DC2626" onclick="window.confirmCancelAppt('${a.id}')">${ic('x','icon-sm')}</button>` : ''}
       </div>
       ${rescheduleReqLabel(a)}
@@ -281,7 +286,7 @@ function appointmentsTable(list, role, tbodyId = 'appt-tbody', hidePatient = fal
                   style="display:inline-block;margin-left:6px;font-size:.62rem;font-weight:700;text-transform:uppercase;letter-spacing:.03em;padding:2px 7px;border-radius:20px;white-space:nowrap;${a.source === 'walk-in' ? 'background:#FFF7ED;color:#C2410C' : 'background:#EFF6FF;color:#1D4ED8'}">${a.source === 'walk-in' ? 'Walk-in' : 'Online'}</span>
           </td>
           <td data-label="Status" style="align-items:center">${apptStatusCell(a)}</td>
-          ${hasActions ? `<td data-label="Actions">${apptActions(a, role)}</td>` : ''}
+          ${hasActions ? `<td data-label="Actions">${apptActions(a, role, hidePatient)}</td>` : ''}
         </tr>`).join('')}
       </tbody>
     </table>`
@@ -790,7 +795,11 @@ function pagePatientList() {
           ${list.map(p => `<tr data-search="${(p.name||'').toLowerCase()} ${String(p.id||'').toLowerCase()} ${(p.contact||'').toLowerCase()}" data-sort-name="${(p.name||'').toLowerCase()}" data-sort-visit="${p.lastVisit && p.lastVisit !== '—' ? p.lastVisit : ''}">
             <td data-label="Patient"><div class="patient-name-cell">
               ${avatar(p.name, 'patient-avatar', p.photoUrl || null)}
-              <div class="patient-name-info"><strong>${p.name}</strong><span>${p.id}</span></div>
+              <div class="patient-name-info">
+                <strong>${p.name}</strong>
+                ${p.deletionRequestedAt ? `<span title="Account deletion requested ${fmtDate(p.deletionRequestedAt?.replace(' ','T'))}" style="display:inline-flex;align-items:center;gap:3px;background:#FEE2E2;color:#991B1B;font-weight:700;font-size:.62rem;padding:2px 7px;border-radius:999px;margin-left:6px">${ic('user-x','icon-xs')} Deletion Requested</span>` : ''}
+                <span>${p.id}</span>
+              </div>
             </div></td>
             <td data-label="Age" style="font-size:.82rem">${p.age}</td>
             <td data-label="Gender" style="font-size:.82rem">${p.gender}</td>
@@ -954,6 +963,25 @@ function pagePatientView() {
   </div>
 
   <div class="page-body">
+
+    ${p.deletionRequestedAt ? `
+    <!-- Pending account-deletion request — see api/patients/request-
+         deletion.php. Archiving this patient (the button already in the
+         Personal Info tab / patient list) fulfills it; Dismiss here
+         clears it without archiving. -->
+    <div class="card" style="margin-bottom:20px;padding:16px 20px;border:1px solid #FECACA;background:#FEF2F2;display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+      <div style="color:#DC2626;flex-shrink:0">${ic('user-x','icon')}</div>
+      <div style="flex:1;min-width:200px">
+        <div style="font-size:.88rem;font-weight:700;color:#991B1B">Account Deletion Requested</div>
+        <div style="font-size:.78rem;color:#7F1D1D;margin-top:2px">
+          Requested ${fmtDate(p.deletionRequestedAt?.replace(' ','T'))}${p.deletionRequestReason ? ` — "${p.deletionRequestReason}"` : ''}.
+          Archive this patient to fulfill it, or dismiss to keep the account as-is.
+        </div>
+      </div>
+      ${canEdit ? `<button class="btn-secondary" style="flex-shrink:0" onclick="window.dismissDeletionRequest('${p.id}', this)">
+        ${ic('x','icon-sm')} Dismiss Request
+      </button>` : ''}
+    </div>` : ''}
 
     <!-- ── Profile Header Card ─────────────────────────────── -->
     <div class="card" style="margin-bottom:20px;overflow:hidden">
@@ -1692,7 +1720,19 @@ function pageAdminReports() {
   window.state.afterRender = () => {
     window.exportReportCSV = () => {
       const table = document.querySelector('#rpt-table-area table')
-      if (!table) { window.toast('Generate a report first, then export.', 'error'); return }
+      if (!table) {
+        // A report can be "generated" and still have no <table> in the DOM
+        // — reportTable() (main.js) renders a friendly empty-state message
+        // instead of a table when zero records match the filters. rpt-
+        // table-header only ever goes visible once generateReport() has
+        // actually run, so its display style is what tells apart "never
+        // generated anything" from "generated it, just nothing came back."
+        const generated = document.getElementById('rpt-table-header')?.style.display === 'block'
+        window.toast(generated
+          ? 'This report has no records to export.'
+          : 'Generate a report first, then export.', 'error')
+        return
+      }
       const rows = Array.from(table.querySelectorAll('tr'))
       const csv = rows.map(row =>
         Array.from(row.querySelectorAll('th, td'))
@@ -1710,7 +1750,16 @@ function pageAdminReports() {
 
     window.printReport = () => {
       const table = document.querySelector('#rpt-table-area table')
-      if (!table) { window.toast('Generate a report first, then print.', 'error'); return }
+      if (!table) {
+        // Same distinction as exportReportCSV() above — a generated report
+        // with zero matching records renders no <table> either, and "generate
+        // a report first" is actively wrong to tell someone who just did.
+        const generated = document.getElementById('rpt-table-header')?.style.display === 'block'
+        window.toast(generated
+          ? 'This report has no records to print.'
+          : 'Generate a report first, then print.', 'error')
+        return
+      }
 
       const typeLabel = document.getElementById('rpt-type-text')?.textContent || 'Report'
       const from = document.getElementById('rpt-from')?.value || ''
@@ -1730,24 +1779,29 @@ function pageAdminReports() {
       tClone.querySelectorAll('.pg-hidden').forEach(r => r.classList.remove('pg-hidden'))
       const rowCount = tClone.querySelectorAll('tbody tr').length
 
-      // Capture charts as images before opening the new window
-      const lCanvas = document.getElementById('rpt-chart-left')
-      const rCanvas = document.getElementById('rpt-chart-right')
-      const lImg    = lCanvas ? lCanvas.toDataURL('image/png') : ''
-      const rImg    = rCanvas ? rCanvas.toDataURL('image/png') : ''
-      const lTitle  = document.getElementById('rpt-chart-left-title')?.textContent  || ''
-      const rTitle  = document.getElementById('rpt-chart-right-title')?.textContent || ''
-      const hasCharts = !!(lImg || rImg)
+      // The on-screen charts are real Chart.js canvases (renderReportCharts(),
+      // main.js) \u2014 rasterizing one to an image prints blurry and isn't
+      // text-selectable, so print gets a plain data table restating the
+      // exact same numbers instead, built straight from the same
+      // _buildReportCharts() data the on-screen charts themselves use
+      // (not scraped from the DOM, which only ever holds canvases here).
+      const rptKey = document.getElementById('rpt-type')?.value || ''
+      const cfg    = rptKey && window._buildReportCharts ? window._buildReportCharts(rptKey, from, to) : null
+      const lTableHtml = cfg?.left  ? window._reportChartTableHtml(cfg.left)  : ''
+      const rTableHtml = cfg?.right ? window._reportChartTableHtml(cfg.right) : ''
+      const lTitle     = cfg?.left?.title  || ''
+      const rTitle     = cfg?.right?.title || ''
+      const hasCharts  = !!(cfg && (lTableHtml || rTableHtml))
 
       const chartHTML = hasCharts ? `
-        <div class="page-break">
+        <div class="charts-section">
           <div class="section-header">
             <div class="section-title">Charts &amp; Summaries \u2014 ${typeLabel}</div>
             <div class="section-sub">${rangePart}</div>
           </div>
           <div class="chart-grid">
-            ${lImg ? `<div class="chart-box"><div class="chart-label">${lTitle}</div><img src="${lImg}" class="chart-img"></div>` : ''}
-            ${rImg ? `<div class="chart-box"><div class="chart-label">${rTitle}</div><img src="${rImg}" class="chart-img"></div>` : ''}
+            ${lTableHtml ? `<div class="chart-box"><div class="chart-label">${lTitle}</div>${lTableHtml}</div>` : ''}
+            ${rTableHtml ? `<div class="chart-box"><div class="chart-label">${rTitle}</div>${rTableHtml}</div>` : ''}
           </div>
         </div>` : ''
 
@@ -1810,32 +1864,23 @@ function pageAdminReports() {
   .badge-patient     { background: #FFF0DC; color: #92400E; }
 
   /* \u2500\u2500 Charts \u2500\u2500 */
-  /* Body's own top/bottom padding only ever renders on the very first and
-     very last printed page — a box that's fragmented across pages by the
-     browser's print engine does NOT repeat top/bottom padding/margin at
-     each fragment boundary the way left/right padding does (that part
-     stays consistent on every page since it's part of the box's inline
-     width, not the fragmentation-affected block direction). So the
-     Charts section, forced onto its own new page below, would otherwise
-     sit flush against the paper's top edge with no margin at all. Giving
-     it the same top offset as the body's own top padding restores a
-     matching margin on every page this document spans, not just the
-     first.
-
-     UPDATE: @page now carries a real margin (see above) instead of
-     margin:0 + manual body padding, so this compensation is redundant —
-     @page's margin already reapplies on every page, including this
-     forced break, without any help. Kept at padding-top:0 explicitly
-     (not just deleted) so a stray page-break-before:always is still easy
-     to find/reason about here later. */
-  .page-break   { page-break-before: always; }
+  /* Used to force this section onto its own fresh page every time
+     (page-break-before:always), regardless of how little the results
+     table above it actually filled — a 1-row table would still burn a
+     whole second sheet just for two small summary boxes that easily fit
+     in the leftover space on page 1. Plain top spacing instead — normal
+     print pagination now flows the section wherever it actually fits,
+     right under a short table, or onto a new page on its own if the
+     table already filled page 1. tr{page-break-inside:avoid} above still
+     protects individual table rows either way, and .chart-box below
+     keeps each box's title+table together as one unit. */
+  .charts-section { margin-top: 20px; }
   .section-header { border-bottom: 1px solid #ddd; padding-bottom: 8px; margin-bottom: 14px; }
   .section-title  { font-size: 11pt; font-weight: 700; }
   .section-sub    { font-size: 7.5pt; color: #666; margin-top: 2px; }
   .chart-grid   { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
-  .chart-box    { border: 1px solid #e5e7eb; border-radius: 4px; padding: 12px; }
+  .chart-box    { border: 1px solid #e5e7eb; border-radius: 4px; padding: 12px; page-break-inside: avoid; }
   .chart-label  { font-size: 8.5pt; font-weight: 700; margin-bottom: 8px; }
-  .chart-img    { width: 100%; height: auto; display: block; }
 
   /* ── Prepared by ── same sig-line convention as the Exam/Rx print
      documents' doctor signature block, repurposed here to credit whichever
@@ -4706,12 +4751,6 @@ function pagePatientDashboard() {
 // ════════════════════════════════════════════════════════════════
 function appointmentWizardHtml(mode) {
   const isStaff = mode === 'staff'
-  // A patient with zero completed exams yet has no track record with any
-  // doctor to have a real preference from — showing them named doctors
-  // this early leaks doctor identities/schedules for no benefit, so they
-  // skip the preference gate entirely (see _isFirstTimePatient(), main.js,
-  // and amcInit()'s own matching branch that forces any-doctor mode).
-  const isFirstTimePatient = !isStaff && !!(window._isFirstTimePatient && window._isFirstTimePatient())
   // Follow-up Consultation is for staff/admin to schedule on a patient's
   // behalf after reviewing their case — not something a patient should be
   // able to self-select when requesting their own first-time visit.
@@ -4858,15 +4897,19 @@ function appointmentWizardHtml(mode) {
       .appt-mini-cal { display:grid; grid-template-columns:repeat(7,minmax(0,1fr)); gap:3px; min-width:0; }
       .amc-hdr { text-align:center; font-size:.65rem; font-weight:700; color:#9CA3AF; padding:4px 0; text-transform:uppercase; }
       .amc-day { aspect-ratio:1; display:flex; align-items:center; justify-content:center; border-radius:6px;
-        font-size:.8rem; cursor:pointer; position:relative; color:#374151;
+        font-size:.88rem; cursor:pointer; position:relative; color:#374151;
         transition:background-color .15s, color .15s; }
       .amc-day:hover:not(.amc-past):not(.amc-empty):not(.amc-far) { background:#FFF0DC; }
       .amc-day.amc-avail { background:#ECFDF5; color:#065F46; font-weight:600; }
-      .amc-day.amc-unavailable { background:#F3F4F6; color:#9CA3AF; }
+      .amc-day.amc-unavailable { background:#F3F4F6; color:#9CA3AF; cursor:default; }
       .amc-day.amc-today { outline:2px solid #E8760A; font-weight:700; }
       .amc-day.amc-selected { background:#E8760A !important; color:#fff !important; font-weight:700; }
-      .amc-day.amc-past { opacity:.35; cursor:default; }
-      .amc-day.amc-far { opacity:.3; cursor:default; background:#f9fafb; }
+      /* Solid, legible muted colors instead of opacity — opacity fades the
+         day NUMBER along with the background, and stacked with the already-
+         muted unavailable/holiday colors it made whole months (e.g. every
+         date past the Maximum Advance Booking window) nearly unreadable. */
+      .amc-day.amc-past { color:#C1C7D0; cursor:default; }
+      .amc-day.amc-far { color:#C1C7D0; cursor:default; background:#f9fafb; }
       .amc-day.amc-empty { cursor:default; }
       .amc-day.amc-holiday { background:#FFF1F2; color:#f43f5e; cursor:default; font-weight:600; }
       .amc-holiday-lbl { position:absolute; left:2px; right:2px; top:calc(50% + 8px); font-size:.7rem; line-height:1.15; text-align:center; overflow:hidden; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; font-weight:600; padding:0 1px; }
@@ -4911,13 +4954,6 @@ function appointmentWizardHtml(mode) {
       .rev-edit { font-size:.72rem; color:#E8760A; background:none; border:none; cursor:pointer;
         font-family:'Poppins',sans-serif; margin-left:auto; padding:0; flex-shrink:0; align-self:center; }
       .rev-edit:hover { text-decoration:underline; }
-      /* ── Initial Status (staff review step) ── */
-      .init-status-pill { flex:1; display:flex; align-items:center; justify-content:center; gap:6px;
-        padding:10px 14px; border-radius:8px; border:1.5px solid #E5E7EB; background:#fff; color:#6B7280;
-        font-family:'Poppins',sans-serif; font-size:.83rem; font-weight:600; cursor:pointer; transition:all .15s; }
-      .init-status-pill:hover { border-color:#D1D5DB; background:#F9FAFB; }
-      .init-status-pill.selected[data-status="pending"]  { background:#FFF3E0; border-color:#E8891C; color:#E8891C; }
-      .init-status-pill.selected[data-status="approved"] { background:#E8F5E9; border-color:#2E7D32; color:#2E7D32; }
     </style>
 
     ${isStaff ? '' : '<div id="my-waitlist-card"></div>'}
@@ -4926,24 +4962,9 @@ function appointmentWizardHtml(mode) {
     <!-- Preference gate — patient-only, shown before the wizard proper.
          Choosing "Any available optometrist" sets _wiz.anyDoctor and skips
          the Doctor step entirely (main.js wizGo()/wizJump()); the clinic
-         assigns an actual doctor after reviewing the request. A first-time
-         patient (isFirstTimePatient above) never gets the actual choice —
-         showing named doctors to someone with no track record with any of
-         them leaks doctor identities for no benefit — but they still see
-         this gate, just as a one-button notice explaining why, instead of
-         the "any doctor" assignment happening silently with no
-         acknowledgment at all. -->
+         assigns an actual doctor after reviewing the request. -->
     <div id="wiz-pref" class="card" style="border-radius:12px;border:1px solid #e5e7eb;margin-bottom:8px">
       <div class="card-body" style="text-align:center;padding:40px 24px">
-        ${isFirstTimePatient ? `
-        <span style="color:#E8760A;display:inline-flex">${ic('users','icon-lg')}</span>
-        <div style="font-size:1.15rem;font-weight:700;color:#1C1C1C;margin:10px 0 6px">We'll match you with an available optometrist</div>
-        <div style="font-size:.85rem;color:#6B7280;margin-bottom:24px;max-width:440px;margin-left:auto;margin-right:auto">
-          Since this is your first visit, the clinic will assign you whichever optometrist is available at the date and time you choose. Once you've completed your first exam here, you'll be able to request a specific doctor for future visits.
-        </div>
-        <button class="btn-primary" style="padding:11px 28px" onclick="window.wizChooseDoctorPref(true)">
-          Continue ${ic('chevron-right','icon-sm')}
-        </button>` : `
         <div style="font-size:1.15rem;font-weight:700;color:#1C1C1C;margin-bottom:6px">Do you have a preferred optometrist?</div>
         <div style="font-size:.85rem;color:#6B7280;margin-bottom:24px;max-width:440px;margin-left:auto;margin-right:auto">
           You can pick a specific optometrist yourself, or let the clinic assign one who's free at the time you choose.
@@ -4959,7 +4980,7 @@ function appointmentWizardHtml(mode) {
             <span style="font-size:.88rem;font-weight:700;color:#1C1C1C">Any available optometrist</span>
             <span style="font-size:.74rem;color:#9CA3AF">The clinic will assign an optometrist for you.</span>
           </button>
-        </div>`}
+        </div>
       </div>
     </div>`}
 
@@ -5028,7 +5049,6 @@ function appointmentWizardHtml(mode) {
               <span style="display:flex;align-items:center;gap:5px;font-size:.7rem;color:#6B7280"><span style="width:10px;height:10px;border-radius:3px;background:#fff;border:2px solid #E8760A;box-sizing:border-box;display:inline-block"></span>Today</span>
               <span style="display:flex;align-items:center;gap:5px;font-size:.7rem;color:#6B7280"><span style="width:10px;height:10px;border-radius:3px;background:#E8760A;display:inline-block"></span>Selected</span>
               <span style="display:flex;align-items:center;gap:5px;font-size:.7rem;color:#6B7280"><span style="width:10px;height:10px;border-radius:3px;background:#F3F4F6;display:inline-block"></span>Unavailable</span>
-              <span style="display:flex;align-items:center;gap:5px;font-size:.7rem;color:#6B7280"><span style="width:10px;height:10px;border-radius:3px;background:#F3F4F6;display:inline-block"></span>No Doctor Available <span style="color:#9CA3AF">(clinic open)</span></span>
               <span style="display:flex;align-items:center;gap:5px;font-size:.7rem;color:#6B7280"><span style="width:10px;height:10px;border-radius:3px;background:#FFF1F2;border:1px solid #fda4af;display:inline-block"></span>PH Holiday</span>
             </div>
             <div class="wiz-nav">
@@ -5173,26 +5193,20 @@ function appointmentWizardHtml(mode) {
               </div>
             </div>
             ${isStaff ? `
-            <div class="form-group" style="max-width:360px;margin-bottom:16px">
-              <label class="form-label">Initial Status</label>
-              <div style="display:flex;gap:8px;margin-top:6px">
-                <button type="button" class="init-status-pill" data-status="pending"
-                        onclick="window.setInitialStatus('pending', this)">
-                  ${ic('clock','icon-sm')} Pending
-                </button>
-                <button type="button" class="init-status-pill selected" data-status="approved"
-                        onclick="window.setInitialStatus('approved', this)">
-                  ${ic('check-circle','icon-sm')} Approved
-                </button>
-              </div>
-              <input type="hidden" id="ca-initial-status" value="approved">
-            </div>
+            <input type="hidden" id="ca-initial-status" value="approved">
             <div style="font-size:.75rem;color:#9CA3AF;line-height:1.5;margin-bottom:16px;display:flex;align-items:flex-start;gap:6px">
-              ${ic('info','icon-sm')} This appointment will be created on behalf of the patient shown above. The patient will be notified.
+              ${ic('info','icon-sm')} This appointment will be created on behalf of the patient shown above and automatically approved, since the clinic is booking it directly. The patient will be notified.
             </div>
             ` : `
             <div style="font-size:.75rem;color:#9CA3AF;line-height:1.5;margin-bottom:16px;display:flex;align-items:flex-start;gap:6px">
               ${ic('info','icon-sm')} Your appointment request will be reviewed by clinic staff to confirm doctor availability and scheduling. You will be notified once confirmed.
+            </div>
+            <!-- Hint placed above the checkbox/link it refers to, not
+                 nested after it — users scan top to bottom, so they should
+                 see this before reaching the link, not after. -->
+            <div class="reg-terms-hint" id="appt-terms-hint">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14" style="flex-shrink:0"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+              Click the Appointment Policy link below and read to the bottom to unlock this checkbox.
             </div>
             <div class="reg-terms">
               <input type="checkbox" id="appt-terms-agree" class="chk" disabled
@@ -5200,10 +5214,6 @@ function appointmentWizardHtml(mode) {
                      onchange="window.syncApptSubmitState()">
               <span>
                 I have read and agree to the <a href="#" onclick="event.preventDefault();window.openAppointmentPolicyModal()">Appointment Policy</a>, including the cancellation and no-show terms.
-                <span class="reg-terms-hint" id="appt-terms-hint">
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14" style="flex-shrink:0"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
-                  Click the Appointment Policy link above and read to the bottom to unlock this checkbox.
-                </span>
               </span>
             </div>
             `}
@@ -6003,9 +6013,9 @@ function pagePatientPrescriptions() {
 function pagePatientNotifications() {
   const notifs = window._notifications || []
 
-  const typeIcon  = { approved:'check-circle', cancelled:'x-circle', disapproved:'x-circle', rescheduled:'calendar', new_appointment:'calendar', reschedule_request:'alert-circle', welcome:'home', reminder:'clock', waitlist_offer:'alert-circle', waitlist_removed:'x-circle', waitlist_join:'clock', waitlist_left:'x-circle', no_show:'alert-circle', record:'eye', prescription:'file-text', info:'info', appointment_confirmed:'check-circle', follow_up_needed:'calendar', new_login:'monitor' }
-  const typeColor = { approved:'#059669', cancelled:'#EF4444', disapproved:'#EF4444', rescheduled:'#3B82F6', new_appointment:'#E8760A', reschedule_request:'#D97706', welcome:'#E8760A', reminder:'#D97706', waitlist_offer:'#E8760A', waitlist_removed:'#EF4444', waitlist_join:'#E8760A', waitlist_left:'#6B7280', no_show:'#EF4444', record:'#E8760A', prescription:'#3B82F6', info:'#6B7280', appointment_confirmed:'#059669', follow_up_needed:'#E8760A', new_login:'#E8760A' }
-  const typeBg    = { approved:'#ECFDF5', cancelled:'#FEF2F2', disapproved:'#FEF2F2', rescheduled:'#EFF6FF', new_appointment:'#FFF0DC', reschedule_request:'#FFF3CD', welcome:'#FFF0DC', reminder:'#FFF3CD', waitlist_offer:'#FFF0DC', waitlist_removed:'#FEF2F2', waitlist_join:'#FFF0DC', waitlist_left:'#F3F4F6', no_show:'#FEF2F2', record:'#FFF0DC', prescription:'#EFF6FF', info:'#F3F4F6', appointment_confirmed:'#ECFDF5', follow_up_needed:'#FFF0DC', new_login:'#FFF0DC' }
+  const typeIcon  = { approved:'check-circle', cancelled:'x-circle', disapproved:'x-circle', rescheduled:'calendar', new_appointment:'calendar', reschedule_request:'alert-circle', welcome:'home', reminder:'clock', waitlist_offer:'alert-circle', waitlist_removed:'x-circle', waitlist_join:'clock', waitlist_left:'x-circle', no_show:'alert-circle', record:'eye', prescription:'file-text', info:'info', appointment_confirmed:'check-circle', follow_up_needed:'calendar', new_login:'monitor', deletion_request:'user-x' }
+  const typeColor = { approved:'#059669', cancelled:'#EF4444', disapproved:'#EF4444', rescheduled:'#3B82F6', new_appointment:'#E8760A', reschedule_request:'#D97706', welcome:'#E8760A', reminder:'#D97706', waitlist_offer:'#E8760A', waitlist_removed:'#EF4444', waitlist_join:'#E8760A', waitlist_left:'#6B7280', no_show:'#EF4444', record:'#E8760A', prescription:'#3B82F6', info:'#6B7280', appointment_confirmed:'#059669', follow_up_needed:'#E8760A', new_login:'#E8760A', deletion_request:'#EF4444' }
+  const typeBg    = { approved:'#ECFDF5', cancelled:'#FEF2F2', disapproved:'#FEF2F2', rescheduled:'#EFF6FF', new_appointment:'#FFF0DC', reschedule_request:'#FFF3CD', welcome:'#FFF0DC', reminder:'#FFF3CD', waitlist_offer:'#FFF0DC', waitlist_removed:'#FEF2F2', waitlist_join:'#FFF0DC', waitlist_left:'#F3F4F6', no_show:'#FEF2F2', record:'#FFF0DC', prescription:'#EFF6FF', info:'#F3F4F6', appointment_confirmed:'#ECFDF5', follow_up_needed:'#FFF0DC', new_login:'#FFF0DC', deletion_request:'#FEF2F2' }
   const resolveType = n => (n.type === 'info' && n.title?.toLowerCase().startsWith('welcome')) ? 'welcome' : n.type
 
   const unreadCount = notifs.filter(n => !n.isRead).length
@@ -6300,6 +6310,34 @@ function pagePatientSettings() {
 
       ${window.activeSessionsCardHtml()}
 
+      <!-- Danger Zone — self-service "Request Account Deletion". This only
+           ever sends a request to clinic staff (see api/patients/request-
+           deletion.php) — it never deletes anything itself. Staff review
+           and act on it from Patient Records, same as the rest of this
+           app's archive-before-permanent-delete flow. -->
+      <div class="card" style="padding:24px;margin-top:20px;border:1px solid #FECACA">
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
+          <div style="color:#DC2626">${ic('user-x','icon-sm')}</div>
+          <div style="font-size:1.05rem;font-weight:700;color:#1C1C1C">Delete My Account</div>
+        </div>
+        ${user.deletionRequestedAt ? `
+        <div style="font-size:.82rem;color:#6B7280;line-height:1.6;margin-bottom:14px">
+          You requested account deletion on <strong>${new Date(user.deletionRequestedAt.replace(' ','T')).toLocaleDateString('en-PH',{month:'long',day:'numeric',year:'numeric'})}</strong>.
+          Clinic staff will review it${user.deletionRequestReason ? ` — reason given: "${user.deletionRequestReason}"` : ''}.
+          You can cancel this request any time before it's acted on.
+        </div>
+        <button class="btn-secondary" id="pt-cancel-del-btn" onclick="window.cancelDeletionRequest(this)">
+          ${ic('x','icon-sm')} Cancel Request
+        </button>` : `
+        <div style="font-size:.82rem;color:#6B7280;line-height:1.6;margin-bottom:14px">
+          Requesting deletion does not remove anything immediately — it notifies clinic staff, who will review it.
+          Your account and records stay exactly as they are until staff acts on the request, and you can cancel it any time before then.
+        </div>
+        <button class="btn-secondary" style="color:#DC2626;border-color:#FECACA" onmouseover="this.style.background='#FEF2F2'" onmouseout="this.style.background=''" onclick="window.openRequestDeletionModal()">
+          ${ic('user-x','icon-sm')} Request Account Deletion
+        </button>`}
+      </div>
+
     </div>
   </div>`
 }
@@ -6414,6 +6452,21 @@ function pagePatientDoctorAvail() {
     const blockedByDate = {}
     ;(doctor.blockedDates || []).forEach(b => { blockedByDate[b.date] = b.reason || 'Unavailable' })
 
+    // How many of the patient's own appointments already fall on each date —
+    // mirrors create.php's own max-appointments-per-patient-per-day cap and
+    // the same check the booking wizard's own calendar makes (amcRender(),
+    // main.js). Without this, "Book This Date" here pre-fills the date and
+    // skips straight past the wizard's Date step entirely (see
+    // patCalBookAppt()), so that calendar's own block never even ran — a
+    // patient already at their daily limit could still get all the way to
+    // the wizard's Review step from here before the server finally rejected it.
+    const maxPerPatientDay = window.consultationSettings?.maxApptsPerPatientPerDay || 1
+    const myApptCountByDate = {}
+    appointments.forEach(a => {
+      if (a.status === 'cancelled' || a.status === 'disapproved') return
+      myApptCountByDate[a.date] = (myApptCountByDate[a.date] || 0) + 1
+    })
+
     let cells = ''
     for (let i = 0; i < firstDay; i++) cells += `<div class="cal-day other-month"></div>`
     for (let d = 1; d <= daysInMon; d++) {
@@ -6432,13 +6485,25 @@ function pagePatientDoctorAvail() {
       const isBlocked   = !!blockedReason
       const daysOut     = Math.round((new Date(viewYear, viewMonth, d) - new Date(baseYear, baseMonth, todayDate)) / 86400000)
       const tooSoon     = daysOut >= 0 && daysOut < minAdvanceDays()
+      const isAlreadyBooked = (myApptCountByDate[dateStr] || 0) >= maxPerPatientDay
 
       let cls = 'cal-day'
       if (isSel)                          cls += ' cal-selected'
       else if (isToday)                   cls += ' today'
+      else if (isAlreadyBooked && !isPast) cls += ' blocked'
       else if (isBlocked && !isPast)      cls += ' date-blocked'
       else if (isHoliday && !isPast)      cls += ' cal-holiday'
       else if (isHoliday && isPast)       cls += ' blocked'
+      // Past/out-of-range/too-soon dates fall here BEFORE the avail check
+      // below — same priority order as the booking wizard's own calendar
+      // (amcRender(), main.js): a date the doctor would normally work but
+      // that's blocked for a timing reason still renders as plain muted
+      // "Unavailable" gray, not the green "Available" look faded down with
+      // opacity. That opacity approach used to sit here instead, and (like
+      // the wizard's own past fix documented at its .amc-day.amc-past)
+      // faded the day NUMBER along with the background, reading as barely
+      // legible instead of a solid, clearly-muted color.
+      else if (isPast || isFar || tooSoon) cls += ' blocked'
       else if (avail)                     cls += ' avail'
       else                                cls += ' blocked'
 
@@ -6447,25 +6512,39 @@ function pagePatientDoctorAvail() {
       // remain clickable — the click surfaces a toast (synced to the live
       // minAdvanceTooltip()) so patients on touch devices, who never see the
       // hover title="" tooltip, still get told why the date isn't bookable.
-      const tooSoonOnly = tooSoon && !isToday && !isPast && !isFar && !isHoliday && !isBlocked
-      const dimStyle  = (isPast || isFar) ? 'opacity:.35;pointer-events:none;'
-                       : (tooSoon && !isToday) ? 'opacity:.35;cursor:not-allowed;' : ''
+      const tooSoonOnly = tooSoon && !isToday && !isPast && !isFar && !isHoliday && !isBlocked && !isAlreadyBooked
+      const dimStyle  = isPast ? 'pointer-events:none;'
+                       : (isAlreadyBooked || (tooSoon && !isToday)) ? 'cursor:not-allowed;' : ''
       const styleAttr = dimStyle ? ` style="${dimStyle}"` : ''
-      const titleAttr = tooSoon   ? `title="${minAdvanceTooltip()}"` :
+      const titleAttr = isAlreadyBooked ? `title="You already have ${maxPerPatientDay === 1 ? 'an appointment' : maxPerPatientDay + ' appointments'} scheduled this day."` :
+                        tooSoon   ? `title="${minAdvanceTooltip()}"` :
                         isBlocked ? `title="Doctor unavailable: ${String(blockedReason).replace(/"/g,'&quot;')}"` :
-                        isHoliday ? `title="Clinic closed: ${holidayName}"` : ''
+                        isHoliday ? `title="Clinic closed: ${holidayName}"` :
+                        isFar     ? `title="Beyond the maximum booking window."` : ''
       const hoverEvt  = !tooSoon && !isPast && !isFar && !isHoliday && dayAppts.length
         ? `onmouseenter="window.showCalTip(this,'${JSON.stringify(dayAppts).replace(/'/g,'&#39;').replace(/"/g,'&quot;')}')" onmouseleave="window.hideCalTip()"`
         : ''
-      const clickEvt  = avail && !isBlocked && !tooSoon && !isPast && !isFar && !isHoliday
-        ? `onclick="window.patCalSelectDate('${doctor.id}','${dateStr}')"`
-        : tooSoonOnly
-          ? `onclick="window.toast(window.minAdvanceTooltip(), 'error')"`
-          : ''
+      const clickEvt  = isAlreadyBooked
+        ? ''
+        : avail && !isBlocked && !tooSoon && !isPast && !isFar && !isHoliday
+          ? `onclick="window.patCalSelectDate('${doctor.id}','${dateStr}')"`
+          : tooSoonOnly
+            ? `onclick="window.toast(window.minAdvanceTooltip(), 'error')"`
+            : ''
 
+      // Same inline-label convention as the booking wizard's own calendar
+      // (amcRender(), main.js) — a hover title="" alone never reaches a
+      // touch-screen patient, so every reason a date is blocked gets a
+      // short label under the day number, not just a tooltip.
       const inner = isHoliday && !isPast
         ? `${d}<span class="cal-holiday-lbl">${holidayName}</span>`
-        : String(d)
+        : (isAlreadyBooked && !isPast)
+          ? `${d}<span class="cal-nodoc-lbl">Booked</span>`
+          : (tooSoon && !isPast)
+            ? `${d}<span class="cal-nodoc-lbl">Too Soon</span>`
+            : (isFar && !isPast)
+              ? `${d}<span class="cal-nodoc-lbl">Too Far</span>`
+              : String(d)
       cells += `<div class="${cls}${dotCls}"${styleAttr} ${hoverEvt} ${clickEvt} ${titleAttr}>${inner}</div>`
     }
     return cells
@@ -6478,14 +6557,17 @@ function pagePatientDoctorAvail() {
     if (!window._patCalState[docId]) window._patCalState[docId] = { year: baseYear, month: baseMonth }
 
     let { year, month, selectedDate } = window._patCalState[docId]
-    month += delta
-    if (month > 11) { year++; month = 0 }
-    if (month < 0)  { year--; month = 11 }
-
-    // This is a browsing/reference calendar, not the booking flow itself —
-    // month/year navigation is intentionally unlimited in both directions.
-    // Individual days still show as unbookable (isFar/isPast) beyond the
-    // real advance-booking window; only the "can I look" control is unrestricted.
+    const newMonth = month + delta
+    let  newYear   = year
+    let  clampedMonth = newMonth
+    if (clampedMonth > 11) { newYear++; clampedMonth = 0 }
+    if (clampedMonth < 0)  { newYear--; clampedMonth = 11 }
+    // Same guard as the booking wizard's own calendar (amcGoMonth(),
+    // main.js) — every month before the current one is entirely in the
+    // past, nothing on it is ever bookable, so Prev stops right there
+    // instead of paging indefinitely backward into dead months.
+    if (newYear < baseYear || (newYear === baseYear && clampedMonth < baseMonth)) return
+    year = newYear; month = clampedMonth
 
     // Preserve selectedDate when updating state
     window._patCalState[docId] = { year, month, selectedDate: selectedDate || '' }
@@ -6528,8 +6610,15 @@ function pagePatientDoctorAvail() {
     // transitions come from the same CSS every other close button and
     // primary button in the app already uses, instead of duplicating (and
     // under-animating) them here.
+    //
+    // The header's own "Book Appointment" button hides while this is open —
+    // once a date is selected, both buttons would do the exact same thing
+    // (navigate to the wizard with this doctor + whatever date is currently
+    // selected), so showing both at once just reads as two identical CTAs.
+    // It reappears via the close button below, restoring the general
+    // "book with this doctor, pick a date in the wizard" entry point.
     pop.innerHTML = `
-      <button class="modal-close" onclick="document.getElementById('pat-cal-popover-${docId}').remove();window._patCalState['${docId}'].selectedDate='';window.patCalNavMonth('${docId}',0)">&times;</button>
+      <button class="modal-close" onclick="document.getElementById('pat-cal-popover-${docId}').remove();window._patCalState['${docId}'].selectedDate='';window.patCalNavMonth('${docId}',0);document.getElementById('pat-doc-book-top-${docId}').style.display=''">&times;</button>
       <div style="font-size:.72rem;font-weight:600;color:#9CA3AF;text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px">Selected Date</div>
       <div style="font-size:.88rem;font-weight:700;color:#1C1C1C;margin-bottom:2px;padding-right:26px">${dayFull}</div>
       <div style="font-size:.78rem;color:#6B7280;margin-bottom:14px">${doc.name} &nbsp;·&nbsp; 8:00 AM – 5:00 PM</div>
@@ -6537,6 +6626,9 @@ function pagePatientDoctorAvail() {
         Book This Date →
       </button>`
     gridEl.insertAdjacentElement('afterend', pop)
+
+    const topBtn = document.getElementById('pat-doc-book-top-' + docId)
+    if (topBtn) topBtn.style.display = 'none'
   }
 
   // Navigate to the appointment wizard with doctor + optional date pre-filled
@@ -6557,9 +6649,13 @@ function pagePatientDoctorAvail() {
   const MONTH_NAMES = ['January','February','March','April','May','June','July','August','September','October','November','December']
 
   function buildCalNav(doctor, viewYear, viewMonth) {
-    const label     = MONTH_NAMES[viewMonth] + ' ' + viewYear
+    const label   = MONTH_NAMES[viewMonth] + ' ' + viewYear
+    // Same dimming treatment as the booking wizard's own calendar
+    // (amcRender(), main.js) — Prev fades once already on the current
+    // month, since every earlier month is entirely in the past anyway.
+    const isBase  = viewYear === baseYear && viewMonth === baseMonth
     return `
-      <button class="btn-icon" onclick="window.patCalNavMonth('${doctor.id}',-1)">${ic('chevron-left','icon-sm')}</button>
+      <button class="btn-icon" style="opacity:${isBase ? '.3' : '1'}" onclick="window.patCalNavMonth('${doctor.id}',-1)">${ic('chevron-left','icon-sm')}</button>
       <span style="font-size:.85rem;font-weight:600;color:#1C1C1C;min-width:130px;text-align:center">${label}</span>
       <button class="btn-icon" onclick="window.patCalNavMonth('${doctor.id}',1)">${ic('chevron-right','icon-sm')}</button>`
   }
@@ -6599,7 +6695,7 @@ function pagePatientDoctorAvail() {
             <div style="font-size:1rem;font-weight:700;color:#1C1C1C">${doctor.name}</div>
             <div style="font-size:.8rem;color:#6B7280;margin-top:2px">${doctor.specialization}</div>
           </div>
-          <button class="btn-primary" style="flex-shrink:0;font-size:.82rem"
+          <button id="pat-doc-book-top-${doctor.id}" class="btn-primary" style="flex-shrink:0;font-size:.82rem"
                   onclick="window.patCalBookAppt('${doctor.id}')">
             ${ic('plus','icon-sm')} Book Appointment
           </button>
@@ -6623,6 +6719,9 @@ function pagePatientDoctorAvail() {
             <div style="display:flex;gap:14px;margin-top:12px;flex-wrap:wrap">
               <div style="display:flex;align-items:center;gap:6px;font-size:.72rem;color:#6B7280">
                 <div style="width:10px;height:10px;background:#E8760A;border-radius:50%"></div>Today
+              </div>
+              <div style="display:flex;align-items:center;gap:6px;font-size:.72rem;color:#6B7280">
+                <div style="width:10px;height:10px;background:#E8760A;border-radius:2px"></div>Selected
               </div>
               <div style="display:flex;align-items:center;gap:6px;font-size:.72rem;color:#6B7280">
                 <div style="width:10px;height:10px;background:#ECFDF5;border:1.5px solid #10B981;border-radius:2px"></div>Available

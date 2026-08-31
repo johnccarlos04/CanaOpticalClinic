@@ -230,6 +230,15 @@ CREATE TABLE IF NOT EXISTS `patients` (
   `status`          ENUM('active','inactive') NOT NULL DEFAULT 'active',
   `no_show_count`      INT UNSIGNED NOT NULL DEFAULT 0,
   `booking_restricted` TINYINT(1)   NOT NULL DEFAULT 0,
+  -- Self-service "Request Account Deletion" (Settings > My Profile,
+  -- patient role) — set when the patient submits a request, cleared the
+  -- moment admin/staff either acts on it (archives the patient — see
+  -- api/archive/create.php's Patient branch) or dismisses it. Requesting
+  -- never deletes anything itself; it only notifies admin/staff and shows
+  -- a pending state to the patient, same reasoning as the rest of this
+  -- app's archive-before-permanent-delete flow.
+  `deletion_requested_at`     DATETIME NULL DEFAULT NULL,
+  `deletion_request_reason`   TEXT     NULL DEFAULT NULL,
   `archived_at`     DATETIME     NULL DEFAULT NULL,
   PRIMARY KEY (`id`),
   UNIQUE KEY `uq_patient_user` (`user_id`),
@@ -722,5 +731,12 @@ CREATE TABLE IF NOT EXISTS `about_gallery` (
 --    ALTER TABLE `sessions` ADD COLUMN IF NOT EXISTS `ip_address` VARCHAR(45) NULL DEFAULT NULL AFTER `user_agent`;
 --    ALTER TABLE `sessions` ADD COLUMN IF NOT EXISTS `created_at` DATETIME NULL DEFAULT NULL AFTER `ip_address`;
 --    ALTER TABLE `sessions` ADD INDEX IF NOT EXISTS `idx_user_id` (`user_id`);
+--    Patients can now request their own account be deleted (Settings > My
+--    Profile) — the request only notifies admin/staff and shows a pending
+--    state; it never deletes anything itself. Admin/staff fulfills it via
+--    the existing Archive flow, which now also clears the request flag.
+--    Existing database:
+--    ALTER TABLE `patients` ADD COLUMN `deletion_requested_at` DATETIME NULL DEFAULT NULL AFTER `booking_restricted`;
+--    ALTER TABLE `patients` ADD COLUMN `deletion_request_reason` TEXT NULL DEFAULT NULL AFTER `deletion_requested_at`;
 
 SET FOREIGN_KEY_CHECKS = 1;

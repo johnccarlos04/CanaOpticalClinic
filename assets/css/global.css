@@ -863,6 +863,10 @@ input[type="date"].reg-input::-webkit-datetime-edit-year-field {
   line-height: 1.5;
 }
 .reg-terms-hint svg { flex-shrink: 0; margin-top: 2px; }
+/* Appointment Policy's own instance reads better shrink-wrapped to its text
+   instead of stretching the full width of the review step (registration's
+   instance stays full width — untouched). */
+#appt-terms-hint { display: inline-flex; width: fit-content; max-width: 100%; }
 
 /* Scrollable Terms & Conditions modal body */
 .terms-body {
@@ -2098,6 +2102,14 @@ input[type="date"].reg-input::-webkit-datetime-edit-year-field {
 }
 .nav-item.active .nav-badge { background: rgba(255,255,255,0.3); }
 #sidebar.collapsed .nav-badge { display: none; }
+/* Waitlist button's count badge reuses .nav-badge, but its margin-left:auto
+   (meant to pin it to the far edge of a width-stretched sidebar row) fights
+   justify-content:center inside a button — the auto margin still eats all
+   the free space, shoving the icon+label to one side while the badge sits
+   alone at the opposite edge. Most visible once the button goes full-width
+   on mobile. Sit it right next to the label instead so icon+label+badge
+   center together as one group. */
+.btn-primary .nav-badge, .btn-secondary .nav-badge { margin-left: 2px; }
 .patient-name-info span { font-size: 0.75rem; color: #9CA3AF; }
 
 /* Table empty */
@@ -3388,7 +3400,9 @@ input[type="date"].form-input::-webkit-datetime-edit-year-field {
   justify-content: center;
   border-radius: 8px;
   font-family: 'Poppins', sans-serif;
-  font-size: 0.82rem;
+  /* Matches the booking wizard's own calendar (.amc-day, pages.js) —
+     same "make the numbers slightly bigger" pass applied there. */
+  font-size: 0.88rem;
   cursor: pointer;
   position: relative;
   transition: background 0.15s;
@@ -3418,9 +3432,17 @@ input[type="date"].form-input::-webkit-datetime-edit-year-field {
 .cal-day.blocked { background: #F3F4F6; color: #9CA3AF; cursor: default; }
 .cal-day.cal-holiday { background: #FFF1F2; color: #f43f5e; cursor: default; font-weight: 600; }
 .cal-holiday-lbl { position: absolute; left: 2px; right: 2px; top: calc(50% + 8px); font-size: .58rem; line-height: 1.1; text-align: center; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; font-weight: 500; padding: 0 1px; }
+/* Short one-word labels ("Too Far", "Too Soon", "Booked") — .cal-holiday-lbl
+   above is sized down specifically to fit a 2-line-wrapped holiday name
+   (e.g. "Ninoy Aquino Day") in a narrow cell; reusing it for these shorter
+   captions read visibly smaller than the matching labels on the booking
+   wizard's own calendar (.amc-nodoc-lbl, pages.js). This mirrors that
+   class's sizing instead — single line, no wrap, same .7rem. */
+.cal-nodoc-lbl { position: absolute; left: 2px; right: 2px; top: calc(50% + 8px); font-size: .7rem; line-height: 1.15; text-align: center; overflow: hidden; white-space: nowrap; font-weight: 600; color: #6B7280; }
 @media (max-width: 480px) {
   .cal-day.cal-holiday { font-size: 0.7rem; }
   .cal-holiday-lbl { font-size: .35rem; }
+  .cal-nodoc-lbl { font-size: .44rem; top: calc(50% + 4px); line-height: 1.05; }
 }
 .cal-day.avail   { background: #ECFDF5; color: #065F46; font-weight: 600; }
 .cal-day.avail:hover { background: #D1FAE5; }
