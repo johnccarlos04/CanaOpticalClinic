@@ -139,6 +139,23 @@ async function handleLogin() {
 }
 
 // ── Logout ───────────────────────────────────────────────────────
+// Shown on the login screen whenever a device discovers its session is
+// gone for a reason other than its own deliberate "Sign Out" click — used
+// both by _handleSessionRevoked() (the 30s poll notices mid-session) and
+// by restoreSession() (a fresh page load/refresh discovers it instead),
+// so the explanation is identical either way it's found out.
+const SESSION_REVOKED_MESSAGE = 'You were signed out because this session ended. It may have been signed out from another device, or your password was changed. Please sign in again.'
+
+// localStorage flag: "this device had a real, signed-in session at some
+// point." Set on every successful login/session-restore (_bootAfterAuth),
+// cleared on any logout (this function, whether manual or forced). Lets
+// restoreSession() below tell "a session that used to be valid just died"
+// apart from "this browser was never signed in here at all" — only the
+// first case should ever show SESSION_REVOKED_MESSAGE; a plain first
+// visit shouldn't claim to have "signed you out" of something you were
+// never in.
+const HAD_SESSION_KEY = '_canaopticalclinic_hadSession'
+
 // `reason`, when passed, is shown on the login screen after landing there
 // — used by _handleSessionRevoked() below so a device that gets signed
 // out remotely (another device's Log Out, or a password change) lands on
@@ -147,6 +164,7 @@ async function handleLogin() {
 async function logout(reason) {
   _stopSystemPolling()
   try { await fetch('api/auth/logout.php', { method: 'POST' }) } catch (_) {}
+  try { localStorage.removeItem(HAD_SESSION_KEY) } catch (_) {}
 
   if (window.closeModal) window.closeModal()
 
@@ -651,7 +669,22 @@ async function restoreSession() {
     const data = await res.json()
     if (!data.success) {
       hideLoader()
-      showLogin(Math.max(0, MIN_SHOW - (Date.now() - _startedAt)))
+      const delay = Math.max(0, MIN_SHOW - (Date.now() - _startedAt))
+      // This device had a real session before (set by _bootAfterAuth on
+      // its last successful login) and now doesn't — the same "signed out
+      // elsewhere" situation _handleSessionRevoked() reacts to mid-session,
+      // just discovered on a fresh page load/refresh instead. A browser
+      // that was never signed in here at all skips this — it was never
+      // "signed out" of anything.
+      let hadSession = false
+      try { hadSession = localStorage.getItem(HAD_SESSION_KEY) === '1' } catch (_) {}
+      if (hadSession) {
+        try { localStorage.removeItem(HAD_SESSION_KEY) } catch (_) {}
+        showLogin(delay)
+        setTimeout(() => _showLoginError(SESSION_REVOKED_MESSAGE), delay)
+      } else {
+        showLogin(delay)
+      }
       return
     }
 
@@ -1744,6 +1777,9 @@ function _bootAfterAuth(role, user) {
   // (_handleSessionRevoked) from any previous session, so a future
   // revocation this session can trigger it again.
   _sessionRevokedHandled = false
+  // Mark this device as having a real signed-in session — see
+  // HAD_SESSION_KEY's own comment for why restoreSession() needs this.
+  try { localStorage.setItem(HAD_SESSION_KEY, '1') } catch (_) {}
 
   window.state.role         = role
   window.state.user         = user
@@ -2083,7 +2119,7 @@ let _sessionRevokedHandled = false
 function _handleSessionRevoked() {
   if (_sessionRevokedHandled) return
   _sessionRevokedHandled = true
-  logout('You were signed out because this session ended — on another device, or your password was changed. Please sign in again.')
+  logout(SESSION_REVOKED_MESSAGE)
 }
 window._handleSessionRevoked = _handleSessionRevoked
 

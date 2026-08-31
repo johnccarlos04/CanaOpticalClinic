@@ -393,6 +393,28 @@ function tagSessionOwner(PDO $pdo, int $userId): void {
     if (!$sid) return;
     $ua = substr($_SERVER['HTTP_USER_AGENT'] ?? '', 0, 255);
     $ip = clientIp();
+
+    // "Known device" check — before writing this session's own row (which
+    // would otherwise always match itself), look for any OTHER still-live
+    // session on this account with the exact same User-Agent. If one
+    // exists, this is the same browser/device signing in again (a fresh
+    // login after the old session expired or was signed out, "remember me"
+    // renewing, etc.), not a new device — no notification needed for that.
+    // Not a perfect device fingerprint (a cleared/GC'd session for that
+    // same device would read as "new" again), but a reasonable one without
+    // adding a separate persistent devices table.
+    $knownDevice = false;
+    if ($ua !== '') {
+        try {
+            $chk = $pdo->prepare('SELECT COUNT(*) FROM sessions WHERE user_id = ? AND user_agent = ? AND id != ?');
+            $chk->execute([$userId, $ua, $sid]);
+            $knownDevice = (int)$chk->fetchColumn() > 0;
+        } catch (PDOException) {
+            // Fail open — worst case this login gets notified as "new"
+            // when it wasn't, not the other way around.
+        }
+    }
+
     $stmt = $pdo->prepare(
         'INSERT INTO sessions (id, data, last_access, user_id, user_agent, ip_address, created_at)
          VALUES (?, \'\', ?, ?, ?, ?, NOW())
@@ -401,17 +423,17 @@ function tagSessionOwner(PDO $pdo, int $userId): void {
     );
     $stmt->execute([$sid, time(), $userId, $ua, $ip]);
 
-    // Every call here is a genuine new sign-in (password login, or the
-    // auto-login right after verifying a registration OTP) — surface it
-    // as a notification so the account owner notices a sign-in they
-    // didn't make and can review/revoke it from Active Sessions, same
-    // spirit as Google/Facebook's own "new sign-in" alerts. No relatedId:
-    // there's no specific record to jump to, just the Active Sessions
-    // page itself (see the 'new_login' branch in _notifNavTarget(),
-    // router.js).
+    if ($knownDevice) return;
+
+    // A genuinely new device/browser signing in — surface it as a
+    // notification so the account owner notices a sign-in they didn't
+    // make and can review/revoke it from Active Sessions, same spirit as
+    // Google/Facebook's own "new sign-in" alerts. No relatedId: there's no
+    // specific record to jump to, just the Active Sessions page itself
+    // (see the 'new_login' branch in _notifNavTarget(), router.js).
     $deviceLabel = parseDeviceLabel($ua);
     createNotification($pdo, $userId, 'new_login', 'New Sign-in Detected',
-        "A new sign-in to your account was detected on {$deviceLabel} (IP: {$ip}). If this wasn't you, review your Active Sessions and change your password."
+        "A new sign-in to your account was detected on {$deviceLabel} (IP: {$ip}). If this wasn't you, review your sessions in Security &amp; Sign-in and change your password."
     );
 }
 
