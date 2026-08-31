@@ -92,6 +92,23 @@ try {
             jsonResponse(['success' => false, 'message' => $msg]);
         }
 
+        // Enforce the clinic's max-appointments-per-patient-per-day cap —
+        // separate from the per-doctor cap below, and checked regardless of
+        // which doctor (or "any doctor") this request is for, since the
+        // point is capping the PATIENT's own day, not any one doctor's.
+        // Cancelled/disapproved don't count — they're not actually
+        // occupying the patient's day either.
+        $maxPerPatientDay = (int)($pdo->query('SELECT max_appts_per_patient_per_day FROM clinic_settings WHERE id = 1 LIMIT 1')->fetchColumn() ?: 1);
+        $pcs = $pdo->prepare(
+            "SELECT COUNT(*) FROM appointments
+             WHERE patient_id = ? AND date = ? AND status NOT IN ('cancelled','disapproved')"
+        );
+        $pcs->execute([$patientId, $date]);
+        if ((int)$pcs->fetchColumn() >= $maxPerPatientDay) {
+            jsonResponse(['success' => false, 'message' =>
+                'You already have ' . ($maxPerPatientDay === 1 ? 'an appointment' : $maxPerPatientDay . ' appointments') . ' scheduled for this date. Please choose another date, or contact the clinic directly if you need an additional visit the same day.']);
+        }
+
         // Reject self-service bookings on a date the doctor has explicitly
         // blocked, even if a stale frontend calendar let the request through.
         // Admin/staff keep discretion to book anyway (e.g. squeezing in an
@@ -223,11 +240,19 @@ try {
         }
     }
 
+    // Patient booking themselves (or admin/staff assisting with an "any
+    // doctor" request that still originated as their own online submission)
+    // is 'online'; admin/staff creating one directly on a patient's behalf
+    // is a 'walk-in' — they picked the doctor/date/time themselves for
+    // someone standing in front of them (or calling in), not the patient.
+    $source = $role === 'patient' ? 'online' : 'walk-in';
+
     $newId = createAppointmentRecord($pdo, [
         'patientId' => $patientId, 'patientName' => $patientName,
         'doctorId'  => $doctorId,  'doctorName'  => $doctorName,
         'date'      => $date,      'time'        => $time,
         'type'      => $type,      'status'      => $status,
+        'source'    => $source,
         'notes'     => $notes,     'termsAgreed' => $termsAgreed,
     ]);
 

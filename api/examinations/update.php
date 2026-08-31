@@ -87,7 +87,16 @@ try {
     ]);
 
     // ── Update the linked consultation, if there is one ──────────────
+    // Snapshot the follow-up date beforehand so admin/staff only get
+    // notified when it's actually newly set/changed on this save, not
+    // re-notified every time the doctor edits some unrelated field on an
+    // exam that already had a follow-up flagged.
+    $oldFollowUpDate = null;
     if ($exam['consultation_id']) {
+        $oldFollowUpDate = $pdo->prepare('SELECT follow_up_date FROM consultations WHERE id = ?');
+        $oldFollowUpDate->execute([$exam['consultation_id']]);
+        $oldFollowUpDate = $oldFollowUpDate->fetchColumn() ?: null;
+
         $pdo->prepare(
             'UPDATE consultations SET
                 date = ?, type = ?, chief_complaint = ?, history_present_illness = ?,
@@ -114,13 +123,18 @@ try {
 
         $lensCoating = $b['lensCoating'] ?? [];
         $coatingJson = is_array($lensCoating) ? json_encode($lensCoating) : '[]';
+        $totalAmountRaw = $b['totalAmount'] ?? '';
+        $totalAmount = ($totalAmountRaw !== '' && $totalAmountRaw !== null) ? (float)$totalAmountRaw : null;
+        $dispensedDate = !empty($b['dispensedDate']) ? $b['dispensedDate'] : null;
+        $receivedBy    = $b['receivedBy'] ?? null;
 
         if ($rx) {
             $pdo->prepare(
                 'UPDATE prescriptions SET
                     date = ?, od_sph = ?, od_cyl = ?, od_axis = ?, od_add = ?,
                     os_sph = ?, os_cyl = ?, os_axis = ?, os_add = ?, pd = ?,
-                    lens_type = ?, lens_material = ?, frame_selection = ?, lens_coating = ?
+                    lens_type = ?, lens_material = ?, frame_selection = ?, lens_coating = ?,
+                    total_amount = ?, dispensed_date = ?, received_by = ?
                  WHERE id = ?'
             )->execute([
                 $date,
@@ -131,6 +145,7 @@ try {
                 $b['lensMaterial']   ?? '',
                 $b['frameSelection'] ?? '',
                 $coatingJson,
+                $totalAmount, $dispensedDate, $receivedBy,
                 $rx['id'],
             ]);
         } else {
@@ -147,8 +162,9 @@ try {
                    (id, patient_id, doctor_id, exam_id, date, expiry_date, status, prc_license,
                     od_sph, od_cyl, od_axis, od_add,
                     os_sph, os_cyl, os_axis, os_add, pd,
-                    lens_type, lens_material, frame_selection, lens_coating)
-                 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)'
+                    lens_type, lens_material, frame_selection, lens_coating,
+                    total_amount, dispensed_date, received_by)
+                 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)'
             )->execute([
                 $rxId, $patientId, $doctorId, $examId, $date, $expiryDate, 'valid', $prcLicense,
                 $od['sph']  ?? '', $od['cyl']  ?? '', $od['axis'] ?? '', $od['add']  ?? '',
@@ -158,6 +174,7 @@ try {
                 $b['lensMaterial']   ?? '',
                 $b['frameSelection'] ?? '',
                 $coatingJson,
+                $totalAmount, $dispensedDate, $receivedBy,
             ]);
         }
     }
@@ -190,6 +207,18 @@ try {
     ]);
 
     $pdo->commit();
+
+    // Only notify when the follow-up date is newly set or actually
+    // changed on this save — see the snapshot taken before the consultation
+    // UPDATE above.
+    $newFollowUpDate = !empty($b['followUpDate']) ? $b['followUpDate'] : null;
+    if ($newFollowUpDate && $newFollowUpDate !== $oldFollowUpDate) {
+        $fmtFollowUp = date('M j, Y', strtotime($newFollowUpDate));
+        notifyAdminStaff($pdo, 'follow_up_needed', 'Follow-up Consultation Needed',
+            "{$doctorName} recommends a follow-up for {$ptName} on {$fmtFollowUp}. Please schedule the appointment.",
+            $patientId
+        );
+    }
 
     jsonResponse(['success' => true, 'id' => $examId]);
 

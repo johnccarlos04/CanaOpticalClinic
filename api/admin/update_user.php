@@ -33,6 +33,8 @@ $status        = trim($b['status']        ?? '');
 $specialization = trim($b['specialization'] ?? '');
 $prcLicense      = trim($b['prcLicense']     ?? '');
 $degree          = trim($b['degree']          ?? '');
+$secondaryCredential = trim($b['secondaryCredential'] ?? '');
+$secondaryPrc        = trim($b['secondaryPrc']        ?? '');
 $sortOrder       = isset($b['sortOrder']) ? max(0, (int)$b['sortOrder']) : null;
 
 if (!$profileId || !$role || !$fn || !$ln) {
@@ -87,6 +89,13 @@ try {
         if ($specialization !== '') { $sets[] = "specialization = COALESCE(NULLIF(?, ''), specialization)"; $vals[] = $specialization; }
         if ($prcLicense     !== '') { $sets[] = 'prc_license = ?';  $vals[] = $prcLicense; }
         if ($degree         !== '') { $sets[] = 'degree = ?';       $vals[] = $degree; }
+        // Secondary credential is genuinely optional and paired (only prints
+        // on the clearance when both fields are present) — unlike the
+        // fields above, blanking it out is a real, intended action (the
+        // doctor no longer holds it / it was entered by mistake), so this
+        // always sets both rather than skipping empty values.
+        $sets[] = 'secondary_credential = ?'; $vals[] = $secondaryCredential ?: null;
+        $sets[] = 'secondary_prc = ?';        $vals[] = $secondaryPrc ?: null;
         if ($sortOrder !== null) {
             // Fetch current sort_order of this doctor before overwriting
             $curStmt = $pdo->prepare("SELECT sort_order FROM doctors WHERE id = ? LIMIT 1");

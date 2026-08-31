@@ -171,6 +171,13 @@ CREATE TABLE IF NOT EXISTS `doctors` (
   `specialization` VARCHAR(100) NOT NULL DEFAULT 'Optometrist',
   `degree`         VARCHAR(30)  NOT NULL DEFAULT 'OD',
   `prc_license`    VARCHAR(50)  NULL DEFAULT NULL,
+  -- A second, optional credential some doctors hold beyond their base
+  -- optometrist license (e.g. "Ocular Pharmacologist" with its own PRC
+  -- accreditation number) — printed as an extra line on the Ophthalmic
+  -- Clearance certificate only when both are on file; blank for doctors
+  -- who don't have one, never inferred or hardcoded.
+  `secondary_credential` VARCHAR(100) NULL DEFAULT NULL,
+  `secondary_prc`  VARCHAR(50)  NULL DEFAULT NULL,
   `contact`        VARCHAR(20)  DEFAULT NULL,
   `available`      TINYINT(1)   NOT NULL DEFAULT 1,
   `work_hours`     VARCHAR(100) DEFAULT NULL,
@@ -240,6 +247,12 @@ CREATE TABLE IF NOT EXISTS `appointments` (
   `time`                 VARCHAR(20)  NOT NULL,
   `type`                 VARCHAR(100) DEFAULT NULL,
   `status`               ENUM('pending','approved','cancelled','disapproved','completed','no-show') NOT NULL DEFAULT 'pending',
+  -- How this appointment came to exist — the patient booked it themselves
+  -- (self-service, or claiming a waitlist offer) vs. admin/staff created it
+  -- directly (walk-in, phone call, etc.). Set once at creation, never
+  -- changed afterward — this is a record of how the visit was originally
+  -- scheduled, not a live status.
+  `source`               ENUM('online','walk-in') NOT NULL DEFAULT 'online',
   `notes`                TEXT         DEFAULT NULL,
   `cancellation_reason`  TEXT         DEFAULT NULL,
   `disapproval_reason`   TEXT         DEFAULT NULL,
@@ -297,6 +310,11 @@ CREATE TABLE IF NOT EXISTS `consultations` (
   `recommendation`           TEXT         DEFAULT NULL,  -- the plan — what happens next
   `follow_up_date`           DATE         DEFAULT NULL,
   `status`                   ENUM('completed','cancelled','no-show') NOT NULL DEFAULT 'completed',
+  -- Set together with examinations.archived_at when the exam from the same
+  -- visit is archived (Settings > Archives) — a consultation/prescription
+  -- from an archived visit shouldn't keep showing on its own tab pointing
+  -- at an exam that's no longer visible anywhere.
+  `archived_at`              DATETIME     DEFAULT NULL,
   PRIMARY KEY (`id`),
   FOREIGN KEY (`patient_id`) REFERENCES `patients`(`id`) ON DELETE CASCADE,
   FOREIGN KEY (`doctor_id`)  REFERENCES `doctors`(`id`)  ON DELETE CASCADE
@@ -329,6 +347,13 @@ CREATE TABLE IF NOT EXISTS `examinations` (
   `test_results`         TEXT         DEFAULT NULL,
   `remarks`              TEXT         DEFAULT NULL,  -- clinical remarks
   `status`               ENUM('pending','completed') NOT NULL DEFAULT 'completed',
+  -- Soft-delete flag, same convention as patients/admins/staff/doctors —
+  -- archiving an exam (Settings > Archives) sets this instead of deleting
+  -- the row outright, and cascades to the linked consultation/prescription
+  -- (their own archived_at) so a visit disappears from every tab together,
+  -- not just Examination History. Permanent deletion (from Archives) still
+  -- cascades the same way, but actually removes the rows.
+  `archived_at`          DATETIME     DEFAULT NULL,
   PRIMARY KEY (`id`),
   FOREIGN KEY (`patient_id`) REFERENCES `patients`(`id`) ON DELETE CASCADE,
   FOREIGN KEY (`doctor_id`)  REFERENCES `doctors`(`id`)  ON DELETE CASCADE
@@ -354,6 +379,16 @@ CREATE TABLE IF NOT EXISTS `prescriptions` (
   `lens_material` VARCHAR(50)  DEFAULT NULL,  -- not in the spec's minimum field list, but real dispensing
   `frame_selection` TEXT       DEFAULT NULL,  -- data that would otherwise have nowhere to live once examinations sheds it
   `lens_coating` TEXT         DEFAULT NULL,  -- JSON array, same convention the old examinations.lens_coating used
+  -- Dispensing (eyeglass/lens release + payment) — the wizard's own
+  -- Dispensing step captured these in the DOM but never actually sent or
+  -- saved them anywhere until now; only meaningful once a prescription is
+  -- actually issued, so they live here rather than on examinations.
+  `total_amount`   DECIMAL(10,2) DEFAULT NULL,
+  `dispensed_date` DATE          DEFAULT NULL,
+  `received_by`    VARCHAR(150)  DEFAULT NULL,
+  -- Set together with examinations.archived_at when the exam it was issued
+  -- from is archived — see the note on consultations.archived_at.
+  `archived_at`    DATETIME      DEFAULT NULL,
   PRIMARY KEY (`id`),
   FOREIGN KEY (`patient_id`) REFERENCES `patients`(`id`) ON DELETE CASCADE,
   FOREIGN KEY (`doctor_id`)  REFERENCES `doctors`(`id`)  ON DELETE CASCADE
@@ -445,6 +480,12 @@ CREATE TABLE IF NOT EXISTS `clinic_settings` (
   `max_advance_booking`           VARCHAR(20)  NOT NULL DEFAULT '3 months',
   `min_advance_booking`           VARCHAR(20)  NOT NULL DEFAULT '1 day',
   `max_appts_per_doctor_per_day`  SMALLINT UNSIGNED NOT NULL DEFAULT 12,
+  -- Caps how many appointments ONE patient can hold on the same day —
+  -- separate from the per-doctor capacity cap above. Guards against a
+  -- patient accidentally (or deliberately) submitting several same-day
+  -- requests across different doctors/times. Self-service bookings only;
+  -- admin/staff keep discretion, same convention as min_advance_booking.
+  `max_appts_per_patient_per_day` SMALLINT UNSIGNED NOT NULL DEFAULT 1,
   `morning_start`                 VARCHAR(20)  NOT NULL DEFAULT '8:00 AM',
   `morning_end`                   VARCHAR(20)  NOT NULL DEFAULT '12:00 PM',
   `afternoon_start`               VARCHAR(20)  NOT NULL DEFAULT '1:00 PM',
@@ -454,6 +495,11 @@ CREATE TABLE IF NOT EXISTS `clinic_settings` (
   `gallery_max_photos`            TINYINT UNSIGNED  NULL     DEFAULT NULL,
   `founded_year`                  SMALLINT          NULL     DEFAULT NULL,
   `terms_content`                 MEDIUMTEXT        NULL     DEFAULT NULL,
+  -- Split out from terms_content — the Data Privacy Act (RA 10173) notice
+  -- used to be bundled into the same document/checkbox as the Terms &
+  -- Conditions; it's now its own admin-editable document and its own
+  -- separate consent checkbox on registration (see auth.js's DEFAULT_PRIVACY_MD).
+  `privacy_content`               MEDIUMTEXT        NULL     DEFAULT NULL,
   `appointment_policy_content`    MEDIUMTEXT        NULL     DEFAULT NULL,
   `reminder_time`                 VARCHAR(20)  NOT NULL DEFAULT '12:00 PM', -- day-before reminder send time
   `confirm_deadline_time`         VARCHAR(20)  NOT NULL DEFAULT '9:00 PM',  -- same-day confirm-or-auto-cancel deadline
@@ -477,11 +523,25 @@ CREATE TABLE IF NOT EXISTS `archived_records` (
 -- ── PHP Sessions (DB-backed so logins survive container restarts /
 --    multiple replicas on hosts like Railway, instead of relying on
 --    the local filesystem) ───────────────────────────────────────
+-- user_id/user_agent/ip_address/created_at back the Active Sessions
+-- feature (Settings > Active Sessions, every role) — a session row is
+-- tagged with its owner right after a successful login (see
+-- tagSessionOwner(), api/helpers.php) so a user can list and revoke their
+-- own signed-in devices, and so a password change can revoke every OTHER
+-- session on the account. These columns are separate from `data` (PHP's
+-- own opaque serialized session payload) — never parsed out of it, always
+-- looked up directly, so listing/revoking sessions never has to touch
+-- PHP's session serialization format at all.
 CREATE TABLE IF NOT EXISTS `sessions` (
-  `id`          VARCHAR(128) NOT NULL,
-  `data`        MEDIUMTEXT   NOT NULL,
-  `last_access` INT UNSIGNED NOT NULL DEFAULT 0,
-  PRIMARY KEY (`id`)
+  `id`          VARCHAR(128)  NOT NULL,
+  `data`        MEDIUMTEXT    NOT NULL,
+  `last_access` INT UNSIGNED  NOT NULL DEFAULT 0,
+  `user_id`     INT UNSIGNED  NULL     DEFAULT NULL,
+  `user_agent`  VARCHAR(255)  NULL     DEFAULT NULL,
+  `ip_address`  VARCHAR(45)   NULL     DEFAULT NULL,
+  `created_at`  DATETIME      NULL     DEFAULT NULL,
+  PRIMARY KEY (`id`),
+  INDEX `idx_user_id` (`user_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- ── Password Resets (forgot-password OTP + reset-token flow) ──────
@@ -615,5 +675,52 @@ CREATE TABLE IF NOT EXISTS `about_gallery` (
 --    dropping the columns that used to hold it — don't skip straight to
 --    the DROP COLUMN statements inside that file without the copy steps
 --    ahead of them).
+--    Prescription dispensing fields — the wizard's Dispensing step (Total
+--    Amount/Dispensed Date/Received By) was captured in the DOM but never
+--    actually saved anywhere; now persisted on `prescriptions`. Existing
+--    database:
+--    ALTER TABLE `prescriptions` ADD COLUMN `total_amount` DECIMAL(10,2) DEFAULT NULL;
+--    ALTER TABLE `prescriptions` ADD COLUMN `dispensed_date` DATE DEFAULT NULL;
+--    ALTER TABLE `prescriptions` ADD COLUMN `received_by` VARCHAR(150) DEFAULT NULL;
+--    Examinations can now be archived (Settings > Archives) instead of only
+--    ever being hard-deleted — same soft-delete convention already used by
+--    patients/admins/staff/doctors. Cascades to the visit's linked
+--    consultation/prescription so all three hide together, same as the
+--    existing permanent-delete cascade. Existing database:
+--    ALTER TABLE `examinations`  ADD COLUMN `archived_at` DATETIME DEFAULT NULL;
+--    ALTER TABLE `consultations` ADD COLUMN `archived_at` DATETIME DEFAULT NULL;
+--    ALTER TABLE `prescriptions` ADD COLUMN `archived_at` DATETIME DEFAULT NULL;
+--    Doctors can now carry an optional second credential (e.g. "Ocular
+--    Pharmacologist" + its own PRC accreditation number) shown on the
+--    Ophthalmic Clearance certificate. Existing database:
+--    ALTER TABLE `doctors` ADD COLUMN `secondary_credential` VARCHAR(100) DEFAULT NULL AFTER `prc_license`;
+--    ALTER TABLE `doctors` ADD COLUMN `secondary_prc` VARCHAR(50) DEFAULT NULL AFTER `secondary_credential`;
+--    New clinic-wide rule: max appointments one patient can hold per day
+--    (self-service bookings only), separate from the existing per-doctor
+--    cap. Existing database:
+--    ALTER TABLE `clinic_settings` ADD COLUMN `max_appts_per_patient_per_day` SMALLINT UNSIGNED NOT NULL DEFAULT 1 AFTER `max_appts_per_doctor_per_day`;
+--    Appointments now record how they were booked — 'online' (patient
+--    self-service or a claimed waitlist offer) vs 'walk-in' (admin/staff
+--    created it directly). Existing database:
+--    ALTER TABLE `appointments` ADD COLUMN `source` ENUM('online','walk-in') NOT NULL DEFAULT 'online' AFTER `status`;
+--    Data Privacy Act notice split out of the Terms & Conditions document —
+--    it's now its own admin-editable content and its own separate
+--    registration consent checkbox (see auth.js's DEFAULT_PRIVACY_MD /
+--    DEFAULT_TERMS_MD, now trimmed to just Terms & Conditions). Existing
+--    database:
+--    ALTER TABLE `clinic_settings` ADD COLUMN `privacy_content` MEDIUMTEXT NULL DEFAULT NULL AFTER `terms_content`;
+--    Multi-device Active Sessions — every login is tracked (not
+--    restricted), so the same account can stay signed in on several
+--    devices at once; each user can see and individually revoke their own
+--    sessions from Settings, and a password change auto-revokes every
+--    OTHER session on the account. Existing sessions created before this
+--    migration simply won't show up in anyone's Active Sessions list
+--    until their next login re-tags them — nobody gets signed out by
+--    running this. Existing database:
+--    ALTER TABLE `sessions` ADD COLUMN IF NOT EXISTS `user_id` INT UNSIGNED NULL DEFAULT NULL;
+--    ALTER TABLE `sessions` ADD COLUMN IF NOT EXISTS `user_agent` VARCHAR(255) NULL DEFAULT NULL AFTER `user_id`;
+--    ALTER TABLE `sessions` ADD COLUMN IF NOT EXISTS `ip_address` VARCHAR(45) NULL DEFAULT NULL AFTER `user_agent`;
+--    ALTER TABLE `sessions` ADD COLUMN IF NOT EXISTS `created_at` DATETIME NULL DEFAULT NULL AFTER `ip_address`;
+--    ALTER TABLE `sessions` ADD INDEX IF NOT EXISTS `idx_user_id` (`user_id`);
 
 SET FOREIGN_KEY_CHECKS = 1;

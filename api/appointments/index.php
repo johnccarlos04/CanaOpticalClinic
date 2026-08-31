@@ -35,6 +35,7 @@ function mapRow(array $r): array {
         'time'                => $r['time'],
         'type'                => $r['type']  ?? '',
         'status'              => $r['status'],
+        'source'              => $r['source'] ?? 'online',
         'notes'               => $r['notes'] ?? '',
         'cancellationReason'  => $r['cancellation_reason']  ?? null,
         'disapprovalReason'   => $r['disapproval_reason']   ?? null,

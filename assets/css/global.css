@@ -1816,6 +1816,12 @@ input[type="date"].reg-input::-webkit-datetime-edit-year-field {
   gap: 12px;
 }
 .page-header-left {}
+/* Right-side header cluster (button group + a caption below it, e.g. the
+   Dashboard's Waitlist/New Appointment buttons with the date underneath).
+   Desktop: right-aligned column. Mobile override further down un-aligns
+   it back to full width so it stacks the same clean way every other
+   page-header does (see the 480px block below). */
+.page-header-right { display: flex; flex-direction: column; align-items: flex-end; gap: 6px; }
 .page-title {
   font-family: 'Poppins', sans-serif;
   font-size: 1.5rem;
@@ -2299,39 +2305,12 @@ input[type="date"].reg-input::-webkit-datetime-edit-year-field {
 .btn-disapprove:hover { background: #fee2e2; border-color: #fca5a5; }
 .btn-disapprove:disabled { opacity: 0.6; cursor: not-allowed; }
 
-/* "Premium password UI" strength meter — live label + bar, then a single
-   compact row of requirement pills, instead of a 5-line checklist. Built
-   to fit inside .auth-form-panel's fixed-height, internally-scrolling
-   register/forgot-password cards (see that class's CSS comment) — the
-   old stacked checklist was the tallest single element on register's
-   Step 3, the tightest-fit screen in the app. */
-.pw-strength-block { margin: 10px 0 2px; }
-.pw-strength-row {
-  display: flex; align-items: center; justify-content: space-between;
-  font-size: 0.78rem; margin-bottom: 6px;
-}
-.pw-strength-label { color: #6B7280; font-weight: 600; }
-.pw-strength-word { font-weight: 700; min-height: 1em; }
-.pw-strength-bar {
-  height: 4px; border-radius: 999px; background: #E5E7EB;
-  overflow: hidden; margin-bottom: 10px;
-}
-.pw-strength-fill {
-  height: 100%; width: 0%; border-radius: inherit;
-  transition: width 0.25s ease, background 0.25s ease;
-}
-.pw-reqs-row { display: flex; flex-wrap: wrap; gap: 6px 14px; }
-.pw-req-pill {
-  display: inline-flex; align-items: center; gap: 5px;
-  font-size: 0.72rem; font-weight: 600; color: #9CA3AF;
-  transition: color 0.15s ease;
-}
-.pw-req-dot {
-  width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0;
-  background: #D1D5DB; transition: background 0.15s ease;
-}
-.pw-req-pill.met { color: #059669; }
-.pw-req-pill.met .pw-req-dot { background: #059669; }
+/* Live password policy checklist */
+.pw-checklist { display: flex; flex-direction: column; gap: 5px; margin: 8px 0 2px; }
+.pw-check-item { display: flex; align-items: center; gap: 7px; font-size: 0.78rem; color: #9CA3AF; transition: color 0.15s ease; }
+.pw-check-item svg { width: 14px; height: 14px; flex-shrink: 0; }
+.pw-check-item.met { color: #059669; }
+.pw-check-item.unmet { color: #DC2626; }
 
 .btn-ghost {
   display: inline-flex;
@@ -4166,6 +4145,14 @@ input[type="date"].form-input::-webkit-datetime-edit-year-field {
      squeezed together instead of the same clean full-width look every
      single-button page-header already has. Stack them instead. */
   .page-header-btn-group { flex-direction: column; }
+  /* .page-header-right (e.g. Dashboard's Waitlist/New Appointment cluster
+     with the date caption underneath) is a nested wrapper, one level
+     deeper than .page-header-btn-group itself — its own align-items:flex-end
+     (set above for desktop) stops it and its button group from stretching
+     to the full width the width:100% rule above already granted it, which
+     right-aligns the whole cluster into a narrow column instead of the
+     clean full-width stack every other page-header gets. Un-align it. */
+  .page-header-right { align-items: stretch; }
   /* Single-column cards: full width, compact */
   .stat-card { padding: 14px 18px; gap: 12px; align-items: center; min-height: unset; }
   .stat-info { min-width: 0; flex: 1; }
@@ -4208,26 +4195,48 @@ input[type="date"].form-input::-webkit-datetime-edit-year-field {
   body:has(.clearance-document) .clearance-document,
   body:has(.clearance-document) .clearance-document * { visibility: visible; }
 
-  /* Center the certificate vertically on the page. It's pulled out of
-     normal flow (position:absolute) because its ancestors are only
+  /* Lay the certificate out from the top of the page, like the reference
+     document it's modeled on — not vertically centered. It's pulled out
+     of normal flow (position:absolute) because its ancestors are only
      visibility:hidden, not display:none, so they'd otherwise still
-     reserve their normal layout space and push/misplace it. top:50% +
-     translateY(-50%) centers it against the page box itself (the
-     containing block for an absolutely-positioned element with no
-     positioned ancestors), regardless of how tall the content is. */
+     reserve their normal layout space and push/misplace it; top:0 anchors
+     it to the page box itself (the containing block for an absolutely-
+     positioned element with no positioned ancestors) starting at the
+     top margin instead of floating mid-page. */
+  /* Padding here should mirror the on-screen preview's own
+     padding:48px 56px (≈13mm/15mm at 96dpi), not an arbitrary print
+     margin — 40mm of side padding used to squeeze the content into a
+     much narrower column than the modal shows, so the printed page
+     looked visibly smaller/more whitespace-heavy than the preview even
+     though it's the exact same markup. */
   .clearance-document {
     position: absolute;
     left: 0;
-    top: 50%;
-    transform: translateY(-50%);
+    top: 0;
     width: 100%;
-    padding: 35mm 40mm;
+    padding: 13mm 15mm;
     font-size: 12pt;
     background: #fff !important;
   }
 
-  /* Ensure all text prints black */
+  /* Ensure all text prints black — except the orange mobile-number bar
+     (below), which is a deliberate branded banner in the reference
+     document this was built to match, not incidental screen color. */
   .clearance-document * { color: #000 !important; }
+
+  /* Chrome/Edge drop an element's own background-color when printing
+     unless explicitly told to keep it — without this the branded orange
+     mobile-number bar printed as a plain white strip with invisible
+     white-on-white text, even though the on-screen preview shows it
+     correctly. Scoped to the one element that actually needs a printed
+     background, not the whole document, so nothing else in the ": ensure
+     all text prints black" rule above gets second-guessed. */
+  .clearance-mobile-bar {
+    background: #E8760A !important;
+    color: #fff !important;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
 
   /* Textareas look like plain typed text */
   .clearance-document textarea,

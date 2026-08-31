@@ -137,13 +137,20 @@ try {
         $coatingJson = is_array($lensCoating) ? json_encode($lensCoating) : '[]';
         $expiryDate  = date('Y-m-d', strtotime($date . ' +1 year'));
 
+        // Dispensing (Total Amount/Dispensed Date/Received By) — only
+        // meaningful alongside an actually-issued prescription, so it's
+        // captured here rather than on examinations.
+        $totalAmountRaw = $b['totalAmount'] ?? '';
+        $totalAmount = ($totalAmountRaw !== '' && $totalAmountRaw !== null) ? (float)$totalAmountRaw : null;
+
         $pdo->prepare(
             'INSERT INTO prescriptions
                (id, patient_id, doctor_id, exam_id, date, expiry_date, status, prc_license,
                 od_sph, od_cyl, od_axis, od_add,
                 os_sph, os_cyl, os_axis, os_add, pd,
-                lens_type, lens_material, frame_selection, lens_coating)
-             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)'
+                lens_type, lens_material, frame_selection, lens_coating,
+                total_amount, dispensed_date, received_by)
+             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)'
         )->execute([
             $rxId, $patientId, $doctorId ?: null, $examId, $date, $expiryDate, 'valid', $prcLicense,
             $od['sph']  ?? '', $od['cyl']  ?? '', $od['axis'] ?? '', $od['add']  ?? '',
@@ -153,6 +160,9 @@ try {
             $b['lensMaterial']   ?? '',
             $b['frameSelection'] ?? '',
             $coatingJson,
+            $totalAmount,
+            !empty($b['dispensedDate']) ? $b['dispensedDate'] : null,
+            $b['receivedBy'] ?? null,
         ]);
     }
 
@@ -198,6 +208,19 @@ try {
     ]);
 
     $pdo->commit();
+
+    // Doctor flagged this visit as needing a follow-up — nothing else in
+    // the app creates that follow-up appointment automatically (deliberately;
+    // scheduling still goes through the normal booking flow), so admin/staff
+    // need to be told to go set one up rather than this just sitting quietly
+    // on the consultation record until someone happens to notice it.
+    if (!empty($b['followUpDate'])) {
+        $fmtFollowUp = date('M j, Y', strtotime($b['followUpDate']));
+        notifyAdminStaff($pdo, 'follow_up_needed', 'Follow-up Consultation Needed',
+            "{$doctorName} recommends a follow-up for {$ptName} on {$fmtFollowUp}. Please schedule the appointment.",
+            $patientId
+        );
+    }
 
     jsonResponse(['success' => true, 'id' => $examId, 'consultationId' => $conId, 'rxId' => $rxId]);
 

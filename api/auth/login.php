@@ -104,6 +104,10 @@ $_SESSION['user_id']    = (int)$user['id'];
 $_SESSION['profile_id'] = $result['profile']['id'];
 $_SESSION['role']       = $role;
 
+// Tag this session row with its owner + device/IP so it shows up in that
+// user's own Settings > Active Sessions list.
+tagSessionOwner($pdo, (int)$user['id']);
+
 // Record this login time (used for 1-year inactivity check)
 try {
     $pdo->prepare('UPDATE users SET last_login_at = NOW() WHERE id = ?')

@@ -5,76 +5,43 @@
 // ================================================================
 
 // ── Password policy (shared by every screen that sets a password) ─
-// Order matches the compact pill row's left-to-right reading order —
-// "8 Chars · A-Z · a-z · 123 · @#$" — not validation priority.
 const PW_POLICY_RULES = [
-  { key: 'len',     shortLabel: '8 Chars', label: 'At least 8 characters',                test: v => v.length >= 8 },
-  { key: 'upper',   shortLabel: 'A-Z',     label: 'One uppercase letter (A-Z)',           test: v => /[A-Z]/.test(v) },
-  { key: 'lower',   shortLabel: 'a-z',     label: 'One lowercase letter (a-z)',           test: v => /[a-z]/.test(v) },
-  { key: 'num',     shortLabel: '123',     label: 'One number (0-9)',                     test: v => /[0-9]/.test(v) },
-  { key: 'special', shortLabel: '@#$',     label: 'One special character (!@#$%^&*...)',  test: v => /[^A-Za-z0-9]/.test(v) },
+  { key: 'len',   label: 'At least 8 characters',     test: v => v.length >= 8 },
+  { key: 'lower', label: 'One lowercase letter (a-z)', test: v => /[a-z]/.test(v) },
+  { key: 'upper', label: 'One uppercase letter (A-Z)', test: v => /[A-Z]/.test(v) },
+  { key: 'num',   label: 'One number (0-9)',           test: v => /[0-9]/.test(v) },
+  { key: 'special', label: 'One special character (!@#$%^&*...)', test: v => /[^A-Za-z0-9]/.test(v) },
 ]
 function pwPolicyValid(v) {
   return PW_POLICY_RULES.every(r => r.test(v || ''))
 }
-// "Premium password UI" pattern — a live strength label + bar above a
-// single-row set of compact requirement pills, instead of a 5-line
-// checklist. Replaced the old stacked checklist for two reasons: it reads
-// faster at a glance (one strength word instead of scanning 5 lines), and
-// it's dramatically shorter — the register wizard's Step 3 (password +
-// confirm + terms, all inside a fixed-height, internally-scrolling card;
-// see .auth-form-panel's CSS comment) was the tightest-fit screen in the
-// app for exactly this reason.
 function pwChecklistHtml(idPrefix) {
-  return `
-    <div class="pw-strength-block" id="${idPrefix}-checklist">
-      <div class="pw-strength-row">
-        <span class="pw-strength-label">Password Strength</span>
-        <span class="pw-strength-word" id="${idPrefix}-strength-word"></span>
-      </div>
-      <div class="pw-strength-bar"><div class="pw-strength-fill" id="${idPrefix}-strength-fill"></div></div>
-      <div class="pw-reqs-row">` +
-        PW_POLICY_RULES.map(r => `
-        <span class="pw-req-pill" id="${idPrefix}-chk-${r.key}" title="${r.label}">
-          <span class="pw-req-dot"></span>${r.shortLabel}
-        </span>`).join('') +
-      `</div>
-    </div>`
+  return `<div class="pw-checklist" id="${idPrefix}-checklist">` +
+    PW_POLICY_RULES.map(r => `
+      <div class="pw-check-item" id="${idPrefix}-chk-${r.key}">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/></svg>
+        <span>${r.label}</span>
+      </div>`).join('') +
+    `</div>`
 }
-// 5 criteria → 3 tiers (Weak/Fair/Strong) — matches the reference pattern's
-// single strength word rather than mapping every possible count to its own
-// label, which reads as noisier without actually being more informative.
-const PW_STRENGTH_TIERS = [
-  { max: 2, word: 'Weak',   color: '#DC2626', fill: 25  },
-  { max: 4, word: 'Fair',   color: '#D97706', fill: 60  },
-  { max: 5, word: 'Strong', color: '#059669', fill: 100 },
-]
 function updatePwChecklist(idPrefix, value) {
   const v = value || ''
-  const hasInput = v.length > 0
-  let metCount = 0
   PW_POLICY_RULES.forEach(r => {
-    const pill = document.getElementById(`${idPrefix}-chk-${r.key}`)
-    const met  = r.test(v)
-    if (met) metCount++
-    if (pill) pill.classList.toggle('met', met)
+    const item = document.getElementById(`${idPrefix}-chk-${r.key}`)
+    if (!item) return
+    const svg = item.querySelector('svg')
+    const met = r.test(v)
+    const hasInput = v.length > 0
+    item.classList.toggle('met', met)
+    item.classList.toggle('unmet', hasInput && !met)
+    if (svg) {
+      svg.innerHTML = met
+        ? '<polyline points="20 6 9 17 4 12"/>'
+        : hasInput
+          ? '<line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>'
+          : '<circle cx="12" cy="12" r="9"/>'
+    }
   })
-
-  const wordEl = document.getElementById(`${idPrefix}-strength-word`)
-  const fillEl = document.getElementById(`${idPrefix}-strength-fill`)
-  if (!wordEl || !fillEl) return
-
-  if (!hasInput) {
-    wordEl.textContent = ''
-    fillEl.style.width      = '0%'
-    fillEl.style.background = '#E5E7EB'
-    return
-  }
-  const tier = PW_STRENGTH_TIERS.find(t => metCount <= t.max) || PW_STRENGTH_TIERS[PW_STRENGTH_TIERS.length - 1]
-  wordEl.textContent      = tier.word
-  wordEl.style.color      = tier.color
-  fillEl.style.width      = tier.fill + '%'
-  fillEl.style.background = tier.color
 }
 window.pwPolicyValid     = pwPolicyValid
 window.pwChecklistHtml   = pwChecklistHtml
@@ -172,7 +139,12 @@ async function handleLogin() {
 }
 
 // ── Logout ───────────────────────────────────────────────────────
-async function logout() {
+// `reason`, when passed, is shown on the login screen after landing there
+// — used by _handleSessionRevoked() below so a device that gets signed
+// out remotely (another device's Log Out, or a password change) lands on
+// a login screen that actually explains why, instead of just silently
+// stopping working. A normal manual "Sign Out" click passes nothing.
+async function logout(reason) {
   _stopSystemPolling()
   try { await fetch('api/auth/logout.php', { method: 'POST' }) } catch (_) {}
 
@@ -195,6 +167,7 @@ async function logout() {
   const rememberEl = document.getElementById('login-remember')
   if (rememberEl) rememberEl.checked = false
   _prefillRememberedEmail()
+  if (reason) _showLoginError(reason)
 }
 
 // ── Register ─────────────────────────────────────────────────────
@@ -220,7 +193,11 @@ async function handleRegister() {
     errEl.style.display = 'flex'; return
   }
   if (!document.getElementById('reg-terms-agree')?.checked) {
-    errMsg.textContent = 'Please read and agree to the Terms & Conditions and Data Privacy Act before registering.'
+    errMsg.textContent = 'Please read and agree to the Terms & Conditions before registering.'
+    errEl.style.display = 'flex'; return
+  }
+  if (!document.getElementById('reg-privacy-agree')?.checked) {
+    errMsg.textContent = 'Please read and agree to the Data Privacy Act Notice before registering.'
     errEl.style.display = 'flex'; return
   }
   if (pass !== confirm) {
@@ -268,7 +245,7 @@ async function handleRegister() {
 // Parsed by renderTermsMarkdown() (db.js) into the same <h4>/<p>/<ul> HTML
 // this used to be hardcoded as.
 const DEFAULT_TERMS_MD = `## 1. Acceptance of Terms
-By creating a patient account with Cana Optical Clinic ("the Clinic"), you agree to be bound by these Terms & Conditions and the Data Privacy Notice below. If you do not agree, please do not proceed with registration.
+By creating a patient account with Cana Optical Clinic ("the Clinic"), you agree to be bound by these Terms & Conditions. If you do not agree, please do not proceed with registration.
 
 ## 2. Account Registration
 You must provide accurate, current, and complete information during registration. You are responsible for keeping your password confidential and for all activity under your account. Notify the Clinic immediately if you suspect unauthorized use.
@@ -282,8 +259,20 @@ Appointment requests submitted through this system are subject to confirmation b
 ## 5. Use of the Platform
 You agree to use this system only for legitimate healthcare purposes related to your own care. Misuse — including attempting to access another patient's records or interfering with the system's normal operation — may result in account suspension.
 
-## 6. Data Privacy Act Notice (Republic Act No. 10173)
-In compliance with the Data Privacy Act of 2012 (RA 10173) and its Implementing Rules and Regulations, the Clinic collects the personal and sensitive personal information you provide during registration (e.g. name, date of birth, address, contact details) and through your subsequent care (e.g. examination results, diagnoses, prescriptions). This information is collected and processed solely for:
+## 6. Changes to these Terms
+The Clinic may update these Terms & Conditions from time to time. Continued use of your account after changes are posted constitutes acceptance of the revised terms.
+`
+
+// Kept as its own document/checkbox, separate from the Terms & Conditions
+// above — a Data Privacy Act consent bundled inside a generic "I agree to
+// the Terms" checkbox doesn't read as the patient having actually consented
+// to it specifically, which is the whole point of calling it out under RA
+// 10173. Mirrors api/helpers.php's DEFAULT_PRIVACY_MD exactly.
+const DEFAULT_PRIVACY_MD = `## 1. Overview
+This Data Privacy Act Notice explains how Cana Optical Clinic ("the Clinic") collects, uses, stores, and protects your personal and sensitive personal information, in compliance with the Data Privacy Act of 2012 (Republic Act No. 10173) and its Implementing Rules and Regulations.
+
+## 2. Information We Collect and Why
+The Clinic collects the personal and sensitive personal information you provide during registration (e.g. name, date of birth, address, contact details) and through your subsequent care (e.g. examination results, diagnoses, prescriptions). This information is collected and processed solely for:
 - Creating and maintaining your patient record
 - Scheduling and managing appointments
 - Providing optical examination, diagnosis, and treatment
@@ -291,16 +280,16 @@ In compliance with the Data Privacy Act of 2012 (RA 10173) and its Implementing 
 - Communicating with you regarding your account, appointments, or care
 - Complying with legal and regulatory requirements
 
-## 7. Storage and Security
+## 3. Storage and Security
 Your data is stored on secured servers with access restricted to authorized clinic personnel (admin, staff, and your attending doctor) who need it to perform their duties. We apply reasonable organizational, physical, and technical safeguards to protect your information against unauthorized access, alteration, disclosure, or destruction.
 
-## 8. Data Sharing
+## 4. Data Sharing
 The Clinic does not sell or rent your personal information. Your data may only be shared with third parties when required by law, when necessary to provide your care (e.g. referrals), or with your explicit consent.
 
-## 9. Data Retention
+## 5. Data Retention
 Your personal and health records are retained for as long as your account is active, and for the period required by applicable healthcare record-keeping regulations afterward, after which they are securely disposed of.
 
-## 10. Your Rights as a Data Subject
+## 6. Your Rights as a Data Subject
 Under the Data Privacy Act, you have the right to:
 - Be informed of how your data is collected and processed
 - Access the personal data the Clinic holds about you
@@ -311,17 +300,14 @@ Under the Data Privacy Act, you have the right to:
 
 To exercise any of these rights, please contact the clinic directly using the contact details on our website.
 
-## 11. Consent
-By checking "I agree" and completing registration, you acknowledge that you have read and understood this notice, and you consent to the collection, use, storage, and processing of your personal and sensitive personal information as described above, for the purpose of receiving care from Cana Optical Clinic — and you are entrusting your credentials and personal information to the Clinic on that basis.
-
-## 12. Changes to this Notice
-The Clinic may update these Terms & Conditions and this Data Privacy Notice from time to time. Continued use of your account after changes are posted constitutes acceptance of the revised terms.
+## 7. Consent and Changes to this Notice
+By checking "I agree" and completing registration, you acknowledge that you have read and understood this notice, and you consent to the collection, use, storage, and processing of your personal and sensitive personal information as described above, for the purpose of receiving care from Cana Optical Clinic — and you are entrusting your credentials and personal information to the Clinic on that basis. The Clinic may update this notice from time to time; continued use of your account after changes are posted constitutes acceptance of the revised notice.
 `
 
 function openTermsModal() {
   window.showModal(`
     <div class="modal-header">
-      <div class="modal-title">${window.icon ? window.icon('shield','icon-sm') : ''} Terms &amp; Conditions and Data Privacy Act</div>
+      <div class="modal-title">${window.icon ? window.icon('shield','icon-sm') : ''} Terms &amp; Conditions</div>
       <button class="modal-close" onclick="window.closeModal()">&times;</button>
     </div>
     <div class="modal-body">
@@ -366,11 +352,89 @@ function acceptTerms() {
 
   const cb = document.getElementById('reg-terms-agree')
   if (cb) { cb.disabled = false; cb.checked = true }
-  const hint = document.getElementById('reg-terms-hint')
-  if (hint) hint.style.display = 'none'
+  _regUpdateConsentHint()
   window.closeModal()
 }
 window.acceptTerms = acceptTerms
+
+// Single combined hint for both consent checkboxes (Terms & Conditions,
+// Data Privacy Act Notice) — swaps its text to name whichever document(s)
+// are still locked instead of showing two near-identical stacked boxes,
+// which read as cluttered/repetitive once there were two checkboxes to
+// gate instead of one. Called on every lock-state change for either
+// checkbox (accept*(), showRegister()'s reset).
+function _regUpdateConsentHint() {
+  const termsCb   = document.getElementById('reg-terms-agree')
+  const privacyCb = document.getElementById('reg-privacy-agree')
+  const hint       = document.getElementById('reg-terms-hint')
+  const hintText   = document.getElementById('reg-terms-hint-text')
+  if (!hint || !hintText) return
+
+  const termsLocked   = !!(termsCb && termsCb.disabled)
+  const privacyLocked = !!(privacyCb && privacyCb.disabled)
+
+  if (!termsLocked && !privacyLocked) {
+    hint.style.display = 'none'
+    return
+  }
+  hint.style.display = 'flex'
+  hintText.innerHTML = (termsLocked && privacyLocked)
+    ? 'Click the Terms &amp; Conditions and Data Privacy Act Notice links above, and read each to the bottom, to unlock their checkboxes.'
+    : termsLocked
+      ? 'Click the Terms &amp; Conditions link above and read to the bottom to unlock its checkbox.'
+      : 'Click the Data Privacy Act Notice link above and read to the bottom to unlock its checkbox.'
+}
+window._regUpdateConsentHint = _regUpdateConsentHint
+
+// ── Data Privacy Act modal — separate document, separate checkbox, same
+// read-to-the-bottom-to-unlock mechanic as Terms & Conditions above. ────
+function openPrivacyModal() {
+  window.showModal(`
+    <div class="modal-header">
+      <div class="modal-title">${window.icon ? window.icon('shield','icon-sm') : ''} Data Privacy Act Notice</div>
+      <button class="modal-close" onclick="window.closeModal()">&times;</button>
+    </div>
+    <div class="modal-body">
+      <div class="terms-body" id="privacy-scroll-body" onscroll="window._checkPrivacyScroll()">
+        ${renderTermsMarkdown(window._privacyContentMd || DEFAULT_PRIVACY_MD)}
+      </div>
+    </div>
+    <div class="modal-footer">
+      <span class="terms-scroll-hint" id="privacy-scroll-hint">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><line x1="12" y1="5" x2="12" y2="19"/><polyline points="19 12 12 19 5 12"/></svg>
+        Scroll to the bottom to continue
+      </span>
+      <button class="btn-secondary" onclick="window.closeModal()">Cancel</button>
+      <button class="btn-primary" id="privacy-agree-btn" disabled onclick="window.acceptPrivacy()">I Agree &amp; Continue</button>
+    </div>`, 'modal-lg')
+
+  setTimeout(() => window._checkPrivacyScroll(), 50)
+}
+window.openPrivacyModal = openPrivacyModal
+
+function _checkPrivacyScroll() {
+  const body = document.getElementById('privacy-scroll-body')
+  const btn  = document.getElementById('privacy-agree-btn')
+  if (!body || !btn) return
+  const reachedBottom = body.scrollTop + body.clientHeight >= body.scrollHeight - 24
+  if (reachedBottom && btn.disabled) {
+    btn.disabled = false
+    const hint = document.getElementById('privacy-scroll-hint')
+    if (hint) hint.style.display = 'none'
+  }
+}
+window._checkPrivacyScroll = _checkPrivacyScroll
+
+function acceptPrivacy() {
+  const btn = document.getElementById('privacy-agree-btn')
+  if (btn && btn.disabled) return
+
+  const cb = document.getElementById('reg-privacy-agree')
+  if (cb) { cb.disabled = false; cb.checked = true }
+  _regUpdateConsentHint()
+  window.closeModal()
+}
+window.acceptPrivacy = acceptPrivacy
 
 // ── Multi-step registration wizard ────────────────────────────────
 window._regStep = 1
@@ -673,8 +737,9 @@ function showRegister() {
   document.getElementById('reg-error').style.display = 'none'
   const termsCb = document.getElementById('reg-terms-agree')
   if (termsCb) { termsCb.checked = false; termsCb.disabled = true }
-  const termsHint = document.getElementById('reg-terms-hint')
-  if (termsHint) termsHint.style.display = 'flex'
+  const privacyCb = document.getElementById('reg-privacy-agree')
+  if (privacyCb) { privacyCb.checked = false; privacyCb.disabled = true }
+  _regUpdateConsentHint()
   window._regStep = 0
   _regGoToStep(1)
 }
@@ -1675,6 +1740,11 @@ function fpTogglePw(inputId, iconId) {
 
 // ── Private helpers ───────────────────────────────────────────────
 function _bootAfterAuth(role, user) {
+  // Fresh session — clear the "already handled a forced logout" latch
+  // (_handleSessionRevoked) from any previous session, so a future
+  // revocation this session can trigger it again.
+  _sessionRevokedHandled = false
+
   window.state.role         = role
   window.state.user         = user
   window.state.selectedRole = role
@@ -1917,15 +1987,19 @@ async function _syncClinicSettings() {
       videoUrl: s.videoUrl ?? null,
       galleryMaxPhotos: s.galleryMaxPhotos ?? null,
       termsContent: s.termsContent ?? null,
+      privacyContent: s.privacyContent ?? null,
       appointmentPolicyContent: s.appointmentPolicyContent ?? null
     })
-    // Keep the pre-auth global in sync too, so an admin editing this mid-session
-    // (or re-opening the registration screen after logging out) sees their own
-    // change immediately rather than the stale value from page load.
-    if (clinicInfo.termsContent) window._termsContentMd = clinicInfo.termsContent
+    // Keep the pre-auth globals in sync too, so an admin editing this
+    // mid-session (or re-opening the registration screen after logging out)
+    // sees their own change immediately rather than the stale value from
+    // page load.
+    if (clinicInfo.termsContent)   window._termsContentMd   = clinicInfo.termsContent
+    if (clinicInfo.privacyContent) window._privacyContentMd = clinicInfo.privacyContent
     Object.assign(consultationSettings, {
       defaultDuration: s.defaultDuration, maxAdvanceBooking: s.maxAdvanceBooking,
       minAdvanceBooking: s.minAdvanceBooking, maxApptsPerDoctorPerDay: s.maxApptsPerDoctorPerDay,
+      maxApptsPerPatientPerDay: s.maxApptsPerPatientPerDay,
       morningStart: s.morningStart, morningEnd: s.morningEnd,
       afternoonStart: s.afternoonStart, afternoonEnd: s.afternoonEnd,
       lunchBreak: s.lunchBreak, clinicDays: s.clinicDays,
@@ -1981,6 +2055,13 @@ let _pollSkipTicks  = 0
 async function _syncNotifications() {
   try {
     const r = await fetch('api/notifications/index.php')
+    // 401 specifically means "not authenticated" (api/notifications/index.php's
+    // own !isset($_SESSION['user_id']) check) — during an active poll tick
+    // that can only mean this session died server-side since the last
+    // successful tick: revoked from another device, or a password change.
+    // Distinct from any other failure (500, network blip), which should
+    // just back off and retry rather than assume the worst.
+    if (r.status === 401) { _handleSessionRevoked(); return false }
     if (!r.ok) return false
     const d = await r.json()
     if (!d.success) return false
@@ -1992,6 +2073,19 @@ async function _syncNotifications() {
   } catch (_) { return false }
 }
 window._syncNotifications = _syncNotifications
+
+// A device finding out (via the 30s poll above) that it's been signed
+// out remotely — by a Log Out from another device in Active Sessions, or
+// by a password change revoking other sessions. Guarded so a burst of
+// poll ticks in flight when this first fires can't call logout() more
+// than once.
+let _sessionRevokedHandled = false
+function _handleSessionRevoked() {
+  if (_sessionRevokedHandled) return
+  _sessionRevokedHandled = true
+  logout('You were signed out because this session ended — on another device, or your password was changed. Please sign in again.')
+}
+window._handleSessionRevoked = _handleSessionRevoked
 
 async function _systemPollTick() {
   // Don't poll a tab the user isn't looking at

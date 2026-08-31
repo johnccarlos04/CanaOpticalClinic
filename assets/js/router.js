@@ -15,6 +15,16 @@ var state = {
   afterRender: null
 }
 
+// ── Navigation history (for goBack / dynamic breadcrumbs) ──────────
+// A plain back-stack of {page, params, filter} snapshots, pushed by every
+// real navigate() call. goBack() pops it and re-navigates without pushing
+// again — so "Back" always returns to wherever the user actually came
+// from (the Waitlist button on Dashboard vs. on Appointments, a patient
+// reached from Patient Records vs. from Exam Records, etc.) instead of a
+// single hardcoded parent that's only right some of the time.
+var _navHistory = []
+var _suppressHistoryPush = false
+
 // ── Sidebar nav config per role ─────────────────────────────────
 const SIDEBAR_CONFIG = {
   admin: [
@@ -55,7 +65,8 @@ const SIDEBAR_CONFIG = {
         { key: 'admin-settings', filter: 'services',     label: 'Services' },
         { key: 'admin-settings', filter: 'consultation', label: 'Consultation Settings' },
         { key: 'admin-settings', filter: 'terms',        label: 'Terms & Policies' },
-        { key: 'admin-settings', filter: 'archives',     label: 'Archives' }
+        { key: 'admin-settings', filter: 'archives',     label: 'Archives' },
+        { key: 'active-sessions',                        label: 'Security & Sign-in' }
       ]
     }
   ],
@@ -80,7 +91,12 @@ const SIDEBAR_CONFIG = {
     { key: 'schedule',             label: 'Doctor Schedule',  icon: 'clock' },
     { key: 'admin-reports',        label: 'Reports',          icon: 'bar-chart' },
     { section: 'Account' },
-    { key: 'staff-settings',       label: 'Settings',         icon: 'settings' }
+    { key: 'staff-settings',       label: 'Settings',         icon: 'settings',
+      children: [
+        { key: 'staff-settings',   label: 'My Profile' },
+        { key: 'active-sessions',  label: 'Security & Sign-in' }
+      ]
+    }
   ],
   doctor: [
     { section: 'Overview' },
@@ -103,7 +119,12 @@ const SIDEBAR_CONFIG = {
     { key: 'patient-list',         label: 'Patient Records',  icon: 'file-text' },
     { key: 'doctor-schedule',      label: 'My Schedule',      icon: 'clock' },
     { section: 'Account' },
-    { key: 'doctor-settings',      label: 'Settings',         icon: 'settings' }
+    { key: 'doctor-settings',      label: 'Settings',         icon: 'settings',
+      children: [
+        { key: 'doctor-settings',  label: 'My Profile' },
+        { key: 'active-sessions',  label: 'Security & Sign-in' }
+      ]
+    }
   ],
   patient: [
     { section: 'Overview' },
@@ -130,7 +151,12 @@ const SIDEBAR_CONFIG = {
       ]
     },
     { section: 'Account' },
-    { key: 'patient-settings',     label: 'Settings',         icon: 'settings' }
+    { key: 'patient-settings',     label: 'Settings',         icon: 'settings',
+      children: [
+        { key: 'patient-settings', label: 'My Profile' },
+        { key: 'active-sessions',  label: 'Security & Sign-in' }
+      ]
+    }
   ]
 }
 
@@ -141,6 +167,16 @@ const ROLE_DASHBOARD = {
   staff:   'staff-dashboard',
   doctor:  'doctor-dashboard',
   patient: 'patient-dashboard'
+}
+
+// True if `page` is one of the role's own sidebar destinations (top-level
+// or a filtered child) — used to tell "primary section" navigation apart
+// from a "detail" page (Patient Profile, the exam wizard, Waitlist, QR
+// Scanner, …) that's only ever reached via a button, for the topbar
+// breadcrumb's dynamic back-link (see renderTopbar()).
+function _isSidebarPage(role, page) {
+  const config = SIDEBAR_CONFIG[role] || []
+  return config.some(item => item.key === page || (item.children && item.children.some(c => c.key === page)))
 }
 
 // Breadcrumb labels
@@ -186,7 +222,8 @@ const PAGE_LABELS = {
   'patient-consultations': 'Consultations',
   'patient-notifications': 'Notifications',
   'notifications':         'Notifications',
-  'patient-settings':      'Settings'
+  'patient-settings':      'Settings',
+  'active-sessions':       'Security & Sign-in'
 }
 
 // ── Navigate ────────────────────────────────────────────────────
@@ -197,6 +234,16 @@ function navigate(page, params = {}) {
 
   // Default admin-settings to profile section
   if (page === 'admin-settings' && params.filter === undefined) params.filter = 'profile'
+
+  // Push the page we're LEAVING onto the back-stack, before switching to
+  // the new one — skipped for goBack()'s own re-navigation (that's
+  // consuming a history entry, not creating a new one) and for a no-op
+  // "navigate to the same place" call.
+  if (!_suppressHistoryPush && state.page &&
+      (state.page !== page || JSON.stringify(state.params) !== JSON.stringify(params))) {
+    _navHistory.push({ page: state.page, params: state.params, filter: state.filter })
+    if (_navHistory.length > 50) _navHistory.shift()
+  }
 
   if (params.filter !== undefined) state.filter = params.filter
   state.page   = page
@@ -275,6 +322,26 @@ function navigate(page, params = {}) {
   // not from wherever the interval happened to be in its current cycle.
   if (window._resetSystemPoll) window._resetSystemPoll()
 }
+window.navigate = navigate
+
+// ── Go Back ─────────────────────────────────────────────────────
+// Pops the back-stack and re-navigates there. Every "‹ Back" button and
+// the breadcrumb's clickable segment call this instead of a hardcoded
+// destination, so they always return to wherever the user actually came
+// from. fallbackPage/fallbackParams are only used when there's no history
+// to pop (e.g. the page was opened directly via a deep link/refresh).
+function goBack(fallbackPage, fallbackParams) {
+  if (_navHistory.length) {
+    const prev = _navHistory.pop()
+    state.filter = prev.filter
+    _suppressHistoryPush = true
+    navigate(prev.page, prev.params || {})
+    _suppressHistoryPush = false
+  } else if (fallbackPage) {
+    navigate(fallbackPage, fallbackParams || {})
+  }
+}
+window.goBack = goBack
 
 // ── renderPage ──────────────────────────────────────────────────
 // opts.silent: skip the fade-up entrance animation — used by background
@@ -321,6 +388,7 @@ function renderPage(opts) {
     'patient-notifications': Pages.pagePatientNotifications,
     'notifications':         Pages.pagePatientNotifications,
     'patient-settings':      Pages.pagePatientSettings,
+    'active-sessions':       Pages.pageActiveSessions,
     'scan-qr':               Pages.pageScanQR
   }
 
@@ -537,7 +605,30 @@ function renderTopbar() {
         : `window.navigate('${page}')`
       crumbEl.innerHTML = `<span class="topbar-crumb-link" onclick="${midOnclick}">${label}</span>${chevron}<strong>${subLabel}</strong>`
     } else {
-      crumbEl.innerHTML = `<strong>${label}${params.patientName ? ` — ${params.patientName}` : ''}</strong>`
+      // 'new-examination' is both a sidebar link (the blank "pick a patient"
+      // landing screen) AND the page a doctor lands on mid-wizard for a
+      // specific patient (e.g. "Start Examination" from Dashboard) — same
+      // page key, very different context. Only the former is really a
+      // sidebar "home base"; once a patient is loaded it's a detail page
+      // like any other and should get the same back-crumb treatment.
+      const isBlankSidebarLanding = !(page === 'new-examination' && params.patientId)
+      const patientName = params.patientName ||
+        (params.patientId && window.patients ? window.patients.find(p => p.id === params.patientId)?.name : null)
+      const currentLabel = `${label}${patientName ? ` — ${patientName}` : ''}`
+      // Pages not reachable from the sidebar itself (Patient Profile, the
+      // exam wizard, Waitlist, QR Scanner, etc.) are always drilled into
+      // from some button — show a clickable crumb back to wherever that
+      // actually was (from the back-stack), not a fixed guessed parent.
+      // Sidebar-navigable pages skip this: hopping between top-level
+      // sections isn't a "drill up" and showing "last page > this page"
+      // there would just be noise.
+      const prevEntry = _navHistory.length ? _navHistory[_navHistory.length - 1] : null
+      if ((!_isSidebarPage(role, page) || !isBlankSidebarLanding) && prevEntry && (prevEntry.page !== page)) {
+        const prevLabel = PAGE_LABELS[prevEntry.page] || prevEntry.page
+        crumbEl.innerHTML = `<span class="topbar-crumb-link" onclick="window.goBack()">${prevLabel}</span>${chevron}<strong>${currentLabel}</strong>`
+      } else {
+        crumbEl.innerHTML = `<strong>${currentLabel}</strong>`
+      }
     }
   }
 
@@ -607,8 +698,8 @@ function _notifTimeAgo(dateStr) {
 }
 window._notifTimeAgo = _notifTimeAgo
 
-const _NOTIF_ICON  = { approved:'check-circle', cancelled:'x-circle', disapproved:'x-circle', rescheduled:'calendar', new_appointment:'calendar', reschedule_request:'alert-circle', no_show:'alert-circle', reminder:'clock', waitlist_offer:'alert-circle', waitlist_removed:'x-circle', waitlist_join:'clock', waitlist_left:'x-circle', welcome:'home', info:'info', contact_message:'mail' }
-const _NOTIF_COLOR = { approved:'green', cancelled:'red', disapproved:'red', rescheduled:'blue', new_appointment:'orange', reschedule_request:'orange', no_show:'red', reminder:'orange', waitlist_offer:'orange', waitlist_removed:'red', waitlist_join:'orange', waitlist_left:'gray', welcome:'orange', info:'gray', contact_message:'orange' }
+const _NOTIF_ICON  = { approved:'check-circle', cancelled:'x-circle', disapproved:'x-circle', rescheduled:'calendar', new_appointment:'calendar', reschedule_request:'alert-circle', no_show:'alert-circle', reminder:'clock', waitlist_offer:'alert-circle', waitlist_removed:'x-circle', waitlist_join:'clock', waitlist_left:'x-circle', welcome:'home', info:'info', contact_message:'mail', follow_up_needed:'calendar', new_login:'monitor' }
+const _NOTIF_COLOR = { approved:'green', cancelled:'red', disapproved:'red', rescheduled:'blue', new_appointment:'orange', reschedule_request:'orange', no_show:'red', reminder:'orange', waitlist_offer:'orange', waitlist_removed:'red', waitlist_join:'orange', waitlist_left:'gray', welcome:'orange', info:'gray', contact_message:'orange', follow_up_needed:'orange', new_login:'orange' }
 const _resolveNotifType = n => (n.type === 'info' && n.title?.toLowerCase().startsWith('welcome')) ? 'welcome' : n.type
 
 // Returns { page, params } so callers always pass an explicit filter,
@@ -680,6 +771,10 @@ function _notifNavTarget(type, role) {
     // Patients are notified of contact replies by email — the in-app
     // contact_message type is admin/staff only; route patients to their dashboard.
     contact_message: role === 'patient' ? dashPage : 'contact-messages',
+    // "New Sign-in Detected" (tagSessionOwner(), api/helpers.php) — no
+    // specific record to jump to, just the Active Sessions page itself,
+    // same destination for every role.
+    new_login:       'active-sessions',
   }
   return { page: map[type] || dashPage, params: {} }
 }
@@ -764,6 +859,26 @@ function _markNotifDropdown(id) {
   // Same again for a brand-new appointment request (admin/staff).
   if (notif.type === 'new_appointment' && notif.relatedId && state.role !== 'patient' && window.openNewApptRequestNotif) {
     window.openNewApptRequestNotif(notif.relatedId)
+    return
+  }
+  // Same again for a doctor-flagged follow-up (relatedId is the patientId) —
+  // straight into a pre-filled New Appointment. Duplicated from
+  // markNotifRead()'s (main.js) follow_up_needed branch for the same reason
+  // as the shortcuts above: the bell dropdown and the full Notifications
+  // page are two separate click-handling paths.
+  if (notif.type === 'follow_up_needed' && notif.relatedId && state.role !== 'patient') {
+    const p = (window.patients || patients).find(pt => pt.id === notif.relatedId)
+    const con = p && (p.consultations || []).find(c => c.followUpDate)
+    if (p && con) {
+      const doc = (window.doctors || doctors).find(d => d.name === con.doctor)
+      window._staffCalPrefill = {
+        doctorId: doc?.id || '', doctorName: doc?.name || con.doctor || '',
+        doctorSpec: doc?.specialization || '', date: con.followUpDate, isFollowUp: true
+      }
+      navigate('create-appointment', { patientId: p.id, patientName: p.name })
+    } else {
+      navigate('patient-view', { patientId: notif.relatedId })
+    }
     return
   }
   const { page: _np, params: _npar } = _notifNavTarget(notif.type, state.role)

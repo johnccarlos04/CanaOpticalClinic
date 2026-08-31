@@ -80,6 +80,7 @@ var consultationSettings = {
   maxAdvanceBooking:       '3 months',
   minAdvanceBooking:       '1 day',
   maxApptsPerDoctorPerDay: 12,
+  maxApptsPerPatientPerDay: 1,
   morningStart:   '8:00 AM',
   morningEnd:     '12:00 PM',
   afternoonStart: '1:00 PM',

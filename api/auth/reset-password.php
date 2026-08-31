@@ -62,6 +62,12 @@ try {
 
     $pdo->commit();
 
+    // Forgot-password reset — revoke every session on the account, no
+    // exceptions. The requester wasn't authenticated as this user
+    // anywhere during this flow (they proved ownership via the emailed
+    // token instead), so there's no "current device" to spare.
+    if ($userRow) revokeAllSessions($pdo, (int)$userRow['id']);
+
     jsonResponse(['success' => true]);
 
 } catch (PDOException $e) {

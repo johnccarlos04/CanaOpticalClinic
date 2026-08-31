@@ -227,8 +227,7 @@ function apptActions(a, role) {
           <button class="btn-icon" title="Assign Optometrist" style="color:#E8760A" onclick="window.openAssignDoctorModal('${a.id}')">${ic('users','icon-sm')}</button>` : ''}
         ${a.status === 'pending' ? `
           <button class="btn-icon" title="Approve" style="color:#059669" onclick="window.approveAppt('${a.id}')">${ic('check','icon-sm')}</button>
-          <button class="btn-icon" title="Disapprove" style="color:#991b1b" onclick="window.confirmDisapproveAppt('${a.id}')">${ic('x-circle','icon-sm')}</button>
-          <button class="btn-icon" title="Cancel Appointment" style="color:#DC2626" onclick="window.confirmCancelAppt('${a.id}')">${ic('x','icon-sm')}</button>` : ''}
+          <button class="btn-icon" title="Disapprove" style="color:#991b1b" onclick="window.confirmDisapproveAppt('${a.id}')">${ic('x-circle','icon-sm')}</button>` : ''}
         ${a.status === 'approved' ? `
           <button class="btn-icon" title="Mark Completed" style="color:#059669" onclick="window.markApptCompleted('${a.id}')">${ic('check-circle','icon-sm')}</button>
           <button class="btn-icon" title="Mark No-Show" style="color:#6D28D9" onclick="window.confirmMarkNoShow('${a.id}')">${ic('user-x','icon-sm')}</button>
@@ -276,7 +275,11 @@ function appointmentsTable(list, role, tbodyId = 'appt-tbody', hidePatient = fal
           <td data-label="Doctor" style="font-size:.82rem">${a.doctorName || '<span style="color:#9CA3AF;font-style:italic">Not yet assigned</span>'}</td>
           <td data-label="Date" style="font-size:.82rem">${fmtDate(a.date)}</td>
           <td data-label="Time" style="font-size:.82rem;white-space:nowrap">${a.time}</td>
-          <td data-label="Type" style="font-size:.82rem">${a.type}</td>
+          <td data-label="Type" style="font-size:.82rem">
+            ${a.type}
+            <span title="${a.source === 'walk-in' ? 'Booked directly by clinic staff' : 'Booked by the patient online'}"
+                  style="display:inline-block;margin-left:6px;font-size:.62rem;font-weight:700;text-transform:uppercase;letter-spacing:.03em;padding:2px 7px;border-radius:20px;white-space:nowrap;${a.source === 'walk-in' ? 'background:#FFF7ED;color:#C2410C' : 'background:#EFF6FF;color:#1D4ED8'}">${a.source === 'walk-in' ? 'Walk-in' : 'Online'}</span>
+          </td>
           <td data-label="Status" style="align-items:center">${apptStatusCell(a)}</td>
           ${hasActions ? `<td data-label="Actions">${apptActions(a, role)}</td>` : ''}
         </tr>`).join('')}
@@ -287,13 +290,12 @@ function appointmentsTable(list, role, tbodyId = 'appt-tbody', hidePatient = fal
 // ════════════════════════════════════════════════════════════════
 //  ADMIN — DASHBOARD
 // ════════════════════════════════════════════════════════════════
-function pageAdminDashboard() {
-  window.state.afterRender = () => {
-    window._charts.initAppointmentsChart()
-    window._charts.initPatientGrowthChart()
-    window.updateAdminDashboard()
-  }
-
+// ── Shared Admin/Staff dashboard body ──────────────────────────────
+// Both roles see the identical stat cards, charts, and Doctor Availability /
+// Recent Appointments row — the only difference is the Recent Activity feed,
+// which stays Admin-only since Staff has no Activity Log nav item to link
+// it to. Pass showActivity=false to omit that one section.
+function _dashboardOverviewBody(showActivity) {
   // ── Real stat values ──────────────────────────────────────────
   const _todayStr   = localDateStr()
   const _todayCnt   = appointments.filter(a => a.date === _todayStr && !['cancelled','disapproved'].includes(a.status)).length
@@ -328,40 +330,51 @@ function pageAdminDashboard() {
       status:  a.status
     }))
 
-  // ── Real activity feed ─────────────────────────────────────────
-  const _iconForType  = t => ({ appointment:'calendar', examination:'eye', patient:'user', login:'log-out', report:'file-text', schedule:'clock', settings:'settings', account:'shield', archive:'archive' }[t] || 'activity')
-  const _colorForType = t => ({ appointment:'orange', examination:'blue', patient:'green', login:'purple', report:'blue', schedule:'orange', settings:'orange', account:'red', archive:'red' }[t] || 'orange')
-  const _relTime = ts => {
-    const diff = Date.now() - new Date(ts.replace(' ','T')).getTime()
-    const mins = Math.floor(diff / 60000)
-    if (mins < 60) return mins <= 1 ? 'Just now' : `${mins} min ago`
-    const hrs = Math.floor(mins / 60)
-    if (hrs < 24) return `${hrs} hour${hrs > 1 ? 's' : ''} ago`
-    const days = Math.floor(hrs / 24)
-    return days === 1 ? 'Yesterday' : `${days} days ago`
+  // ── Real activity feed (Admin only) ─────────────────────────────
+  let activitySection = ''
+  if (showActivity) {
+    const _iconForType  = t => ({ appointment:'calendar', examination:'eye', patient:'user', login:'log-out', report:'file-text', schedule:'clock', settings:'settings', account:'shield', archive:'archive' }[t] || 'activity')
+    const _colorForType = t => ({ appointment:'orange', examination:'blue', patient:'green', login:'purple', report:'blue', schedule:'orange', settings:'orange', account:'red', archive:'red' }[t] || 'orange')
+    const _relTime = ts => {
+      const diff = Date.now() - new Date(ts.replace(' ','T')).getTime()
+      const mins = Math.floor(diff / 60000)
+      if (mins < 60) return mins <= 1 ? 'Just now' : `${mins} min ago`
+      const hrs = Math.floor(mins / 60)
+      if (hrs < 24) return `${hrs} hour${hrs > 1 ? 's' : ''} ago`
+      const days = Math.floor(hrs / 24)
+      return days === 1 ? 'Yesterday' : `${days} days ago`
+    }
+    const MOCK_ACTIVITY = activityLog.slice(0, 5).map(a => ({
+      icon: _iconForType(a.type), iconColor: _colorForType(a.type),
+      user: a.user, action: a.action, time: _relTime(a.timestamp)
+    }))
+    activitySection = `
+    <!-- ── Recent Activity ─────────────────────────────────── -->
+    <div class="card">
+      <div class="card-header">
+        <div>
+          <div class="card-title">Recent Activity</div>
+          <div class="card-subtitle">Latest system events</div>
+        </div>
+        <button class="btn-ghost" onclick="window.navigate('activity-log')"
+                style="font-size:.75rem;padding:4px 12px">View All</button>
+      </div>
+      <div class="card-body" id="admin-activity-feed">
+        ${MOCK_ACTIVITY.map(a => `
+        <div class="activity-item">
+          <div class="activity-icon-wrap ${a.iconColor}">${ic(a.icon,'icon-sm')}</div>
+          <div class="activity-content">
+            <div class="activity-action">
+              <strong>${a.user}</strong> ${a.action}
+            </div>
+            <div class="activity-meta">${a.time}</div>
+          </div>
+        </div>`).join('')}
+      </div>
+    </div>`
   }
-  const MOCK_ACTIVITY = activityLog.slice(0, 5).map(a => ({
-    icon: _iconForType(a.type), iconColor: _colorForType(a.type),
-    user: a.user, action: a.action, time: _relTime(a.timestamp)
-  }))
 
   return `
-  <div class="page-header">
-    <div class="page-header-left">
-      <h1 class="page-title">Dashboard</h1>
-      <p class="page-subtitle">Welcome back, ${st().user?.firstName}. Here's your clinic overview.</p>
-    </div>
-    <div style="display:flex;flex-direction:column;align-items:flex-end;gap:6px">
-      <div class="page-header-btn-group" style="display:flex;gap:10px">
-        <button class="btn-secondary" onclick="window.navigate('waitlist')">
-          ${ic('clock','icon-sm')} Waitlist
-          ${window._waitlistCount > 0 ? `<span class="nav-badge">${window._waitlistCount > 99 ? '99+' : window._waitlistCount}</span>` : ''}
-        </button>
-        <button class="btn-primary" onclick="window.navigate('create-appointment')">${ic('plus','icon-sm')} New Appointment</button>
-      </div>
-      <span style="font-size:.78rem;color:#9CA3AF">${new Date().toLocaleDateString('en-PH',{weekday:'long',year:'numeric',month:'long',day:'numeric'})}</span>
-    </div>
-  </div>
   <div class="page-body">
 
     <!-- ── 6 Stat Cards ────────────────────────────────────── -->
@@ -426,7 +439,7 @@ function pageAdminDashboard() {
     <!-- ── Charts Row ──────────────────────────────────────── -->
     <div class="grid-2" style="margin-bottom:20px">
       <div class="card">
-        <div class="card-header">
+        <div class="card-header" style="align-items:flex-start">
           <div>
             <div class="card-title">Monthly Appointments</div>
             <div class="card-subtitle" id="admin-chart-range-label">Last 6 months</div>
@@ -435,7 +448,8 @@ function pageAdminDashboard() {
             value: '6',
             options: [{ value: '3', label: 'Last 3 Months' }, { value: '6', label: 'Last 6 Months' }, { value: '12', label: 'Last 12 Months' }],
             onchange: 'window.updateAdminCharts()',
-            style: 'width:auto;min-width:150px;padding:6px 32px 6px 12px;font-size:.78rem'
+            style: 'width:auto;min-width:150px;padding:6px 12px;font-size:.78rem',
+            minWidth: 100
           })}
         </div>
         <div class="card-body"><div class="chart-wrap"><canvas id="chart-appointments"></canvas></div></div>
@@ -509,31 +523,39 @@ function pageAdminDashboard() {
 
     </div>
 
-    <!-- ── Recent Activity ─────────────────────────────────── -->
-    <div class="card">
-      <div class="card-header">
-        <div>
-          <div class="card-title">Recent Activity</div>
-          <div class="card-subtitle">Latest system events</div>
-        </div>
-        <button class="btn-ghost" onclick="window.navigate('activity-log')"
-                style="font-size:.75rem;padding:4px 12px">View All</button>
-      </div>
-      <div class="card-body" id="admin-activity-feed">
-        ${MOCK_ACTIVITY.map(a => `
-        <div class="activity-item">
-          <div class="activity-icon-wrap ${a.iconColor}">${ic(a.icon,'icon-sm')}</div>
-          <div class="activity-content">
-            <div class="activity-action">
-              <strong>${a.user}</strong> ${a.action}
-            </div>
-            <div class="activity-meta">${a.time}</div>
-          </div>
-        </div>`).join('')}
-      </div>
-    </div>
+    ${activitySection}
 
   </div>`
+}
+
+function pageAdminDashboard() {
+  window.state.afterRender = () => {
+    window._charts.initAppointmentsChart()
+    window._charts.initPatientGrowthChart()
+    window.updateAdminDashboard()
+  }
+
+  return `
+  <div class="page-header">
+    <div class="page-header-left">
+      <h1 class="page-title">Dashboard</h1>
+      <p class="page-subtitle">Welcome back, ${st().user?.firstName}. Here's your clinic overview.</p>
+    </div>
+    <div class="page-header-right">
+      <div class="page-header-btn-group" style="display:flex;gap:10px">
+        <button class="btn-secondary" title="Print a table-only version of this dashboard" onclick="window.printDashboardReport()">
+          ${ic('printer','icon-sm')} Print Report
+        </button>
+        <button class="btn-secondary" onclick="window.navigate('waitlist')">
+          ${ic('clock','icon-sm')} Waitlist
+          ${window._waitlistCount > 0 ? `<span class="nav-badge">${window._waitlistCount > 99 ? '99+' : window._waitlistCount}</span>` : ''}
+        </button>
+        <button class="btn-primary" onclick="window.navigate('create-appointment')">${ic('plus','icon-sm')} New Appointment</button>
+      </div>
+      <span style="font-size:.78rem;color:#9CA3AF">${new Date().toLocaleDateString('en-PH',{weekday:'long',year:'numeric',month:'long',day:'numeric'})}</span>
+    </div>
+  </div>
+  ${_dashboardOverviewBody(true)}`
 }
 
 // ════════════════════════════════════════════════════════════════
@@ -805,13 +827,18 @@ function pagePatientView() {
   const p = getPatientById(params.patientId)
   if (!p) return `<div class="page-body"><div class="alert-error">No matching patient record found. Please verify the patient ID or search again.</div></div>`
 
+  // Most-recent-first — same convention as every other historical listing
+  // in the app (Appointments page's default view, Dashboard's Recent
+  // Appointments, etc.); this tab was the one place still left in
+  // whatever order the API happened to return, which read oldest-first.
   const patientAppts = appointments.filter(a => a.patientId === p.id)
+    .sort((a, b) => b.date.localeCompare(a.date) || b.time.localeCompare(a.time))
   const canEdit      = role === 'admin' || role === 'staff'
   const pStatus      = p.status || 'active'
 
   window.state.afterRender = () => {
     window.initPagination('pv-appt-tbody')
-    window.initSortable('pv-appt-tbody')
+    window.initSortable('pv-appt-tbody', { key: 'date', type: 'date', dir: -1 })
     if (params.tab) window.switchPatientTab(params.tab)
   }
 
@@ -890,18 +917,22 @@ function pagePatientView() {
         </div>
         ${i===0 ? `<span style="background:#FFF7ED;color:#E8760A;font-size:.63rem;font-weight:700;padding:2px 8px;border-radius:20px;border:1px solid #FDE68A;flex-shrink:0;white-space:nowrap">Latest</span>` : ''}
         <button class="btn-icon" title="View Results" onclick="window.viewExamDetail('${p.id}','${e.id}')">${ic('eye','icon-sm')}</button>
-        ${role !== 'patient' ? `<button class="btn-ghost" onclick="window.navigate('${role === 'doctor' ? 'edit-examination' : 'examination'}',{patientId:'${p.id}',examId:'${e.id}'})"
-          style="font-size:.72rem;padding:4px 10px;flex-shrink:0;white-space:nowrap">${ic('edit','icon-sm')} Edit</button>` : ''}
+        ${(role === 'doctor' && e.doctor === user?.name) ? `
+        <button class="btn-ghost" onclick="window.navigate('edit-examination',{patientId:'${p.id}',examId:'${e.id}'})"
+          style="font-size:.72rem;padding:4px 10px;flex-shrink:0;white-space:nowrap">${ic('edit','icon-sm')} Edit</button>`
+        : (role !== 'patient' ? `
+        <button class="btn-ghost" title="${role === 'doctor' ? `Only ${e.doctor} can edit this record` : 'Only the assigned doctor can edit this record'}" onclick="window.navigate('examination',{patientId:'${p.id}',examId:'${e.id}'})"
+          style="font-size:.72rem;padding:4px 10px;flex-shrink:0;white-space:nowrap;color:#9CA3AF">${ic('lock','icon-sm')} View Only</button>` : '')}
         ${(role === 'admin' || role === 'staff' || (role === 'doctor' && e.doctor === user?.name)) ? `
-        <button class="btn-icon" title="Delete" style="color:#DC2626"
-                onclick="window.confirmDeleteExam('${e.id}','${p.id}','${p.name.replace(/'/g,"\\'")}')">${ic('trash','icon-sm')}</button>` : ''}
+        <button class="btn-icon" title="Archive" style="color:#d97706;border-color:#fef3c7"
+                onclick="window.confirmDeleteExam('${e.id}','${p.id}','${p.name.replace(/'/g,"\\'")}')">${ic('archive','icon-sm')}</button>` : ''}
       </div>`).join('')}
     </div>` : emptyState('eye', 'No examination records', 'No examination records on file.')
 
   return `
   <div class="page-header">
     <div class="page-header-left" style="display:flex;align-items:center;gap:12px">
-      <button class="btn-icon" onclick="window.navigate('patient-list')" title="Back">
+      <button class="btn-icon" onclick="window.goBack('patient-list')" title="Back">
         ${ic('chevron-left','icon')}
       </button>
       <div>
@@ -1082,9 +1113,14 @@ function pageContactMessages() {
 
   return `
   <div class="page-header">
-    <div class="page-header-left">
-      <h1 class="page-title">Contact Messages</h1>
-      <p class="page-subtitle">Messages submitted through the website's contact form</p>
+    <div class="page-header-left" style="display:flex;align-items:center;gap:12px">
+      <button class="btn-icon" onclick="window.goBack('${st().role === 'admin' ? 'admin-dashboard' : 'staff-dashboard'}')" title="Back">
+        ${ic('chevron-left','icon')}
+      </button>
+      <div>
+        <h1 class="page-title">Contact Messages</h1>
+        <p class="page-subtitle">Messages submitted through the website's contact form</p>
+      </div>
     </div>
     <div style="display:flex;gap:8px">
       ${unreadCount > 0 ? `<button class="btn-secondary" onclick="window.markAllContactRead()">
@@ -1210,9 +1246,14 @@ function pageWaitlist() {
 
   return `
   <div class="page-header">
-    <div class="page-header-left">
-      <h1 class="page-title">Waitlist</h1>
-      <p class="page-subtitle">Patients waiting for a fully-booked slot to open up${totalSlots ? ` · ${totalSlots} slot${totalSlots !== 1 ? 's' : ''} with a queue` : ''}</p>
+    <div class="page-header-left" style="display:flex;align-items:center;gap:12px">
+      <button class="btn-icon" onclick="window.goBack('${st().role === 'admin' ? 'admin-dashboard' : 'staff-dashboard'}')" title="Back">
+        ${ic('chevron-left','icon')}
+      </button>
+      <div>
+        <h1 class="page-title">Waitlist</h1>
+        <p class="page-subtitle">Patients waiting for a fully-booked slot to open up${totalSlots ? ` · ${totalSlots} slot${totalSlots !== 1 ? 's' : ''} with a queue` : ''}</p>
+      </div>
     </div>
   </div>
   <div class="page-body">
@@ -1305,7 +1346,7 @@ function pageQRScanner() {
       <h1 class="page-title">QR Code Scanner</h1>
       <p class="page-subtitle">Scan a patient QR code for instant profile access</p>
     </div>
-    <button class="btn-secondary" onclick="window.navigate('patient-list')">
+    <button class="btn-secondary" onclick="window.goBack('patient-list')">
       ${ic('chevron-left','icon-sm')} Back to Patient List
     </button>
   </div>
@@ -1716,13 +1757,15 @@ function pageAdminReports() {
 <meta charset="utf-8">
 <title>${typeLabel} \u2014 ${ci.name || 'Clinic'}</title>
 <style>
-  /* margin:0 leaves Chrome no page-margin band to draw its own print
-     header/footer (title, date, URL) into — same fix already used by the
-     Exam/Rx/QR print documents. Visual margin is restored via body
-     padding below instead. */
-  @page { size: A4; margin: 0; }
+  /* A real @page margin (not margin:0 + a manual body padding standing in
+     for it) — that padding-based approach looked fine on page 1 but a
+     multi-page report's later pages came out with NO margin at all, not
+     even left/right, once real content pushed this document past one
+     page. @page's own margin is the one box CSS print fragmentation
+     spec-guarantees gets reapplied on every page a document spans. */
+  @page { size: A4; margin: 16mm 20mm; }
   * { box-sizing: border-box; margin: 0; padding: 0; }
-  body { font-family: Arial, Helvetica, sans-serif; font-size: 9pt; color: #111; padding: 16mm 20mm; background: #fff; }
+  body { font-family: Arial, Helvetica, sans-serif; font-size: 9pt; color: #111; background: #fff; }
 
   /* \u2500\u2500 Clinic header \u2500\u2500 */
   .hdr          { display: flex; justify-content: space-between; align-items: flex-start; border-bottom: 2px solid #111; padding-bottom: 10px; margin-bottom: 10px; }
@@ -1777,8 +1820,15 @@ function pageAdminReports() {
      sit flush against the paper's top edge with no margin at all. Giving
      it the same top offset as the body's own top padding restores a
      matching margin on every page this document spans, not just the
-     first. */
-  .page-break   { page-break-before: always; padding-top: 16mm; }
+     first.
+
+     UPDATE: @page now carries a real margin (see above) instead of
+     margin:0 + manual body padding, so this compensation is redundant —
+     @page's margin already reapplies on every page, including this
+     forced break, without any help. Kept at padding-top:0 explicitly
+     (not just deleted) so a stray page-break-before:always is still easy
+     to find/reason about here later. */
+  .page-break   { page-break-before: always; }
   .section-header { border-bottom: 1px solid #ddd; padding-bottom: 8px; margin-bottom: 14px; }
   .section-title  { font-size: 11pt; font-weight: 700; }
   .section-sub    { font-size: 7.5pt; color: #666; margin-top: 2px; }
@@ -1786,6 +1836,17 @@ function pageAdminReports() {
   .chart-box    { border: 1px solid #e5e7eb; border-radius: 4px; padding: 12px; }
   .chart-label  { font-size: 8.5pt; font-weight: 700; margin-bottom: 8px; }
   .chart-img    { width: 100%; height: auto; display: block; }
+
+  /* ── Prepared by ── same sig-line convention as the Exam/Rx print
+     documents' doctor signature block, repurposed here to credit whichever
+     admin/staff generated this report rather than a clinical signer. */
+  /* No page-break-inside:avoid — a short block like this is more likely to
+     get shoved onto its own lonely trailing page by "avoid" than to
+     actually need protection from a bad mid-block split. */
+  .sig-block { margin-top: 28px; padding-top: 14px; border-top: 1px dashed #ccc; display: flex; justify-content: flex-end; }
+  .sig-col   { text-align: center; min-width: 200px; }
+  .sig-line  { border-top: 1px solid #111; padding-top: 6px; font-size: 8pt; font-weight: 700; text-transform: uppercase; }
+  .sig-sub   { font-size: 7pt; color: #888; margin-top: 2px; }
 
   /* ── Print ──
      No padding reset here — @page above already handles keeping Chrome's
@@ -1824,6 +1885,13 @@ function pageAdminReports() {
 
   ${tClone.outerHTML}
   ${chartHTML}
+
+  <div class="sig-block">
+    <div class="sig-col">
+      <div class="sig-line">${st().user?.name || '—'}</div>
+      <div class="sig-sub">Prepared by &bull; ${{admin:'Administrator',staff:'Staff',doctor:'Doctor'}[st().role] || st().role || ''}</div>
+    </div>
+  </div>
 </body>
 </html>`
 
@@ -2079,6 +2147,9 @@ function pageAdminSettings() {
         </div>
 
       </div>
+
+      ${window.activeSessionsCardHtml()}
+
     </div>`
   }
 
@@ -2381,6 +2452,11 @@ function pageAdminSettings() {
             <div style="font-size:.72rem;color:#9CA3AF;margin-top:4px">Limits the number of appointments a doctor can receive per day.</div>
           </div>
           <div class="form-group" style="margin-bottom:0">
+            <label class="form-label">Max Appointments Per Patient Per Day</label>
+            <input class="form-input" type="number" id="cs-max-appt-patient" value="${cs.maxApptsPerPatientPerDay}" min="1" max="10">
+            <div style="font-size:.72rem;color:#9CA3AF;margin-top:4px">Limits how many appointments one patient can book for the same day (self-service bookings only).</div>
+          </div>
+          <div class="form-group" style="margin-bottom:0">
             <label class="form-label">Reminder Send Time</label>
             ${window.timeFieldHtml('cs-reminder-time', { value: cs.reminderTime || '12:00 PM', options: fullTimeOpts() })}
             <div style="font-size:.72rem;color:#9CA3AF;margin-top:4px">When the day-before reminder is sent for approved appointments.</div>
@@ -2500,6 +2576,7 @@ function pageAdminSettings() {
   function sectionTerms() {
     window.state.afterRender = () => {
       window._mdPreviewUpdate('terms-md-input', 'terms-md-preview')
+      window._mdPreviewUpdate('privacy-md-input', 'privacy-md-preview')
       window._mdPreviewUpdate('policy-md-input', 'policy-md-preview')
     }
     return `
@@ -2512,10 +2589,17 @@ function pageAdminSettings() {
     <div class="page-body" style="display:flex;flex-direction:column;gap:16px">
       ${mdDocEditor({
         docTitle: 'Terms & Conditions',
-        docHint: 'Shown in the registration page’s Terms &amp; Conditions and Data Privacy Act modal.',
+        docHint: 'Shown in the registration page’s Terms &amp; Conditions modal.',
         taId: 'terms-md-input', previewId: 'terms-md-preview',
         content: clinicInfo.termsContent || '',
         saveFn: 'saveTermsContent', saveLabel: 'Save Terms &amp; Conditions'
+      })}
+      ${mdDocEditor({
+        docTitle: 'Data Privacy Act Notice',
+        docHint: 'Shown in the registration page’s Data Privacy Act modal — its own document and its own consent checkbox, separate from Terms &amp; Conditions.',
+        taId: 'privacy-md-input', previewId: 'privacy-md-preview',
+        content: clinicInfo.privacyContent || '',
+        saveFn: 'savePrivacyContent', saveLabel: 'Save Data Privacy Act Notice'
       })}
       ${mdDocEditor({
         docTitle: 'Appointment Policy',
@@ -2530,10 +2614,13 @@ function pageAdminSettings() {
   // ── Section: Archives ────────────────────────────────────────
   function sectionArchives() {
     const arcFilter = st().archivesFilter || 'all'
-    const tabs = ['all','Patient','Appointment','Account','Examination','Service']
+    // No 'Appointment' tab — nothing archives an appointment (checked: no
+    // frontend or backend path ever creates an archived_records row with
+    // that type), so it was a permanently-empty dead tab.
+    const tabs = ['all','Patient','Account','Examination','Service']
     const list = arcFilter === 'all' ? archivedRecords : archivedRecords.filter(r => r.type === arcFilter)
     const typeBadge = t => {
-      const map = { Patient:'#DBEAFE:#1D4ED8', Appointment:'#FEF3C7:#d97706', Account:'#EDE9FE:#5B21B6', Examination:'#D1FAE5:#065F46', Service:'#FCE7F3:#9D174D' }
+      const map = { Patient:'#DBEAFE:#1D4ED8', Account:'#EDE9FE:#5B21B6', Examination:'#D1FAE5:#065F46', Service:'#FCE7F3:#9D174D' }
       const [bg, col] = (map[t] || '#F3F4F6:#374151').split(':')
       return `<span style="background:${bg};color:${col};font-size:.68rem;font-weight:700;padding:2px 10px;border-radius:20px;letter-spacing:.04em">${t}</span>`
     }
@@ -2597,6 +2684,7 @@ function pageAdminSettings() {
   }
 
   if (sec === 'archives') window.state.afterRender = () => { window.initPagination('archives-tbody'); window.initSortable('archives-tbody', { key: 'date', type: 'date', dir: -1 }) }
+  if (sec === 'profile') window.state.afterRender = () => window.loadActiveSessionsSummary()
   // services section uses a card grid — no table pagination needed
 
   const sections = { profile: sectionProfile, clinic: sectionClinic, services: sectionServices, consultation: sectionConsultation, terms: sectionTerms, archives: sectionArchives }
@@ -2760,70 +2848,33 @@ function pageActivityLog() {
 //  STAFF — DASHBOARD
 // ════════════════════════════════════════════════════════════════
 function pageStaffDashboard() {
-  const pending  = appointments.filter(a => a.status === 'pending')
-  const approved = appointments.filter(a => a.status === 'approved')
-
   window.state.afterRender = () => {
-    window.updateStaffDashboard()
+    window._charts.initAppointmentsChart()
+    window._charts.initPatientGrowthChart()
+    window.updateAdminDashboard()
   }
 
   return `
   <div class="page-header">
     <div class="page-header-left">
-      <h1 class="page-title">Staff Dashboard</h1>
+      <h1 class="page-title">Dashboard</h1>
       <p class="page-subtitle">Welcome, ${st().user?.firstName}. Manage today's clinic operations.</p>
     </div>
-    <div class="page-header-btn-group" style="display:flex;gap:10px">
-      <button class="btn-secondary" onclick="window.navigate('waitlist')">
-        ${ic('clock','icon-sm')} Waitlist
-        ${window._waitlistCount > 0 ? `<span class="nav-badge">${window._waitlistCount > 99 ? '99+' : window._waitlistCount}</span>` : ''}
-      </button>
-      <button class="btn-primary" onclick="window.navigate('create-appointment')">${ic('plus','icon-sm')} New Appointment</button>
+    <div class="page-header-right">
+      <div class="page-header-btn-group" style="display:flex;gap:10px">
+        <button class="btn-secondary" title="Print a table-only version of this dashboard" onclick="window.printDashboardReport()">
+          ${ic('printer','icon-sm')} Print Report
+        </button>
+        <button class="btn-secondary" onclick="window.navigate('waitlist')">
+          ${ic('clock','icon-sm')} Waitlist
+          ${window._waitlistCount > 0 ? `<span class="nav-badge">${window._waitlistCount > 99 ? '99+' : window._waitlistCount}</span>` : ''}
+        </button>
+        <button class="btn-primary" onclick="window.navigate('create-appointment')">${ic('plus','icon-sm')} New Appointment</button>
+      </div>
+      <span style="font-size:.78rem;color:#9CA3AF">${new Date().toLocaleDateString('en-PH',{weekday:'long',year:'numeric',month:'long',day:'numeric'})}</span>
     </div>
   </div>
-  <div class="page-body">
-    <div class="stats-grid">
-      <div class="stat-card">
-        <div class="stat-info"><div class="stat-label">Pending Approval</div><div class="stat-value" id="staff-stat-pending">${pending.length}</div><div class="stat-delta" style="color:#F59E0B">Needs review</div></div>
-        <div class="stat-icon orange">${ic('clock','icon-lg')}</div>
-      </div>
-      <div class="stat-card">
-        <div class="stat-info"><div class="stat-label">Approved Today</div><div class="stat-value" id="staff-stat-approved">${approved.length}</div></div>
-        <div class="stat-icon green">${ic('check-circle','icon-lg')}</div>
-      </div>
-      <div class="stat-card">
-        <div class="stat-info"><div class="stat-label">Total Patients</div><div class="stat-value" id="staff-stat-patients">${patients.length}</div></div>
-        <div class="stat-icon blue">${ic('users','icon-lg')}</div>
-      </div>
-    </div>
-
-    <div class="grid-2">
-      <div class="card">
-        <div class="card-header"><div class="card-title">Weekly Appointments</div></div>
-        <div class="card-body"><div class="chart-wrap"><canvas id="chart-staff-overview"></canvas></div></div>
-      </div>
-      <div class="card" style="align-self:start">
-        <div class="card-header">
-          <div class="card-title">Pending Approvals</div>
-          <button class="btn-ghost" onclick="window.navigate('appointments',{filter:'pending'})"
-                  style="font-size:.75rem;padding:4px 10px">View All</button>
-        </div>
-        <div class="card-body" style="padding:0">
-          ${pending.length ? `<table class="tbl"><thead><tr><th>Patient</th><th>Doctor</th><th>Date</th><th>Action</th></tr></thead><tbody id="staff-appts-tbody">
-            ${pending.slice(0,5).map(a=>`<tr>
-              <td style="font-size:.82rem;font-weight:600">${a.patientName}</td>
-              <td style="font-size:.78rem;color:#6B7280">${a.doctorName ? a.doctorName.replace('Dr. ','') : '<span style="font-style:italic;color:#9CA3AF">Not yet assigned</span>'}</td>
-              <td style="font-size:.78rem">${fmtDate(a.date)}</td>
-              <td>${a.doctorId
-                ? `<button class="btn-success" onclick="window.approveAppt('${a.id}')">Approve</button>`
-                : `<button class="btn-secondary" onclick="window.openAssignDoctorModal('${a.id}')">Assign Optometrist</button>`}</td>
-            </tr>`).join('')}
-          </tbody></table>` : `<div class="table-empty" id="staff-appts-tbody">No pending appointments.</div>`}
-        </div>
-      </div>
-    </div>
-
-  </div>`
+  ${_dashboardOverviewBody(false)}`
 }
 
 // ════════════════════════════════════════════════════════════════
@@ -2858,7 +2909,12 @@ function pageDoctorDashboard() {
       <h1 class="page-title">${greeting}, ${user?.name || 'Doctor'}</h1>
       <p class="page-subtitle">Here's your clinic overview for today.</p>
     </div>
-    <span style="font-size:.78rem;color:#9CA3AF">${dateStr}</span>
+    <div class="page-header-right">
+      <button class="btn-secondary" title="Print a table-only version of this dashboard" onclick="window.printDashboardReport()">
+        ${ic('printer','icon-sm')} Print Report
+      </button>
+      <span style="font-size:.78rem;color:#9CA3AF">${dateStr}</span>
+    </div>
   </div>
   <div class="page-body">
 
@@ -3059,7 +3115,11 @@ function pageDoctorAppointments() {
             </div></td>
             <td data-label="Date" style="font-size:.82rem;white-space:nowrap">${fmtDate(a.date)}</td>
             <td data-label="Time" style="font-size:.82rem;white-space:nowrap">${a.time}</td>
-            <td data-label="Type" style="font-size:.82rem">${a.type}</td>
+            <td data-label="Type" style="font-size:.82rem">
+              ${a.type}
+              <span title="${a.source === 'walk-in' ? 'Booked directly by clinic staff' : 'Booked by the patient online'}"
+                    style="display:inline-block;margin-left:6px;font-size:.62rem;font-weight:700;text-transform:uppercase;letter-spacing:.03em;padding:2px 7px;border-radius:20px;white-space:nowrap;${a.source === 'walk-in' ? 'background:#FFF7ED;color:#C2410C' : 'background:#EFF6FF;color:#1D4ED8'}">${a.source === 'walk-in' ? 'Walk-in' : 'Online'}</span>
+            </td>
             <td data-label="Status">${badge(a.status)}</td>
             <td data-label="Actions">${docActions(a)}</td>
           </tr>`).join('')}
@@ -3188,6 +3248,8 @@ function pageDoctorSettings() {
   const doc = doctors.find(d => d.id === user?.id) || user || {}
 
   const docName = doc.name || `${doc.firstName || ''} ${doc.lastName || ''}`.trim() || 'Doctor'
+
+  window.state.afterRender = () => window.loadActiveSessionsSummary()
 
   const pwField = (id, placeholder, extra='') => `
     <div style="position:relative">
@@ -3338,6 +3400,8 @@ function pageDoctorSettings() {
         </div>
       </div>
 
+      ${window.activeSessionsCardHtml()}
+
     </div>
   </div>`
 }
@@ -3346,7 +3410,7 @@ function pageDoctorSettings() {
 //  DOCTOR — OPTICAL EXAMINATION
 // ════════════════════════════════════════════════════════════════
 function pageExamination() {
-  const { params, role } = st()
+  const { params, role, user } = st()
   const p = getPatientById(params.patientId)
   const lastExam = p && p.examinations.length ? p.examinations[p.examinations.length - 1] : null
   const _p = (obj, key) => (obj && obj[key]) || ''
@@ -3355,8 +3419,25 @@ function pageExamination() {
     iop: {od:'',os:''}, pd:'', externalFindings:'', diagnosis:'', testResults:'', remarks:''
   }
 
-  if (role !== 'doctor') {
-    const exam = params.examId ? (p?.examinations || []).find(e => e.id === params.examId) || pre : pre
+  // A doctor only gets the editable wizard for their OWN exam records — any
+  // other doctor viewing a colleague's exam sees the same read-only view
+  // every non-doctor role gets. Ownership is unknown until the specific
+  // exam record is resolved, so look it up here rather than trusting role alone.
+  const examForOwnership = params.examId ? (p?.examinations || []).find(e => e.id === params.examId) : null
+  const isOwnDoctor = role === 'doctor' && (!examForOwnership || examForOwnership.doctor === user?.name)
+
+  if (!isOwnDoctor) {
+    const exam = examForOwnership || pre
+    const viewOnlyLabel = role === 'doctor'
+      ? `View Only (only ${exam.doctor || 'the assigned doctor'} can edit)`
+      : 'View Only (Doctor access required to edit)'
+    // Same Ishihara-pill split used by the "View Results" modal
+    // (viewExamDetail, main.js) — this full page is the primary read-only
+    // destination now that non-owner edit access is blocked, so it should
+    // show at least as much as that quick modal, not less.
+    const { plain: testResultsPlain, ishihara } = window._splitIshihara(exam.testResults)
+    const statusColor = { completed:'#059669', pending:'#D97706', cancelled:'#DC2626' }
+    const statusLabel = (exam.status || 'completed').charAt(0).toUpperCase() + (exam.status || 'completed').slice(1)
     const ro = (v) => `<div style="padding:8px 12px;background:#f9fafb;border:1px solid #e5e7eb;border-radius:8px;font-size:.87rem;color:#1f2937;min-height:38px">${v || '—'}</div>`
     const eyeField = (label, val, isLast) => `
       <div style="padding:10px 6px;${isLast ? '' : 'border-right:1px solid #F3F4F6;'}text-align:center;flex:1;min-width:0">
@@ -3365,8 +3446,8 @@ function pageExamination() {
       </div>`
     const hasIopOrPd = exam.iop?.od || exam.iop?.os || exam.pd
     const backTarget = p
-      ? `window.navigate('patient-view',{patientId:'${p.id}',patientName:'${(p.name||'').replace(/'/g,"\\'")}',tab:'history'})`
-      : `window.navigate('patient-list')`
+      ? `window.goBack('patient-view',{patientId:'${p.id}',patientName:'${(p.name||'').replace(/'/g,"\\'")}',tab:'history'})`
+      : `window.goBack('patient-list')`
     return `
   <div class="page-header">
     <div class="page-header-left" style="display:flex;align-items:center;gap:12px">
@@ -3377,7 +3458,8 @@ function pageExamination() {
       </div>
     </div>
     <div style="display:flex;align-items:center;gap:8px;align-self:center">
-      <span style="font-size:.75rem;background:#FFF7ED;color:#C2410C;padding:4px 12px;border-radius:20px;font-weight:600">View Only (Doctor access required to edit)</span>
+      <span style="font-size:.75rem;background:${statusColor[exam.status]||'#059669'};color:#fff;padding:4px 12px;border-radius:20px;font-weight:700">${statusLabel}</span>
+      <span style="font-size:.75rem;background:#FFF7ED;color:#C2410C;padding:4px 12px;border-radius:20px;font-weight:600">${viewOnlyLabel}</span>
     </div>
   </div>
   <div class="page-body">
@@ -3395,7 +3477,8 @@ function pageExamination() {
               ${eyeField('VA (Cor.)', exam.od?.va, false)}
               ${eyeField('SPH', exam.od?.sph, false)}
               ${eyeField('CYL', exam.od?.cyl, false)}
-              ${eyeField('AXIS', exam.od?.axis, true)}
+              ${eyeField('AXIS', exam.od?.axis, false)}
+              ${eyeField('ADD', exam.od?.add, true)}
             </div>
           </div>
           <div style="border:1.5px solid #FDE68A;border-radius:10px;overflow:hidden">
@@ -3408,7 +3491,8 @@ function pageExamination() {
               ${eyeField('VA (Cor.)', exam.os?.va, false)}
               ${eyeField('SPH', exam.os?.sph, false)}
               ${eyeField('CYL', exam.os?.cyl, false)}
-              ${eyeField('AXIS', exam.os?.axis, true)}
+              ${eyeField('AXIS', exam.os?.axis, false)}
+              ${eyeField('ADD', exam.os?.add, true)}
             </div>
           </div>
         </div>
@@ -3424,19 +3508,28 @@ function pageExamination() {
       <div class="card-body">
         <div class="form-group" style="margin-bottom:14px"><label class="form-label">Diagnosis</label>${ro(exam.diagnosis)}</div>
         ${exam.externalFindings ? `<div class="form-group" style="margin-bottom:14px"><label class="form-label">External / Internal Findings</label>${ro(exam.externalFindings)}</div>` : ''}
-        ${exam.testResults ? `<div class="form-group" style="margin-bottom:14px"><label class="form-label">Test Results</label>${ro(exam.testResults)}</div>` : ''}
+        ${ishihara ? `<div class="form-group" style="margin-bottom:14px">
+          <div style="display:flex;align-items:center;gap:8px;background:#f9fafb;border:1px solid #e5e7eb;border-radius:8px;padding:11px 13px;font-size:.8rem;color:#374151">
+            <span style="font-weight:600;color:#6b7280">Ishihara Test:</span>
+            <span style="font-size:.72rem;font-weight:700;padding:2px 10px;border-radius:20px;${ishihara === 'Normal' ? 'background:#DCFCE7;color:#16A34A' : 'background:#FEF3C7;color:#B45309'}">${ishihara}</span>
+          </div>
+        </div>` : ''}
+        ${testResultsPlain ? `<div class="form-group" style="margin-bottom:14px"><label class="form-label">Test Results</label>${ro(testResultsPlain)}</div>` : ''}
         ${exam.remarks ? `<div class="form-group"><label class="form-label">Clinical Remarks</label>${ro(exam.remarks)}</div>` : ''}
       </div>
     </div>
   </div>`
   }
 
-  // Doctors editing/creating an exam always go through the wizard now
-  // (new-examination/edit-examination) — this route used to carry its own
-  // parallel single-form editor with a stale field set (lens type,
+  // Doctors editing/creating their OWN exam always go through the wizard
+  // now (new-examination/edit-examination) — this route used to carry its
+  // own parallel single-form editor with a stale field set (lens type,
   // recommendation, etc. that no longer belong to `examinations`).
   // Redirect rather than maintain a second implementation.
-  window.state.afterRender = () => window.navigate('new-examination', p ? { patientId: p.id } : {})
+  window.state.afterRender = () => window.navigate(
+    params.examId ? 'edit-examination' : 'new-examination',
+    p ? { patientId: p.id, ...(params.examId ? { examId: params.examId } : {}) } : {}
+  )
   return `<div class="page-body"><div class="alert-info">${ic('info','icon-sm')} Redirecting to the examination wizard…</div></div>`
 }
 
@@ -3546,9 +3639,9 @@ function pageExamRecords() {
                         onclick="window.printExamRecord('${e.id}')">
                   ${ic('printer','icon-sm')}
                 </button>
-                <button class="btn-icon" title="Edit"
-                        onclick="window.navigate('${role === 'doctor' ? 'edit-examination' : 'examination'}',{patientId:'${e.patientId}',examId:'${e.id}'})">
-                  ${ic('edit','icon-sm')}
+                <button class="btn-icon" title="${(role === 'doctor' && e.doctor === user?.name) ? 'Edit' : `View only, only ${e.doctor} can edit this record`}"
+                        onclick="window.navigate('${(role === 'doctor' && e.doctor === user?.name) ? 'edit-examination' : 'examination'}',{patientId:'${e.patientId}',examId:'${e.id}'})">
+                  ${ic((role === 'doctor' && e.doctor === user?.name) ? 'edit' : 'lock','icon-sm')}
                 </button>
                 ${(role === 'admin' || role === 'doctor') ? `
                 <button class="btn-icon" title="Generate Clearance"
@@ -3557,10 +3650,10 @@ function pageExamRecords() {
                   ${ic('award','icon-sm')}
                 </button>` : ''}
                 ${(role === 'admin' || role === 'staff' || (role === 'doctor' && e.doctor === user?.name)) ? `
-                <button class="btn-icon" title="Delete"
-                        style="color:#DC2626"
+                <button class="btn-icon" title="Archive"
+                        style="color:#d97706;border-color:#fef3c7"
                         onclick="window.confirmDeleteExam('${e.id}','${e.patientId}','${e.patientName.replace(/'/g,"\\'")}')">
-                  ${ic('trash','icon-sm')}
+                  ${ic('archive','icon-sm')}
                 </button>` : ''}
               </div>
             </td>
@@ -3588,7 +3681,7 @@ function pageNewExamination() {
     </div>`
   }
 
-  const { params } = st()
+  const { params, user } = st()
   const p = getPatientById(params?.patientId)
 
   if (!p) {
@@ -3704,6 +3797,16 @@ function pageNewExamination() {
   const lastExam   = specificExam
   const pre        = lastExam || { od:{vaUncorrected:'',sph:'',cyl:'',axis:'',va:'',add:''}, os:{vaUncorrected:'',sph:'',cyl:'',axis:'',va:'',add:''}, iop:{od:'',os:''}, pd:'' }
   const isEdit     = !!params?.examId
+
+  // A doctor only reaches the editable wizard for their OWN exam records —
+  // editing a colleague's exam via a direct 'edit-examination' navigation
+  // (e.g. from the Patient Profile's Examinations tab, which lists exams by
+  // every doctor, not just the current one) falls back to the same
+  // read-only view every non-doctor role gets, via pageExamination().
+  if (isEdit && specificExam && specificExam.doctor !== user?.name) {
+    return pageExamination()
+  }
+
   const saveLabel  = isEdit ? 'Save Changes' : 'Save Examination'
 
   // Schedule wizard init after DOM is ready
@@ -3712,7 +3815,7 @@ function pageNewExamination() {
   // initial inline opacity/pointer-events (set server-side above from the
   // same linkedRx check) — pointer-events:none alone doesn't block
   // keyboard Tab-focus into them.
-  state.afterRender = () => { window._examPatientId = p.id; examWizInit(); window.syncIssuePrescription?.() }
+  state.afterRender = () => { window._examPatientId = p.id; examWizInit(); window.syncIssuePrescription?.(); window.syncFollowUpNeeded?.() }
 
   const fl = (label, req=false) =>
     `<label style="font-size:.68rem;text-transform:uppercase;letter-spacing:.05em;color:#6b7280;font-weight:600;display:block;margin-bottom:6px">${label}${req ? ' <span style="color:#ef4444">*</span>' : ''}</label>`
@@ -3794,6 +3897,15 @@ function pageNewExamination() {
   const linkedConsultation = specificExam?.consultationId
     ? (p.consultations || []).find(c => c.id === specificExam.consultationId) : null
   const preCon = linkedConsultation || { type:'Eye Examination', chiefComplaint:'', historyPresentIllness:'', assessment:'', recommendation:'', followUpDate:'', status:'completed' }
+  const needsFollowUpByDefault = !!preCon.followUpDate
+
+  // Follow-up Date is only ever a suggested target, not a real booked
+  // slot — setting it just notifies admin/staff to go schedule the actual
+  // appointment, and THAT flow already fully validates clinic days,
+  // blocked dates, and every other booking rule. Restricting the doctor's
+  // suggestion to only-bookable days here would just be re-solving a
+  // problem the real booking step already handles once a human is looking
+  // at it — so this stays simple: no past dates, otherwise unrestricted.
 
   const step2 = `
   <div style="background:white;border-radius:12px;border:1px solid #e5e7eb;padding:28px">
@@ -3804,29 +3916,41 @@ function pageNewExamination() {
         <div style="font-size:.75rem;color:#6b7280;margin-top:1px">The narrative of this visit, in the patient's and doctor's own words</div>
       </div>
     </div>
-    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:14px;margin-bottom:16px">
-      <div class="form-group" style="margin:0">
-        ${fl('Appointment Type')}
-        ${window.selectFieldHtml('ne-con-type', {
-          value: preCon.type || 'Eye Examination',
-          placeholder: 'Select type',
-          options: ['Eye Examination','Follow-up','Frame Fitting','Complaint'],
-          style: inp
-        })}
+    <!-- Appointment Type and Status aren't asked here — Type is already set
+         when the appointment was booked (by the patient, or by staff on
+         their behalf) and Status is already managed by admin/staff working
+         the appointment queue, so re-entering either would just be
+         duplicate (and sometimes contradictory) data entry. saveNewExam()
+         derives both automatically instead — see main.js. -->
+    <div style="display:flex;align-items:flex-start;gap:24px;margin-bottom:16px;flex-wrap:wrap">
+      <div>
+        <span style="font-size:.68rem;text-transform:uppercase;letter-spacing:.05em;color:#6b7280;font-weight:600;white-space:nowrap;display:block;margin-bottom:6px">Need Follow-up Consultation?</span>
+        <div style="display:flex;align-items:center;gap:8px">
+          <input type="radio" name="ne-followup-choice" id="r-followup-yes" value="Yes" ${needsFollowUpByDefault ? 'checked' : ''} style="display:none"
+                 onchange="window.syncFollowUpNeeded()">
+          <input type="radio" name="ne-followup-choice" id="r-followup-no" value="No" ${needsFollowUpByDefault ? '' : 'checked'} style="display:none"
+                 onchange="window.syncFollowUpNeeded()">
+          <label for="r-followup-yes" id="rb-followup-yes"
+                 style="display:inline-flex;align-items:center;gap:7px;height:40px;padding:0 16px;border-radius:8px;font-size:.82rem;font-weight:600;border:1.5px solid ${needsFollowUpByDefault ? '#E8891C' : '#e5e7eb'};background:${needsFollowUpByDefault ? '#FFF7ED' : '#f9fafb'};color:${needsFollowUpByDefault ? '#C4720E' : '#6b7280'};cursor:pointer;user-select:none;transition:background .2s,border-color .2s,color .2s;transform:translateZ(0)">
+            <span style="width:13px;height:13px;border-radius:50%;border:2px solid ${needsFollowUpByDefault ? '#E8891C' : '#d1d5db'};display:inline-flex;align-items:center;justify-content:center;flex-shrink:0;transition:border-color .2s">
+              <span style="width:6px;height:6px;border-radius:50%;background:${needsFollowUpByDefault ? '#E8760A' : 'transparent'};display:block;transition:background .2s,transform .2s cubic-bezier(.34,1.56,.64,1);transform:scale(${needsFollowUpByDefault ? '1' : '0'})"></span>
+            </span>Yes</label>
+          <label for="r-followup-no" id="rb-followup-no"
+                 style="display:inline-flex;align-items:center;gap:7px;padding:6px 16px;border-radius:8px;font-size:.82rem;font-weight:600;border:1.5px solid ${needsFollowUpByDefault ? '#e5e7eb' : '#E8891C'};background:${needsFollowUpByDefault ? '#f9fafb' : '#FFF7ED'};color:${needsFollowUpByDefault ? '#6b7280' : '#C4720E'};cursor:pointer;user-select:none;transition:background .2s,border-color .2s,color .2s;transform:translateZ(0)">
+            <span style="width:13px;height:13px;border-radius:50%;border:2px solid ${needsFollowUpByDefault ? '#d1d5db' : '#E8891C'};display:inline-flex;align-items:center;justify-content:center;flex-shrink:0;transition:border-color .2s">
+              <span style="width:6px;height:6px;border-radius:50%;background:${needsFollowUpByDefault ? 'transparent' : '#E8760A'};display:block;transition:background .2s,transform .2s cubic-bezier(.34,1.56,.64,1);transform:scale(${needsFollowUpByDefault ? '0' : '1'})"></span>
+            </span>No</label>
+        </div>
       </div>
-      <div class="form-group" style="margin:0">
-        ${fl('Status')}
-        ${window.selectFieldHtml('ne-con-status', {
-          value: preCon.status || 'completed',
-          placeholder: 'Select status',
-          options: [{value:'completed',label:'Completed'},{value:'cancelled',label:'Cancelled'},{value:'no-show',label:'No-show'}],
-          style: inp
-        })}
+      <div id="ne-followup-date-wrap" style="width:220px;${needsFollowUpByDefault ? '' : 'display:none'}">
+        <div class="form-group" style="margin:0">
+          ${fl('Follow-up Date')}
+          ${window.dateFieldHtml('ne-con-followup', { value: preCon.followUpDate || '', style: inp + ';height:40px', max: 'none', min: today })}
+        </div>
       </div>
-      <div class="form-group" style="margin:0">
-        ${fl('Follow-up Date')}
-        ${window.dateFieldHtml('ne-con-followup', { value: preCon.followUpDate || '', style: inp, max: 'none' })}
-      </div>
+    </div>
+    <div style="${needsFollowUpByDefault ? '' : 'display:none'}" id="ne-followup-hint-wrap">
+      <div style="font-size:.72rem;color:#9CA3AF;margin-top:6px;margin-bottom:16px">Clinic staff will be notified to schedule this follow-up appointment once you save.</div>
     </div>
     <div class="form-group" style="margin-bottom:16px">
       ${fl('Chief Complaint')}
@@ -4087,16 +4211,16 @@ function pageNewExamination() {
       </div>
     <div class="form-group" style="margin-bottom:14px">
       ${fl('Total Amount (PHP)')}
-      <input id="ne-total" type="number" class="form-input" style="${inp}" value="0.00" placeholder="0.00">
+      <input id="ne-total" type="number" class="form-input" style="${inp}" value="${linkedRx?.totalAmount ?? '0.00'}" placeholder="0.00">
     </div>
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px">
       <div class="form-group" style="margin:0">
         ${fl('Dispensed Date')}
-        ${window.dateFieldHtml('ne-dispensed-date', { value: today, style: inp, max: 'none' })}
+        ${window.dateFieldHtml('ne-dispensed-date', { value: linkedRx?.dispensedDate || today, style: inp, max: 'none' })}
       </div>
       <div class="form-group" style="margin:0">
         ${fl('Received By')}
-        <input id="ne-received-by" class="form-input" style="${inp}" placeholder="e.g. Juan Dela Cruz">
+        <input id="ne-received-by" class="form-input" style="${inp}" value="${linkedRx?.receivedBy || ''}" placeholder="e.g. Juan Dela Cruz">
       </div>
     </div>
     </div><!-- end ne-dispensing-fields -->
@@ -4186,18 +4310,13 @@ function pageNewExamination() {
   <div class="page-header">
     <div class="page-header-left">
       <div style="display:flex;align-items:center;gap:12px">
-        <button class="btn-icon" onclick="window.navigate('${isEdit ? 'patient-view' : 'new-examination'}'${isEdit ? `,{patientId:'${p.id}',patientName:'${p.name.replace(/'/g,"\\'")}'}` : ''})" title="Back">${ic('chevron-left','icon')}</button>
+        <button class="btn-icon" onclick="window.goBack('${isEdit ? 'patient-view' : 'new-examination'}'${isEdit ? `,{patientId:'${p.id}',patientName:'${p.name.replace(/'/g,"\\'")}'}` : ''})" title="Back">${ic('chevron-left','icon')}</button>
         <div>
           <h1 class="page-title" style="font-size:1.4rem">${isEdit ? 'Edit Optical Examination' : 'Optical Examination Record'}</h1>
           <p class="page-subtitle">Patient: <strong>${p.name}</strong> &nbsp;·&nbsp; ${p.id}${isEdit ? ` &nbsp;·&nbsp; ${params.examId}` : ''}</p>
         </div>
       </div>
     </div>
-    ${!isEdit ? `<div class="page-header-right">
-      <button class="btn-secondary" style="font-size:.82rem" onclick="window.navigate('new-examination')">
-        ${ic('refresh-cw','icon-sm')} Change Patient
-      </button>
-    </div>` : ''}
   </div>
 
   <div class="page-body">
@@ -4587,6 +4706,12 @@ function pagePatientDashboard() {
 // ════════════════════════════════════════════════════════════════
 function appointmentWizardHtml(mode) {
   const isStaff = mode === 'staff'
+  // A patient with zero completed exams yet has no track record with any
+  // doctor to have a real preference from — showing them named doctors
+  // this early leaks doctor identities/schedules for no benefit, so they
+  // skip the preference gate entirely (see _isFirstTimePatient(), main.js,
+  // and amcInit()'s own matching branch that forces any-doctor mode).
+  const isFirstTimePatient = !isStaff && !!(window._isFirstTimePatient && window._isFirstTimePatient())
   // Follow-up Consultation is for staff/admin to schedule on a patient's
   // behalf after reviewing their case — not something a patient should be
   // able to self-select when requesting their own first-time visit.
@@ -4801,9 +4926,24 @@ function appointmentWizardHtml(mode) {
     <!-- Preference gate — patient-only, shown before the wizard proper.
          Choosing "Any available optometrist" sets _wiz.anyDoctor and skips
          the Doctor step entirely (main.js wizGo()/wizJump()); the clinic
-         assigns an actual doctor after reviewing the request. -->
+         assigns an actual doctor after reviewing the request. A first-time
+         patient (isFirstTimePatient above) never gets the actual choice —
+         showing named doctors to someone with no track record with any of
+         them leaks doctor identities for no benefit — but they still see
+         this gate, just as a one-button notice explaining why, instead of
+         the "any doctor" assignment happening silently with no
+         acknowledgment at all. -->
     <div id="wiz-pref" class="card" style="border-radius:12px;border:1px solid #e5e7eb;margin-bottom:8px">
       <div class="card-body" style="text-align:center;padding:40px 24px">
+        ${isFirstTimePatient ? `
+        <span style="color:#E8760A;display:inline-flex">${ic('users','icon-lg')}</span>
+        <div style="font-size:1.15rem;font-weight:700;color:#1C1C1C;margin:10px 0 6px">We'll match you with an available optometrist</div>
+        <div style="font-size:.85rem;color:#6B7280;margin-bottom:24px;max-width:440px;margin-left:auto;margin-right:auto">
+          Since this is your first visit, the clinic will assign you whichever optometrist is available at the date and time you choose. Once you've completed your first exam here, you'll be able to request a specific doctor for future visits.
+        </div>
+        <button class="btn-primary" style="padding:11px 28px" onclick="window.wizChooseDoctorPref(true)">
+          Continue ${ic('chevron-right','icon-sm')}
+        </button>` : `
         <div style="font-size:1.15rem;font-weight:700;color:#1C1C1C;margin-bottom:6px">Do you have a preferred optometrist?</div>
         <div style="font-size:.85rem;color:#6B7280;margin-bottom:24px;max-width:440px;margin-left:auto;margin-right:auto">
           You can pick a specific optometrist yourself, or let the clinic assign one who's free at the time you choose.
@@ -4819,7 +4959,7 @@ function appointmentWizardHtml(mode) {
             <span style="font-size:.88rem;font-weight:700;color:#1C1C1C">Any available optometrist</span>
             <span style="font-size:.74rem;color:#9CA3AF">The clinic will assign an optometrist for you.</span>
           </button>
-        </div>
+        </div>`}
       </div>
     </div>`}
 
@@ -4855,6 +4995,17 @@ function appointmentWizardHtml(mode) {
               <div style="font-size:.82rem;color:#1e40af;line-height:1.5">
                 Booking with <strong id="amc-prefill-doc-name"></strong>. Only their available days are shown. Select your preferred date below.
               </div>
+            </div>
+            <!-- Shown only when a recommended follow-up date (from a
+                 "Follow-up Consultation Needed" notification) turned out to
+                 fall on a PH holiday or a day the clinic isn't open —
+                 nothing about the doctor's original recommendation checks
+                 that. See wizInitStaff() (main.js), which keeps the date
+                 unselected on the calendar below rather than falsely
+                 marking an unbookable day "Selected". -->
+            <div id="wiz-date-unavail-notice" style="display:none;background:#FEF2F2;border-left:3px solid #DC2626;border-radius:8px;padding:12px 16px;margin-bottom:16px;align-items:flex-start;gap:10px">
+              <svg viewBox="0 0 24 24" fill="none" stroke="#DC2626" stroke-width="2" stroke-linecap="round" width="16" height="16" style="flex-shrink:0;margin-top:2px"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>
+              <div style="font-size:.82rem;color:#991B1B;line-height:1.5">The doctor's recommended follow-up date, <strong id="wiz-date-unavail-date"></strong>, isn't available. <span id="wiz-date-unavail-reason"></span>. Please choose a different date below.</div>
             </div>
             <div style="background:#eff6ff;border-left:3px solid #3b82f6;border-radius:8px;padding:12px 16px;margin-bottom:16px;display:flex;align-items:flex-start;gap:10px">
               <span style="flex-shrink:0;display:flex;margin-top:2px"><svg viewBox="0 0 24 24" fill="none" stroke="#3b82f6" stroke-width="2" stroke-linecap="round" width="16" height="16"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg></span>
@@ -4897,6 +5048,15 @@ function appointmentWizardHtml(mode) {
               <div style="font-size:1.1rem;font-weight:700;color:#1C1C1C;margin-bottom:4px">${isStaff ? 'Choose the doctor' : 'Choose your doctor'}</div>
               <div style="font-size:.85rem;color:#6B7280">Showing doctors available on <strong id="wiz-date-lbl2" style="color:#1C1C1C"></strong></div>
             </div>
+            <!-- Shown only when a recommended follow-up doctor+date (from a
+                 "Follow-up Consultation Needed" notification) turned out not to
+                 actually be available on that date — see wizInitStaff() (main.js),
+                 which checks this before ever jumping to Step 3, and lands here
+                 with the date kept but no doctor pre-selected instead. -->
+            <div id="wiz-doctor-unavail-notice" style="display:none;background:#FEF2F2;border-left:3px solid #DC2626;border-radius:8px;padding:12px 16px;margin-bottom:16px;align-items:flex-start;gap:10px">
+              <svg viewBox="0 0 24 24" fill="none" stroke="#DC2626" stroke-width="2" stroke-linecap="round" width="16" height="16" style="flex-shrink:0;margin-top:2px"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>
+              <div style="font-size:.82rem;color:#991B1B;line-height:1.5"><strong id="wiz-doctor-unavail-name"></strong> isn't available on this date. Please choose a doctor who is. The appointment can still be scheduled, just not with them on this specific day.</div>
+            </div>
             <div id="wiz-doctor-cards"></div>
             <input type="hidden" id="appt-doctor" value="">
             <div class="wiz-nav">
@@ -4912,7 +5072,14 @@ function appointmentWizardHtml(mode) {
         <div class="wiz-step card" id="wiz-step-2">
           <div class="card-body">
             <div style="margin-bottom:16px">
-              <div style="font-size:1.1rem;font-weight:700;color:#1C1C1C;margin-bottom:4px">Pick a time</div>
+              <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:4px">
+                <div style="font-size:1.1rem;font-weight:700;color:#1C1C1C">Pick a time</div>
+                <!-- Only shown when this booking was pre-filled from a doctor's
+                     "Follow-up Consultation Needed" notification — flags that the
+                     doctor, not staff, chose this date, since the wizard otherwise
+                     gives no indication of why it opened straight to Step 3. -->
+                <span id="wiz-followup-pill" style="display:none;align-items:center;gap:4px;font-size:.7rem;font-weight:600;padding:3px 10px;border-radius:20px;white-space:nowrap;background:#eff6ff;color:#1e40af;border:1px solid #bfdbfe">Doctor-recommended follow-up date</span>
+              </div>
               <div style="font-size:.85rem;color:#6B7280">Available slots for <strong id="wiz-doc-lbl3" style="color:#1C1C1C"></strong> on <strong id="wiz-date-lbl3" style="color:#1C1C1C"></strong></div>
             </div>
             <div id="appt-time-slots"></div>
@@ -5009,16 +5176,16 @@ function appointmentWizardHtml(mode) {
             <div class="form-group" style="max-width:360px;margin-bottom:16px">
               <label class="form-label">Initial Status</label>
               <div style="display:flex;gap:8px;margin-top:6px">
-                <button type="button" class="init-status-pill selected" data-status="pending"
+                <button type="button" class="init-status-pill" data-status="pending"
                         onclick="window.setInitialStatus('pending', this)">
                   ${ic('clock','icon-sm')} Pending
                 </button>
-                <button type="button" class="init-status-pill" data-status="approved"
+                <button type="button" class="init-status-pill selected" data-status="approved"
                         onclick="window.setInitialStatus('approved', this)">
                   ${ic('check-circle','icon-sm')} Approved
                 </button>
               </div>
-              <input type="hidden" id="ca-initial-status" value="pending">
+              <input type="hidden" id="ca-initial-status" value="approved">
             </div>
             <div style="font-size:.75rem;color:#9CA3AF;line-height:1.5;margin-bottom:16px;display:flex;align-items:flex-start;gap:6px">
               ${ic('info','icon-sm')} This appointment will be created on behalf of the patient shown above. The patient will be notified.
@@ -5106,9 +5273,14 @@ function pageCreateAppointment() {
     window.state.afterRender = () => { document.getElementById('cap-patient-search')?.focus() }
     return `
     <div class="page-header">
-      <div class="page-header-left">
-        <h1 class="page-title">New Appointment</h1>
-        <p class="page-subtitle">Select which patient this appointment is for</p>
+      <div class="page-header-left" style="display:flex;align-items:center;gap:12px">
+        <button class="btn-icon" onclick="window.goBack('${st().role === 'admin' ? 'admin-dashboard' : 'staff-dashboard'}')" title="Back">
+          ${ic('chevron-left','icon')}
+        </button>
+        <div>
+          <h1 class="page-title">New Appointment</h1>
+          <p class="page-subtitle">Select which patient this appointment is for</p>
+        </div>
       </div>
     </div>
     <div class="page-body">
@@ -5137,9 +5309,14 @@ function pageCreateAppointment() {
   window.state.afterRender = () => window.wizInitStaff(patientId, patientName)
   return `
   <div class="page-header">
-    <div class="page-header-left">
-      <h1 class="page-title">New Appointment</h1>
-      <p class="page-subtitle">Booking for <strong>${patientName}</strong></p>
+    <div class="page-header-left" style="display:flex;align-items:center;gap:12px">
+      <button class="btn-icon" onclick="window.goBack('patient-view',{patientId:'${patientId}',patientName:'${patientName.replace(/'/g,"\\'")}'})" title="Back to ${patientName}'s profile">
+        ${ic('chevron-left','icon')}
+      </button>
+      <div>
+        <h1 class="page-title">New Appointment</h1>
+        <p class="page-subtitle">Booking for <strong>${patientName}</strong></p>
+      </div>
     </div>
     <button class="btn-secondary" style="align-self:center" onclick="window.navigate('create-appointment')">${ic('refresh-cw','icon-sm')} Change Patient</button>
   </div>
@@ -5176,9 +5353,12 @@ function pagePatientAppts() {
 
   return `
   <div class="page-header">
-    <div class="page-header-left">
-      <h1 class="page-title">${tab === 'request' ? 'Request Appointment' : tab === 'today' ? "Today's Appointments" : (statusFilter ? statusFilter.charAt(0).toUpperCase()+statusFilter.slice(1)+' Appointments' : 'My Appointments')}</h1>
-      <p class="page-subtitle">${tab === 'request' ? 'Book a new consultation with one of our doctors' : tab === 'today' ? 'Your appointments scheduled for today' : 'View your appointment history'}</p>
+    <div class="page-header-left" style="${tab === 'request' ? 'display:flex;align-items:center;gap:12px' : ''}">
+      ${tab === 'request' ? `<button class="btn-icon" onclick="window.wizPageBack()" title="Back">${ic('chevron-left','icon')}</button>` : ''}
+      <div>
+        <h1 class="page-title">${tab === 'request' ? 'Request Appointment' : tab === 'today' ? "Today's Appointments" : (statusFilter ? statusFilter.charAt(0).toUpperCase()+statusFilter.slice(1)+' Appointments' : 'My Appointments')}</h1>
+        <p class="page-subtitle">${tab === 'request' ? 'Book a new consultation with one of our doctors' : tab === 'today' ? 'Your appointments scheduled for today' : 'View your appointment history'}</p>
+      </div>
     </div>
     ${tab !== 'request' ? `<button class="btn-primary" onclick="window.navigate('patient-request-appt')">${ic('plus','icon-sm')} New Appointment</button>` : ''}
   </div>
@@ -5446,6 +5626,8 @@ function pageStaffSettings() {
   const staffMember = staff.find(s => s.id === user?.id) || user || {}
   const staffName = staffMember.name || `${staffMember.firstName || ''} ${staffMember.lastName || ''}`.trim() || 'Staff'
 
+  window.state.afterRender = () => window.loadActiveSessionsSummary()
+
   const pwField = (id, placeholder, extra='') => `
     <div style="position:relative">
       <input type="password" class="form-input" id="${id}" placeholder="${placeholder}" style="padding-right:40px" autocomplete="off" readonly onfocus="this.removeAttribute('readonly')" ${extra}>
@@ -5577,6 +5759,8 @@ function pageStaffSettings() {
         </div>
       </div>
 
+      ${window.activeSessionsCardHtml()}
+
     </div>
   </div>`
 }
@@ -5601,6 +5785,11 @@ function renderRxDocumentCard(rx, patient, isFeatured) {
   const docInits   = (rx.doctor||'Dr').split(' ').slice(0,2).map(w=>w[0]||'').join('').toUpperCase()
   const docRecord  = doctors.find(d => d.name === rx.doctor)
   const docPhoto   = docRecord?.photoUrl || null
+  // Same contact-lens type list the exam wizard's own Correction Type
+  // toggle uses (pageNewExamination(), this file) — duplicated locally
+  // rather than shared across files, matching how that list already
+  // isn't a single canonical source anywhere else in this codebase.
+  const correctionType = ['Hard Lenses','Soft Lenses','Hybrid Lenses','Multifocal Lenses','Scleral Lenses'].includes(rx.lensType) ? 'Contact Lens' : 'Eyeglass'
   return `
     <div class="card" style="margin-bottom:18px;overflow:hidden${isFeatured ? ';box-shadow:0 0 0 2px #E8760A,0 8px 24px rgba(232,118,10,.12)' : ''}">
 
@@ -5640,7 +5829,10 @@ function renderRxDocumentCard(rx, patient, isFeatured) {
       <!-- Printable prescription body -->
       <div id="rx-card-${rx.id}" style="padding:18px 20px">
 
-        <div style="font-size:.6rem;font-weight:700;text-transform:uppercase;letter-spacing:.1em;color:#9CA3AF;margin-bottom:10px">Final Refraction</div>
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+          <div style="font-size:.6rem;font-weight:700;text-transform:uppercase;letter-spacing:.1em;color:#9CA3AF">Final Refraction</div>
+          <span style="font-size:.62rem;font-weight:700;padding:2px 10px;border-radius:20px;background:#FFF7ED;color:#C2410C;border:1px solid #FDE68A">${correctionType}</span>
+        </div>
 
         <!-- OD / OS bordered cards -->
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:16px">
@@ -5692,6 +5884,16 @@ function renderRxDocumentCard(rx, patient, isFeatured) {
         ${rx.lensCoating && rx.lensCoating.length ? `
         <div style="display:flex;flex-wrap:wrap;gap:5px;margin-bottom:10px">
           ${rx.lensCoating.map(c=>`<span style="background:#FFF7ED;color:#C2410C;font-size:.7rem;font-weight:600;padding:2px 9px;border-radius:20px;border:1px solid #FDE68A">${c}</span>`).join('')}
+        </div>` : ''}
+
+        ${(rx.totalAmount || rx.dispensedDate || rx.receivedBy) ? `
+        <div style="border-top:1px solid #F3F4F6;padding-top:12px">
+          <div style="font-size:.6rem;font-weight:700;text-transform:uppercase;letter-spacing:.1em;color:#9CA3AF;margin-bottom:8px">Dispensing Information</div>
+          <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));gap:8px">
+            ${rx.totalAmount ? `<div style="background:#F9FAFB;border:1px solid #F3F4F6;border-radius:8px;padding:9px 12px"><div style="font-size:.58rem;color:#9CA3AF;text-transform:uppercase;letter-spacing:.05em;margin-bottom:3px">Total Amount</div><div style="font-size:.82rem;font-weight:700;color:#1C1C1C">&#8369;${Number(rx.totalAmount).toLocaleString('en-PH',{minimumFractionDigits:2,maximumFractionDigits:2})}</div></div>` : ''}
+            ${rx.dispensedDate ? `<div style="background:#F9FAFB;border:1px solid #F3F4F6;border-radius:8px;padding:9px 12px"><div style="font-size:.58rem;color:#9CA3AF;text-transform:uppercase;letter-spacing:.05em;margin-bottom:3px">Dispensed Date</div><div style="font-size:.82rem;font-weight:700;color:#1C1C1C">${new Date(rx.dispensedDate.includes('T') ? rx.dispensedDate : rx.dispensedDate+'T00:00:00').toLocaleDateString('en-PH',{year:'numeric',month:'short',day:'numeric'})}</div></div>` : ''}
+            ${rx.receivedBy ? `<div style="background:#F9FAFB;border:1px solid #F3F4F6;border-radius:8px;padding:9px 12px"><div style="font-size:.58rem;color:#9CA3AF;text-transform:uppercase;letter-spacing:.05em;margin-bottom:3px">Received By</div><div style="font-size:.82rem;font-weight:700;color:#1C1C1C">${rx.receivedBy}</div></div>` : ''}
+          </div>
         </div>` : ''}
 
       </div><!-- end printable body -->
@@ -5801,9 +6003,9 @@ function pagePatientPrescriptions() {
 function pagePatientNotifications() {
   const notifs = window._notifications || []
 
-  const typeIcon  = { approved:'check-circle', cancelled:'x-circle', disapproved:'x-circle', rescheduled:'calendar', new_appointment:'calendar', reschedule_request:'alert-circle', welcome:'home', reminder:'clock', waitlist_offer:'alert-circle', waitlist_removed:'x-circle', waitlist_join:'clock', waitlist_left:'x-circle', no_show:'alert-circle', record:'eye', prescription:'file-text', info:'info', appointment_confirmed:'check-circle' }
-  const typeColor = { approved:'#059669', cancelled:'#EF4444', disapproved:'#EF4444', rescheduled:'#3B82F6', new_appointment:'#E8760A', reschedule_request:'#D97706', welcome:'#E8760A', reminder:'#D97706', waitlist_offer:'#E8760A', waitlist_removed:'#EF4444', waitlist_join:'#E8760A', waitlist_left:'#6B7280', no_show:'#EF4444', record:'#E8760A', prescription:'#3B82F6', info:'#6B7280', appointment_confirmed:'#059669' }
-  const typeBg    = { approved:'#ECFDF5', cancelled:'#FEF2F2', disapproved:'#FEF2F2', rescheduled:'#EFF6FF', new_appointment:'#FFF0DC', reschedule_request:'#FFF3CD', welcome:'#FFF0DC', reminder:'#FFF3CD', waitlist_offer:'#FFF0DC', waitlist_removed:'#FEF2F2', waitlist_join:'#FFF0DC', waitlist_left:'#F3F4F6', no_show:'#FEF2F2', record:'#FFF0DC', prescription:'#EFF6FF', info:'#F3F4F6', appointment_confirmed:'#ECFDF5' }
+  const typeIcon  = { approved:'check-circle', cancelled:'x-circle', disapproved:'x-circle', rescheduled:'calendar', new_appointment:'calendar', reschedule_request:'alert-circle', welcome:'home', reminder:'clock', waitlist_offer:'alert-circle', waitlist_removed:'x-circle', waitlist_join:'clock', waitlist_left:'x-circle', no_show:'alert-circle', record:'eye', prescription:'file-text', info:'info', appointment_confirmed:'check-circle', follow_up_needed:'calendar', new_login:'monitor' }
+  const typeColor = { approved:'#059669', cancelled:'#EF4444', disapproved:'#EF4444', rescheduled:'#3B82F6', new_appointment:'#E8760A', reschedule_request:'#D97706', welcome:'#E8760A', reminder:'#D97706', waitlist_offer:'#E8760A', waitlist_removed:'#EF4444', waitlist_join:'#E8760A', waitlist_left:'#6B7280', no_show:'#EF4444', record:'#E8760A', prescription:'#3B82F6', info:'#6B7280', appointment_confirmed:'#059669', follow_up_needed:'#E8760A', new_login:'#E8760A' }
+  const typeBg    = { approved:'#ECFDF5', cancelled:'#FEF2F2', disapproved:'#FEF2F2', rescheduled:'#EFF6FF', new_appointment:'#FFF0DC', reschedule_request:'#FFF3CD', welcome:'#FFF0DC', reminder:'#FFF3CD', waitlist_offer:'#FFF0DC', waitlist_removed:'#FEF2F2', waitlist_join:'#FFF0DC', waitlist_left:'#F3F4F6', no_show:'#FEF2F2', record:'#FFF0DC', prescription:'#EFF6FF', info:'#F3F4F6', appointment_confirmed:'#ECFDF5', follow_up_needed:'#FFF0DC', new_login:'#FFF0DC' }
   const resolveType = n => (n.type === 'info' && n.title?.toLowerCase().startsWith('welcome')) ? 'welcome' : n.type
 
   const unreadCount = notifs.filter(n => !n.isRead).length
@@ -5814,11 +6016,17 @@ function pagePatientNotifications() {
       <p style="font-size:.8rem;margin:0;color:#9CA3AF">You're all caught up!</p>
     </div>`
 
+  const _dashByRole = { admin:'admin-dashboard', staff:'staff-dashboard', doctor:'doctor-dashboard', patient:'patient-dashboard' }
   return `
   <div class="page-header">
-    <div class="page-header-left">
-      <h1 class="page-title">Notifications</h1>
-      <p class="page-subtitle">Stay updated on your appointments and records</p>
+    <div class="page-header-left" style="display:flex;align-items:center;gap:12px">
+      <button class="btn-icon" onclick="window.goBack('${_dashByRole[st().role] || 'admin-dashboard'}')" title="Back">
+        ${ic('chevron-left','icon')}
+      </button>
+      <div>
+        <h1 class="page-title">Notifications</h1>
+        <p class="page-subtitle">Stay updated on your appointments and records</p>
+      </div>
     </div>
     <div style="display:flex;gap:8px;flex-wrap:wrap">
       ${unreadCount ? `
@@ -5867,6 +6075,8 @@ function pagePatientSettings() {
   const regDate = patient?.registeredDate
     ? new Date(patient.registeredDate).toLocaleDateString('en-PH', { month: 'long', year: 'numeric' })
     : '—'
+
+  window.state.afterRender = () => window.loadActiveSessionsSummary()
 
   const pwField = (id, placeholder, extra='') => `
     <div style="position:relative">
@@ -6087,6 +6297,32 @@ function pagePatientSettings() {
         </div>
 
       </div>
+
+      ${window.activeSessionsCardHtml()}
+
+    </div>
+  </div>`
+}
+
+// ════════════════════════════════════════════════════════════════
+//  ACTIVE SESSIONS — every role. Reached via the compact summary card
+//  on each role's own Settings page (activeSessionsCardHtml(), main.js)
+//  — same "summary card here, full list on its own page" split as
+//  Google's Security & Sign-in > Your devices.
+// ════════════════════════════════════════════════════════════════
+function pageActiveSessions() {
+  window.state.afterRender = () => window.loadActiveSessionsPage()
+
+  return `
+  <div class="page-header">
+    <div class="page-header-left">
+      <h1 class="page-title">Security &amp; Sign-in</h1>
+      <p class="page-subtitle">Devices currently signed in to your account. Changing your password signs the others out automatically.</p>
+    </div>
+  </div>
+  <div class="page-body">
+    <div id="active-sessions-groups">
+      <div class="card" style="padding:40px 24px;text-align:center;color:#9CA3AF;font-size:.85rem">Loading…</div>
     </div>
   </div>`
 }

@@ -76,6 +76,9 @@ function icon(name, cls = 'icon') {
     award:         '<circle cx="12" cy="8" r="6"/><path d="M15.477 12.89L17 22l-5-3-5 3 1.523-9.11"/>',
     'x-circle':    '<circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/>',
     lock:          '<rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>',
+    monitor:       '<rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/>',
+    smartphone:    '<rect x="5" y="2" width="14" height="20" rx="2" ry="2"/><line x1="12" y1="18" x2="12.01" y2="18"/>',
+    tablet:        '<rect x="4" y="2" width="16" height="20" rx="2" ry="2"/><line x1="12" y1="18" x2="12.01" y2="18"/>',
     camera:        '<path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/>',
     'alert-triangle': '<path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>',
     archive:          '<polyline points="21 8 21 21 3 21 3 8"/><rect x="1" y="3" width="22" height="5"/><line x1="10" y1="12" x2="14" y2="12"/>',
@@ -132,7 +135,7 @@ window.handleRegister        = handleRegister
 window.showRegister          = showRegister
 window.showLogin             = showLogin
 window._charts               = { initAppointmentsChart, initPatientGrowthChart, initReportStatusChart, initReportMonthlyChart, updateAppointmentsChart, updatePatientGrowthChart, initAnalyticsDoughnut, initAnalyticsStacked, initGenderChart, initAgeChart, initDoctorUtilChart, updateAnalyticsCharts, initStaffOverviewChart, updateStaffOverviewChart }
-window._pages                = { pageAdminDashboard, pageAdminUsers, pageAppointments, pageCreateAppointment, pageWaitlist, pagePatientList, pagePatientView, pageContactMessages, pageQRScanner, pageSchedule, pageAdminReports, pageAdminSettings, pageActivityLog, pageStaffDashboard, pageStaffSettings, pageDoctorDashboard, pageDoctorAppointments, pageDoctorSchedule, pageDoctorSettings, pageExamination, pageExamRecords, pageNewExamination, pagePatientExamHistory, pagePatientDashboard, pagePatientAppts, pagePatientConsultations, pagePatientQR, pagePatientPrescriptions, pagePatientNotifications, pagePatientSettings, pageComingSoon, pagePatientDoctorAvail, pageScanQR }
+window._pages                = { pageAdminDashboard, pageAdminUsers, pageAppointments, pageCreateAppointment, pageWaitlist, pagePatientList, pagePatientView, pageContactMessages, pageQRScanner, pageSchedule, pageAdminReports, pageAdminSettings, pageActivityLog, pageStaffDashboard, pageStaffSettings, pageDoctorDashboard, pageDoctorAppointments, pageDoctorSchedule, pageDoctorSettings, pageExamination, pageExamRecords, pageNewExamination, pagePatientExamHistory, pagePatientDashboard, pagePatientAppts, pagePatientConsultations, pagePatientQR, pagePatientPrescriptions, pagePatientNotifications, pagePatientSettings, pageComingSoon, pagePatientDoctorAvail, pageScanQR, pageActiveSessions }
 window.toggleNotifyDropdown  = toggleNotifyDropdown
 window.toggleUserDropdown    = toggleUserDropdown
 window.closeAllDropdowns     = closeAllDropdowns
@@ -188,7 +191,13 @@ window.showModal  = showModal
 //  gv(id)/.value read across the app keeps working unchanged.
 // ════════════════════════════════════════════════════════════════
 function dateFieldHtml(id, opts = {}) {
-  const { value = '', cls = 'form-input', placeholder = 'mm/dd/yyyy', max = '', min = '', defaultYearsAgo = 0, onchange = '', style = '' } = opts
+  const { value = '', cls = 'form-input', placeholder = 'mm/dd/yyyy', max = '', min = '', defaultYearsAgo = 0, onchange = '', style = '',
+    // Optional, only used by callers that need them (e.g. the exam wizard's
+    // Follow-up Date) — everything else keeps working exactly as before.
+    // disabledWeekdays: day names the clinic is closed ('Sunday', etc.) —
+    // inverse of consultationSettings.clinicDays, computed by the caller.
+    // disabledDates: specific ISO dates to grey out (a doctor's blocked_dates).
+    disabledWeekdays = [], disabledDates = [] } = opts
   const label = value ? _dobFormat(value) : placeholder
   // style/onchange were accepted in opts but silently dropped — every call
   // site passing a custom width/font-size (Reports date range, Activity
@@ -226,7 +235,9 @@ function dateFieldHtml(id, opts = {}) {
         <span class="dob-mask-mirror" id="${id}-mirror" aria-hidden="true">${esc(initialOut)}</span>
         <span class="dob-picker-mask" id="${id}-mask" aria-hidden="true">${_dobMaskHtml(initialOut)}</span>` : ''
   return `
-  <div class="dob-picker" id="${id}-wrap" data-max="${max}" data-min="${min}" data-default-years-ago="${defaultYearsAgo}" data-placeholder="${esc(placeholder)}">
+  <div class="dob-picker" id="${id}-wrap" data-max="${max}" data-min="${min}" data-default-years-ago="${defaultYearsAgo}" data-placeholder="${esc(placeholder)}"
+       ${disabledWeekdays.length ? `data-disabled-weekdays='${JSON.stringify(disabledWeekdays)}'` : ''}
+       ${disabledDates.length ? `data-disabled-dates='${JSON.stringify(disabledDates)}'` : ''}>
     <input type="hidden" id="${id}" value="${value || ''}"${onchangeAttr}>
     <div id="${id}-trigger" class="${cls} dob-picker-trigger"${styleAttr}>
       <span class="dob-picker-text-wrap">${mirrorMaskHtml}
@@ -430,6 +441,10 @@ function openDobPicker(id) {
   const maxIso = wrap.dataset.max || ''
   const minIso = wrap.dataset.min || ''
   const defaultYearsAgo = parseInt(wrap.dataset.defaultYearsAgo || '0', 10)
+  let disabledWeekdays = []
+  let disabledDates    = []
+  try { disabledWeekdays = wrap.dataset.disabledWeekdays ? JSON.parse(wrap.dataset.disabledWeekdays) : [] } catch (_) {}
+  try { disabledDates    = wrap.dataset.disabledDates    ? JSON.parse(wrap.dataset.disabledDates)    : [] } catch (_) {}
   const today  = new Date()
   const seedIso = hidden.value || ''
   let y, m
@@ -461,7 +476,7 @@ function openDobPicker(id) {
   }
 
   _dobOpenId       = id
-  _dobState        = { year: y, month: m, maxIso, minIso }
+  _dobState        = { year: y, month: m, maxIso, minIso, disabledWeekdays, disabledDates }
   _dobSubOpen      = null
   _dobSubHighlight = -1
   trigger.classList.add('open')
@@ -595,7 +610,7 @@ function _dobPositionPopover(trigger) {
 function _dobRenderPanel() {
   const pop = document.getElementById('dob-popover-root')
   if (!pop || !_dobOpenId) return
-  const { year, month, maxIso, minIso } = _dobState
+  const { year, month, maxIso, minIso, disabledWeekdays = [], disabledDates = [] } = _dobState
   // maxIso === 'none' is an explicit opt-out (exam wizard's date fields —
   // Examination/Follow-up/Dispensed Date) from the otherwise-default
   // cap-at-today behavior below; maxDate stays null so no day is ever
@@ -618,12 +633,15 @@ function _dobRenderPanel() {
   // "yesterday", making the calendar highlight the wrong day as today.
   const todayIso  = localDateStr()
 
+  const WEEKDAY_NAMES = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday']
   let cells = ''
   for (let i = 0; i < firstDow; i++) cells += `<div class="dob-day dob-day-empty"></div>`
   for (let d = 1; d <= daysInMon; d++) {
     const iso = `${year}-${String(month + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`
     const dateObj = new Date(year, month, d)
     const disabled = (maxDate && dateObj > maxDate) || (minDate && dateObj < minDate)
+      || disabledWeekdays.includes(WEEKDAY_NAMES[dateObj.getDay()])
+      || disabledDates.includes(iso)
     const cls = ['dob-day']
     if (disabled) cls.push('dob-day-disabled')
     if (iso === selIso)   cls.push('dob-day-selected')
@@ -1404,6 +1422,191 @@ function printQR(wrapperId, patientName, patientId, qrData) {
   </body></html>`)
 }
 window.printQR = printQR
+
+// ════════════════════════════════════════════════════════════════
+//  DASHBOARD — PRINTABLE REPORT
+//  Admin/Staff/Doctor only (the Dashboard page's own "Print Report"
+//  button never renders for patients; guarded again here defensively).
+//  Deliberately table-only, no charts — Chart.js canvases don't survive
+//  being re-created inside a separate print document, and a plain data
+//  table reads better on paper than a screenshot of a bar chart anyway.
+// ════════════════════════════════════════════════════════════════
+function printDashboardReport() {
+  const role = state.role
+  if (role === 'patient') return
+
+  const generated  = new Date().toLocaleString('en-PH', { year:'numeric', month:'long', day:'numeric', hour:'numeric', minute:'2-digit', hour12:true })
+  const logoAbsUrl = new URL(window._clinicLogoUrl || 'assets/images/logo/clinic-logo.png', document.baseURI).href
+  const clinicName = window._clinicName || clinicInfo.name || 'Cana Optical Clinic'
+  const roleLabel  = { admin:'Administrator', staff:'Staff', doctor:'Doctor' }[role] || role
+
+  const table = (title, headers, rows) => `
+    <div class="rpt-section">
+      <div class="rpt-sec-title">${title}</div>
+      ${rows.length ? `
+      <div class="tbl-border">
+        <table>
+          <thead class="tbl-hdr"><tr>${headers.map(h => `<th style="text-align:left;color:#777">${h}</th>`).join('')}</tr></thead>
+          <tbody>${rows.map(r => `<tr>${r.map(c => `<td style="padding:7px 12px;font-size:12px;border-bottom:1px solid #eee">${c}</td>`).join('')}</tr>`).join('')}</tbody>
+        </table>
+      </div>` : `<div class="rpt-empty">No data.</div>`}
+    </div>`
+
+  let subtitle = 'Dashboard Report'
+  let sections = ''
+
+  if (role === 'admin' || role === 'staff') {
+    subtitle = 'Clinic Overview Report'
+    const todayStr     = localDateStr()
+    const todayCnt     = appointments.filter(a => a.date === todayStr && !['cancelled','disapproved'].includes(a.status)).length
+    const completedCnt = appointments.filter(a => a.status === 'completed').length
+    const cancelledCnt = appointments.filter(a => a.status === 'cancelled').length
+    const totalDocs    = doctors.length
+    const todayShort   = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'][new Date().getDay()]
+    const availDocs    = doctors.filter(d => d.status === 'active' && d.available && (d.days || []).includes(todayShort)).length
+    const pendingCnt   = appointments.filter(a => a.status === 'pending').length
+
+    sections += table('Overview', ['Metric','Value','Note'], [
+      ['Total Patients', patients.length, `${patients.filter(p=>p.status==='active').length} active`],
+      ['Total Appointments', appointments.length, `${pendingCnt} pending`],
+      ['Doctors Available', `${availDocs}/${totalDocs}`, 'Available today'],
+      ["Today's Appointments", todayCnt, 'Scheduled for today'],
+      ['Completed Consultations', completedCnt, 'Total completed'],
+      ['Cancelled', cancelledCnt, 'Total cancelled'],
+    ])
+
+    // Same month range currently selected on the on-screen chart (default
+    // 6) — a table restating exactly what the bar/line charts show, not a
+    // separately-scoped dataset.
+    const range = parseInt(document.getElementById('admin-chart-range-select')?.value || '6', 10)
+    const now = new Date()
+    const apptRows = [], growthRows = []
+    for (let i = range - 1; i >= 0; i--) {
+      const d = new Date(now.getFullYear(), now.getMonth() - i, 1)
+      const label = d.toLocaleString('en-US', { month:'long', year:'numeric' })
+      const y = d.getFullYear(), m = d.getMonth()
+      apptRows.push([label, appointments.filter(a => {
+        const ad = new Date(a.date); return ad.getFullYear() === y && ad.getMonth() === m && !['cancelled','disapproved'].includes(a.status)
+      }).length])
+      growthRows.push([label, patients.filter(p => {
+        if (!p.registeredDate) return false
+        const pd = new Date(p.registeredDate); return pd.getFullYear() === y && pd.getMonth() === m
+      }).length])
+    }
+    sections += table('Monthly Appointments', ['Month','Appointments'], apptRows)
+    sections += table('Patient Growth', ['Month','New Patients'], growthRows)
+
+    sections += table('Doctor Availability', ['Doctor','Specialization','Days','Status'],
+      doctors.map(d => [d.name, d.specialization || '—', (d.days || []).join(', ') || '—', (d.available && d.status === 'active') ? 'Available' : 'Unavailable']))
+
+    const recentAppts = [...appointments].sort((a,b) => b.date.localeCompare(a.date) || String(b.id).localeCompare(String(a.id))).slice(0, 6)
+    sections += table('Recent Appointments', ['Patient','Doctor','Date','Status'],
+      recentAppts.map(a => [a.patientName || '—', (a.doctorName || 'Unassigned').replace('Dr. ',''), fmtDate(a.date), a.status.charAt(0).toUpperCase() + a.status.slice(1)]))
+
+    // Activity log is an admin-only feature elsewhere in the app (see
+    // _dashboardOverviewBody's own showActivity gate) — same restriction here.
+    if (role === 'admin') {
+      sections += table('Recent Activity', ['User','Action','Time'],
+        activityLog.slice(0, 5).map(a => [a.user, a.action, new Date(a.timestamp.replace(' ','T')).toLocaleString('en-PH', { month:'short', day:'numeric', hour:'numeric', minute:'2-digit', hour12:true })]))
+    }
+  } else if (role === 'doctor') {
+    subtitle = 'Doctor Dashboard Report'
+    const todayStr = localDateStr()
+    const timeVal = t => { if (!t) return 0; const cl = t.includes('PM') && !t.startsWith('12'), [h,m] = t.replace(/ [AP]M$/,'').split(':').map(Number); return (cl ? h+12 : (t.includes('AM') && h===12 ? 0 : h))*60+m }
+    const todayList    = appointments.filter(a => a.date === todayStr && !['cancelled','disapproved'].includes(a.status)).sort((a,b) => timeVal(a.time) - timeVal(b.time))
+    const upcomingList = appointments.filter(a => a.date > todayStr && ['approved','pending'].includes(a.status))
+    const weekStart    = new Date(); weekStart.setDate(weekStart.getDate() - weekStart.getDay())
+    const weekStartStr = localDateStr(weekStart)
+    const thisWeek      = appointments.filter(a => a.status === 'completed' && a.date >= weekStartStr).length
+    const pendingAppts  = appointments.filter(a => a.status === 'pending').length
+    const recentDone    = appointments.filter(a => a.status === 'completed').sort((a,b) => b.date.localeCompare(a.date)).slice(0, 5)
+
+    sections += table('Overview', ['Metric','Value'], [
+      ['Patients Today', todayList.length],
+      ['Upcoming Appointments', upcomingList.length],
+      ['Completed This Week', thisWeek],
+      ['Pending Approval', pendingAppts],
+    ])
+    sections += table("Today's Patients", ['Patient','Time','Type','Status'],
+      todayList.map(a => [a.patientName, a.time, a.type, a.status.charAt(0).toUpperCase() + a.status.slice(1)]))
+    sections += table('Recent Completed', ['Patient','Date','Type'],
+      recentDone.map(a => [a.patientName, fmtDate(a.date), a.type]))
+  }
+
+  const html = `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Dashboard Report — ${clinicName}</title>
+<style>
+  /* A real @page margin, not margin:0 + a manual body padding standing in
+     for it — that padding-based approach (moving it from a nested div to
+     body itself was tried first) still came out with NO margin at all on
+     page 2+ once real content pushed this report past one page. @page's
+     own margin is the one box CSS print fragmentation spec-guarantees
+     gets reapplied on every page a document spans; same fix applied to
+     the Reports page's own print document (pages.js printReport()). */
+  @page { size: A4; margin: 16mm 20mm; }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: Arial, Helvetica, sans-serif; color:#111; font-size:13px; line-height:1.6; background:#fff; }
+  table { width:100%; border-collapse: collapse; }
+  .clinic-hdr  { display:flex; align-items:center; gap:14px; border-bottom:3px solid #E8760A; padding-bottom:14px; margin-bottom:16px; }
+  .clinic-logo { height:60px; flex-shrink:0; }
+  .clinic-name { font-size:22px; font-weight:900; color:#E8760A; letter-spacing:-.02em; }
+  .clinic-sub  { font-size:15px; font-weight:700; color:#1C1C1C; }
+  .clinic-doc  { font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:.1em; color:#bbb; margin-top:4px; }
+  .rpt-meta    { display:flex; justify-content:space-between; font-size:11px; color:#888; margin-bottom:22px; }
+  /* Row-level break protection (below), not section-level — a whole
+     .rpt-section forced to avoid breaking could get shoved entirely onto
+     a new page even when only its last row or two didn't fit, wasting
+     most of the previous page and sometimes leaving a near-empty trailing
+     page. tr{page-break-inside:avoid} only protects a single row from
+     being sliced in half, letting the table itself flow across the page
+     boundary normally — same technique already used by the Reports
+     page's own print document (pages.js printReport()). */
+  .rpt-section { margin-bottom:20px; }
+  tr { page-break-inside: avoid; }
+  .rpt-sec-title { font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.06em; color:#999; margin-bottom:6px; }
+  .rpt-empty   { font-size:12px; color:#aaa; font-style:italic; padding:8px 0; }
+  .tbl-hdr th  { background:#f5f5f5; padding:8px 12px; font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:.04em; }
+  .tbl-border  { border:1px solid #eee; border-radius:8px; overflow:hidden; }
+  /* No page-break-inside:avoid here (unlike .rpt-section) — this block is
+     short enough that "avoid" was more likely to shove the whole thing
+     onto a lonely trailing page (leaving the actual last content page
+     with unused space below it) than to actually protect it from a bad
+     mid-block split. */
+  .sig-block   { margin-top:32px; padding-top:16px; border-top:1px dashed #ccc; display:flex; justify-content:flex-end; }
+  .sig-col     { text-align:center; min-width:220px; }
+  .sig-line    { border-top:1px solid #111; padding-top:7px; font-size:11px; font-weight:700; text-transform:uppercase; }
+  .sig-sub     { font-size:10px; color:#888; margin-top:3px; }
+</style>
+</head>
+<body>
+  <div class="clinic-hdr">
+    <img src="${logoAbsUrl}" alt="${clinicName}" class="clinic-logo" onerror="this.style.display='none'">
+    <div>
+      <div class="clinic-name">${clinicName}</div>
+      <div class="clinic-sub">${subtitle}</div>
+      <div class="clinic-doc">Internal Report — Not for Distribution</div>
+    </div>
+  </div>
+  <div class="rpt-meta">
+    <span>Generated: ${generated}</span>
+    <span>Role: ${roleLabel}</span>
+  </div>
+  ${sections}
+  <div class="sig-block">
+    <div class="sig-col">
+      <div class="sig-line">${state.user?.name || '—'}</div>
+      <div class="sig-sub">Prepared by &bull; ${roleLabel}</div>
+    </div>
+  </div>
+</body>
+</html>`
+
+  _printHtmlDocument(html)
+}
+window.printDashboardReport = printDashboardReport
 
 // ════════════════════════════════════════════════════════════════
 //  CAMERA QR SCANNER — uses the html5-qrcode library (local vendor copy)
@@ -2475,7 +2678,6 @@ function viewAppt(id) {
       ${a.doctorId
         ? `<button class="btn-success" id="approve-confirm-btn" onclick="window.doApproveAppt('${a.id}')">Approve</button>`
         : `<button class="btn-success" disabled style="opacity:.45;cursor:not-allowed" title="Assign an optometrist before approving">Approve</button>`}
-      <button class="btn-danger"  onclick="window.confirmCancelAppt('${a.id}')">Cancel</button>
       <button class="btn-disapprove" onclick="window.confirmDisapproveAppt('${a.id}')">Disapprove</button>` : ''}
     ${a.status === 'approved' && isAdmin ? `
       <button class="btn-primary" onclick="window.markApptCompleted('${a.id}')">Mark Completed</button>
@@ -2517,7 +2719,11 @@ function viewAppt(id) {
         </div>
         <div style="background:#F9FAFB;border-radius:6px;padding:10px">
           <div style="font-size:.68rem;color:#9CA3AF;margin-bottom:2px;text-transform:uppercase;letter-spacing:.04em">Type</div>
-          <div style="font-size:.84rem;font-weight:600">${a.type}</div>
+          <div style="font-size:.84rem;font-weight:600;display:flex;align-items:center;gap:6px;flex-wrap:wrap">
+            ${a.type}
+            <span title="${a.source === 'walk-in' ? 'Booked directly by clinic staff' : 'Booked by the patient online'}"
+                  style="font-size:.62rem;font-weight:700;text-transform:uppercase;letter-spacing:.03em;padding:2px 7px;border-radius:20px;white-space:nowrap;${a.source === 'walk-in' ? 'background:#FFF7ED;color:#C2410C' : 'background:#EFF6FF;color:#1D4ED8'}">${a.source === 'walk-in' ? 'Walk-in' : 'Online'}</span>
+          </div>
         </div>
         <div style="background:#F9FAFB;border-radius:6px;padding:10px">
           <div style="font-size:.68rem;color:#9CA3AF;margin-bottom:2px;text-transform:uppercase;letter-spacing:.04em">Date</div>
@@ -2618,6 +2824,31 @@ function markNotifRead(id) {
   // Same again for a brand-new appointment request (admin/staff).
   if (notif && notif.type === 'new_appointment' && notif.relatedId && state.role !== 'patient') {
     openNewApptRequestNotif(notif.relatedId)
+    return
+  }
+  // A doctor flagged a visit as needing a follow-up (relatedId is the
+  // patientId — notifications.related_id is too small a column to carry
+  // the doctor/date too) — go straight into a pre-filled New Appointment
+  // for that patient instead of a profile page staff has to work from
+  // manually. The recommended doctor + date are looked up fresh from the
+  // patient's own consultation history (newest first, per the unshift()
+  // in saveNewExam()) rather than the notification itself.
+  if (notif && notif.type === 'follow_up_needed' && notif.relatedId && state.role !== 'patient') {
+    const p = patients.find(pt => pt.id === notif.relatedId)
+    const con = p && (p.consultations || []).find(c => c.followUpDate)
+    if (p && con) {
+      const doc = doctors.find(d => d.name === con.doctor)
+      window._staffCalPrefill = {
+        doctorId: doc?.id || '', doctorName: doc?.name || con.doctor || '',
+        doctorSpec: doc?.specialization || '', date: con.followUpDate, isFollowUp: true
+      }
+      navigate('create-appointment', { patientId: p.id, patientName: p.name })
+    } else {
+      // Fallback if the flagged consultation can't be found anymore
+      // (e.g. it was later edited/removed) — land on the profile instead
+      // of a broken pre-fill.
+      navigate('patient-view', { patientId: notif.relatedId })
+    }
     return
   }
   if (notif && window._notifNavTarget) {
@@ -2771,6 +3002,23 @@ function syncIssuePrescription() {
 }
 window.syncIssuePrescription = syncIssuePrescription
 
+// Exam wizard — "Need Follow-up Consultation: Yes/No" toggle (Consultation
+// step). The date field only makes sense once the doctor's actually said
+// a follow-up is needed, so it stays hidden/blank otherwise instead of an
+// always-visible optional date with no clear meaning attached to leaving
+// it blank vs. filled in.
+function syncFollowUpNeeded() {
+  _syncRadioPills('ne-followup-choice')
+  const needed = document.getElementById('r-followup-yes')?.checked
+  const wrap = document.getElementById('ne-followup-date-wrap')
+  if (wrap) wrap.style.display = needed ? '' : 'none'
+  const hintWrap = document.getElementById('ne-followup-hint-wrap')
+  if (hintWrap) hintWrap.style.display = needed ? '' : 'none'
+  const dateInput = document.getElementById('ne-con-followup')
+  if (!needed && dateInput) dateInput.value = ''
+}
+window.syncFollowUpNeeded = syncFollowUpNeeded
+
 // Custom radio pill helper — called via onchange on the hidden input
 // Updates all label pills for the given radio group
 function _syncRadioPills(radioName) {
@@ -2816,6 +3064,10 @@ async function validateSettingsPassword(newId, confId, errId, curId) {
     if (d.success) {
       toast('Password updated successfully.', 'success')
       ;[curPwId, newId, confId].forEach(id => { const el = document.getElementById(id); if (el) el.value = '' })
+      // The backend just revoked every other session on this account —
+      // refresh the list so it visibly drops to just "This device"
+      // instead of showing stale devices until the next page load.
+      if (window.loadActiveSessionsSummary) window.loadActiveSessionsSummary()
     } else {
       toast(d.message || 'Failed to update password.', 'error')
     }
@@ -3787,6 +4039,23 @@ function wizJump(targetStep) {
 }
 window.wizJump = wizJump
 
+// A patient with zero completed examination records has never actually
+// been seen at the clinic yet — showing them a list of named doctors this
+// early leaks doctor identities/schedules to someone with no track record
+// with any of them, for no real benefit (they have no informed reason to
+// prefer one over another). First-time patients still see the preference
+// gate (pages.js appointmentWizardHtml) but not the actual choice — just a
+// single-button notice explaining they'll be matched with any available
+// optometrist, so that policy is something they're told, not something
+// that happens invisibly.
+function _isFirstTimePatient() {
+  if (state.role !== 'patient' || !state.user) return false
+  const me = patients.find(p => p.id === state.user.id)
+  const completedExams = (me?.examinations || []).filter(e => (e.status || 'completed') === 'completed')
+  return completedExams.length === 0
+}
+window._isFirstTimePatient = _isFirstTimePatient
+
 // ── Calendar init ─────────────────────────────────────────────────
 function amcInit() {
   const now = new Date()
@@ -3814,6 +4083,12 @@ function amcInit() {
     if (prefEl) prefEl.style.display = 'none'
     if (mainEl) mainEl.style.display = ''
   } else {
+    // Always shown otherwise, first-time patient or not — a first-timer
+    // just sees a different, single-button notice inside it instead of the
+    // real doctor-name/no-doctor-name choice (see appointmentWizardHtml(),
+    // pages.js), so the "you'll be matched with any available optometrist"
+    // policy is something they're actually told, not something that just
+    // happens silently with no acknowledgment.
     if (prefEl) prefEl.style.display = ''
     if (mainEl) mainEl.style.display = 'none'
   }
@@ -3866,18 +4141,156 @@ window.amcInit = amcInit
 // the picker gate in pageCreateAppointment().
 function wizInitStaff(patientId, patientName) {
   const now = new Date()
+  const prefill = window._staffCalPrefill || null
+  window._staffCalPrefill = null  // consume once
+
   Object.assign(_wiz, { step:0, selectedDate:'', selectedDateLabel:'', selectedDateShort:'',
     doctorId:'', doctorName:'', doctorSpec:'', _prefillDays:[], time:'', type:'',
     notes:'', calYear: now.getFullYear(), calMonth: now.getMonth(),
-    mode: 'staff', patientId, patientName, initialStatus: 'pending', anyDoctor: false })
+    mode: 'staff', patientId, patientName, initialStatus: 'approved', anyDoctor: false })
 
   const set = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = val }
   set('wiz-patient-lbl0', patientName)
   set('sum-patient', patientName)
   set('rev-patient', patientName)
 
-  wizShowStep(0, 1)
-  amcRenderPrefillBanner()
+  // Pre-fill from a "Follow-up Consultation Needed" notification (see
+  // markNotifRead()'s follow_up_needed branch) — doctor + recommended date
+  // already known, so skip straight to Step 3 (Time) instead of making
+  // staff re-pick a doctor and date they were just told about. But neither
+  // half of that recommendation is guaranteed to still hold by the time
+  // staff acts on it:
+  //  - the date itself might now be a PH holiday or outside the clinic's
+  //    configured operating days (clinic_settings.clinic_days) — nothing
+  //    about the recommendation ever checked that, it's just whatever date
+  //    the doctor typed in during the exam;
+  //  - the recommending doctor isn't necessarily still scheduled to work
+  //    that exact date (weekly days, or a one-off blocked date set on
+  //    Doctor Schedule since the recommendation was made).
+  // Both are checked before ever landing on Time, same as amcRender()/
+  // wizBuildDoctorCards() already check them for the normal Date-then-
+  // Doctor flow — a holiday/closed day fails the whole date regardless of
+  // doctor, so that's checked first and, if it fails, staff stays on the
+  // Date step itself (picking a different doctor wouldn't fix a day the
+  // clinic isn't even open) instead of being sent to the Doctor step.
+  if (prefill) {
+    let dateAvailable = true
+    let dateProblem   = ''
+    let doctorAvailable = false
+    if (prefill.date) {
+      const dt = new Date(prefill.date + 'T00:00:00')
+      const dayShort = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'][dt.getDay()]
+      const dayFull  = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'][dt.getDay()]
+      const holidayName = getPHHolidays(dt.getFullYear())[prefill.date]
+      const isClinicDay = (consultationSettings.clinicDays || []).includes(dayFull)
+      // Same "no doctor at all works this weekday" check amcRender() does
+      // for the regular calendar (its own noDoctorThisDay) — a
+      // recommended date can be a real, open clinic day and still be
+      // unbookable if nobody on staff is actually scheduled for it.
+      const noDoctorThisDay = isClinicDay && !doctors.some(doc =>
+        (doc.days || []).includes(dayShort) && !(doc.blockedDates || []).some(b => b.date === prefill.date)
+      )
+      if (holidayName) {
+        dateAvailable = false
+        dateProblem   = `The clinic is closed for ${holidayName}`
+      } else if (!isClinicDay) {
+        dateAvailable = false
+        dateProblem   = 'The clinic is closed that day'
+      } else if (noDoctorThisDay) {
+        dateAvailable = false
+        dateProblem   = 'No doctor is scheduled to work that day'
+      }
+
+      if (dateAvailable && prefill.doctorId) {
+        const prefDoc = doctors.find(d => d.id === prefill.doctorId)
+        const blockedOnDate = prefDoc && (prefDoc.blockedDates || []).some(b => b.date === prefill.date)
+        doctorAvailable = !!prefDoc && (prefDoc.days || []).includes(dayShort) && !blockedOnDate
+      }
+    }
+
+    if (dateAvailable && doctorAvailable) {
+      _wiz.doctorId   = prefill.doctorId
+      _wiz.doctorName = prefill.doctorName
+      _wiz.doctorSpec = prefill.doctorSpec || ''
+    }
+
+    if (prefill.date && dateAvailable) {
+      _wiz.selectedDate = prefill.date
+      const dt = new Date(prefill.date + 'T00:00:00')
+      _wiz.selectedDateLabel = dt.toLocaleDateString('en-US', { weekday:'long', month:'long', day:'numeric', year:'numeric' })
+      _wiz.selectedDateShort = dt.toLocaleDateString('en-US', { month:'long', day:'numeric' })
+      _wiz.calYear  = dt.getFullYear()
+      _wiz.calMonth = dt.getMonth()
+      if (doctorAvailable) {
+        _wiz.step = 2
+        wizShowStep(2, 1)
+        wizBuildTimeSlots()   // async — fire-and-forget is fine here
+      } else {
+        // Doctor isn't available this date — land on the Doctor step
+        // instead, date still locked in, so staff picks someone who
+        // actually works this day rather than the recommended one. If
+        // NO doctor at all works this day, wizBuildDoctorCards() already
+        // shows its own "No doctors are available on this day" empty
+        // state — nothing extra needed here for that case.
+        _wiz.step = 1
+        wizShowStep(1, 1)
+        wizBuildDoctorCards()   // async — fire-and-forget is fine here
+      }
+    } else {
+      // Either no date was recommended, or the recommended date itself
+      // isn't available (holiday/closed day) — stay on the Date step
+      // with nothing pre-selected, so the calendar shows its own real
+      // holiday/unavailable styling for that cell instead of a
+      // misleading "Selected" (orange) fill on a day that can't
+      // actually be booked. Still jump the visible month to the
+      // recommended date's month so staff can see why right away,
+      // instead of landing on whatever month happens to be current.
+      if (prefill.date) {
+        const dt = new Date(prefill.date + 'T00:00:00')
+        _wiz.calYear  = dt.getFullYear()
+        _wiz.calMonth = dt.getMonth()
+      }
+      wizShowStep(0, 1)
+    }
+
+    setTimeout(() => {
+      if (dateAvailable && doctorAvailable) {
+        const sd = document.getElementById('sum-doctor')
+        if (sd) { sd.textContent = prefill.doctorName; sd.classList.remove('empty') }
+      }
+      if (prefill.date && dateAvailable) {
+        const sdDate = document.getElementById('sum-date')
+        if (sdDate) { sdDate.textContent = _wiz.selectedDateLabel; sdDate.classList.remove('empty') }
+      }
+      const fuPill = document.getElementById('wiz-followup-pill')
+      if (fuPill) fuPill.style.display = (prefill.isFollowUp && dateAvailable && doctorAvailable) ? 'inline-flex' : 'none'
+
+      const docNotice = document.getElementById('wiz-doctor-unavail-notice')
+      if (docNotice) {
+        docNotice.style.display = (prefill.date && dateAvailable && !doctorAvailable && prefill.doctorName) ? 'flex' : 'none'
+        const nameEl = document.getElementById('wiz-doctor-unavail-name')
+        if (nameEl) nameEl.textContent = prefill.doctorName
+      }
+
+      const dateNotice = document.getElementById('wiz-date-unavail-notice')
+      if (dateNotice) {
+        dateNotice.style.display = (prefill.date && !dateAvailable) ? 'flex' : 'none'
+        if (prefill.date && !dateAvailable) {
+          const dt = new Date(prefill.date + 'T00:00:00')
+          const dateEl = document.getElementById('wiz-date-unavail-date')
+          if (dateEl) dateEl.textContent = dt.toLocaleDateString('en-US', { weekday:'long', month:'long', day:'numeric', year:'numeric' })
+          const reasonEl = document.getElementById('wiz-date-unavail-reason')
+          if (reasonEl) reasonEl.textContent = dateProblem
+        }
+      }
+
+      amcRenderPrefillBanner()
+    }, 0)
+  } else {
+    wizShowStep(0, 1)
+    amcRenderPrefillBanner()
+  }
+
   amcRender()
 }
 window.wizInitStaff = wizInitStaff
@@ -3941,6 +4354,24 @@ function wizBackToPref() {
   if (mainEl) mainEl.style.display = 'none'
 }
 window.wizBackToPref = wizBackToPref
+
+// The page header's own "<" back button (pages.js, patient's Request
+// Appointment screen) used to always exit straight to My Appointments,
+// discarding wizard progress entirely — including from the calendar
+// (Step 0), one click after choosing/being told about a doctor
+// preference. Now it's a soft back into that same preference gate
+// instead, matching the wizard's own internal Step-0 Back button, and
+// only actually leaves the page once there's no gate state left to
+// unwind (i.e. the gate itself is already what's showing).
+function wizPageBack() {
+  const mainEl = document.getElementById('wiz-main')
+  if (mainEl && mainEl.style.display !== 'none' && _wiz.step === 0) {
+    wizBackToPref()
+    return
+  }
+  goBack('patient-appts', { filter: 'all' })
+}
+window.wizPageBack = wizPageBack
 
 function amcGoMonth(dir) {
   const now = new Date()
@@ -4880,7 +5311,7 @@ async function requestAppointment() {
       doctorId: _wiz.anyDoctor ? null : _wiz.doctorId,
       doctorName: _wiz.anyDoctor ? null : _wiz.doctorName,
       date: _wiz.selectedDate, time: _wiz.time, type: _wiz.type,
-      status: 'pending', notes: _wiz.notes
+      status: 'pending', source: 'online', notes: _wiz.notes
     })
     addActivityLog({ id:'L'+Date.now(), user: user.name, role: 'Patient',
       action: `Requested appointment ${newId}` + (_wiz.anyDoctor ? ' (any available doctor)' : ` with ${_wiz.doctorName}`),
@@ -4955,7 +5386,7 @@ async function submitStaffAppointment() {
       id: newId, patientId: _wiz.patientId, patientName: _wiz.patientName,
       doctorId: _wiz.doctorId, doctorName: _wiz.doctorName,
       date: _wiz.selectedDate, time: _wiz.time, type: _wiz.type,
-      status: _wiz.initialStatus, notes: _wiz.notes
+      status: _wiz.initialStatus, source: 'walk-in', notes: _wiz.notes
     })
     addActivityLog({ id:'L'+Date.now(), user: state.user.name, role: state.role,
       action: `Created appointment ${newId} for ${_wiz.patientName}`,
@@ -5514,6 +5945,13 @@ function editUserModal(id, role) {
           <input id="eu-sort-order" type="number" min="0" class="form-input" placeholder="0 = first" value="${u.sortOrder ?? 0}">
           <div style="font-size:.71rem;color:#9CA3AF;margin-top:4px">Lower = shown earlier on the Doctors page.</div></div>
       </div>
+      <div class="form-row-2">
+        <div class="form-group"><label class="form-label">Secondary Credential <span style="font-weight:400;color:#9CA3AF">(optional)</span></label>
+          <input id="eu-secondary-credential" class="form-input" placeholder="e.g. Ocular Pharmacologist" value="${(u.secondaryCredential || '').replace(/"/g,'&quot;')}"></div>
+        <div class="form-group"><label class="form-label">Secondary PRC No. <span style="font-weight:400;color:#9CA3AF">(optional)</span></label>
+          <input id="eu-secondary-prc" class="form-input" placeholder="e.g. 043" value="${(u.secondaryPrc || '').replace(/"/g,'&quot;')}"></div>
+      </div>
+      <p style="font-size:.71rem;color:#9CA3AF;margin:-8px 0 14px">Only shown on the Ophthalmic Clearance certificate when both secondary fields are filled in.</p>
       <p style="font-size:.74rem;color:#9CA3AF;margin:-8px 0 14px">Locked on the doctor's own Settings page — only admins can update these.</p>` : ''}
       <div class="form-group"><label class="form-label">Status</label>
         ${window.selectFieldHtml('eu-status', { value: u.status, options: [{ value: 'active', label: 'Active' }, { value: 'inactive', label: 'Inactive' }] })}</div>
@@ -5600,6 +6038,8 @@ async function doEditUser(id, role) {
   const specialization = document.getElementById('eu-specialization')?.value?.trim() || ''
   const prcLicense      = document.getElementById('eu-prc-license')?.value?.trim()    || ''
   const degree          = document.getElementById('eu-degree')?.value?.trim()          || ''
+  const secondaryCredential = document.getElementById('eu-secondary-credential')?.value?.trim() || ''
+  const secondaryPrc        = document.getElementById('eu-secondary-prc')?.value?.trim()        || ''
   const sortOrderEl     = document.getElementById('eu-sort-order')
   const sortOrder       = sortOrderEl ? Math.max(0, parseInt(sortOrderEl.value, 10) || 0) : null
   const newPw   = document.getElementById('eu-new-pw')?.value  || ''
@@ -5613,7 +6053,7 @@ async function doEditUser(id, role) {
   try {
     const r = await fetch('api/admin/update_user.php', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ profileId: id, role, firstName: fn, middleName: mn, lastName: ln, email, contact, status, specialization, prcLicense, degree, ...(sortOrder !== null ? { sortOrder } : {}) })
+      body: JSON.stringify({ profileId: id, role, firstName: fn, middleName: mn, lastName: ln, email, contact, status, specialization, prcLicense, degree, secondaryCredential, secondaryPrc, ...(sortOrder !== null ? { sortOrder } : {}) })
     })
     const d = await r.json()
     if (!d.success) { toast(d.message || 'Failed to save changes.', 'error'); return }
@@ -5621,6 +6061,8 @@ async function doEditUser(id, role) {
       if (specialization) u.specialization = specialization
       if (degree)         u.degree         = degree
       u.prcLicense = prcLicense
+      u.secondaryCredential = secondaryCredential
+      u.secondaryPrc        = secondaryPrc
       if (sortOrder !== null) u.sortOrder  = sortOrder
       if (d.swappedWith) {
         const other = doctors.find(doc => doc.id === d.swappedWith.id)
@@ -6592,7 +7034,7 @@ async function doRestore(id, name) {
   const rec = archivedRecords.find(r => r.id === id)
   if (!rec) return
 
-  if (rec.type === 'Account' || rec.type === 'Patient' || rec.type === 'Service') {
+  if (rec.type === 'Account' || rec.type === 'Patient' || rec.type === 'Service' || rec.type === 'Examination') {
     try {
       const r = await fetch('api/archive/restore.php', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -6601,16 +7043,14 @@ async function doRestore(id, name) {
       const d = await r.json()
       if (!d.success) { toast(d.message || 'Failed to restore record.', 'error'); return }
     } catch (_) { toast('Network error — record not restored.', 'error'); return }
-    // Re-fetch the affected pool(s) from the database so the restored row reappears
+    // Re-fetch the affected pool(s) from the database so the restored row
+    // reappears — for Examination this also brings back its full field set
+    // (index.php nests examinations under each patient), not just the
+    // partial snapshot kept in archivedRecords for display purposes.
     if (window._syncPatients) window._syncPatients()
     if (window._syncDoctors)  window._syncDoctors()
     if (window._syncStaff)    window._syncStaff()
     if (window._syncServices) window._syncServices()
-  } else if (rec.data) {
-    const d = rec.data
-    if (rec.type === 'Appointment') {
-      if (!appointments.find(a => a.id === d.id)) appointments.push(d)
-    }
   }
 
   removeArchivedRecord(id)
@@ -6687,7 +7127,6 @@ function viewArchivedRecord(id) {
 
   const typeColors = {
     Patient:     { bg: '#DBEAFE', color: '#1D4ED8' },
-    Appointment: { bg: '#FEF3C7', color: '#D97706' },
     Account:     { bg: '#EDE9FE', color: '#5B21B6' },
     Examination: { bg: '#D1FAE5', color: '#065F46' },
     Service:     { bg: '#FCE7F3', color: '#9D174D' }
@@ -6717,16 +7156,15 @@ function viewArchivedRecord(id) {
       extraRows += row('Email', d.email)
       extraRows += row('Contact', d.contact)
       extraRows += row('Specialization', d.specialization)
-    } else if (r.type === 'Appointment') {
-      extraRows += row('Doctor', d.doctorName)
-      extraRows += row('Patient', d.patientName)
-      extraRows += row('Date', d.date)
-      extraRows += row('Time', d.time)
-      extraRows += row('Type', d.type)
-      extraRows += row('Status', d.status)
     } else if (r.type === 'Service') {
       extraRows += row('Description', d.description)
       extraRows += row('Duration', d.duration ? `${d.duration} min` : null)
+      extraRows += row('Status', d.status)
+    } else if (r.type === 'Examination') {
+      extraRows += row('Patient', d.patientName)
+      extraRows += row('Doctor', d.doctor)
+      extraRows += row('Date', d.date)
+      extraRows += row('Diagnosis', d.diagnosis)
       extraRows += row('Status', d.status)
     }
   }
@@ -6855,6 +7293,171 @@ function saveTermsContent() {
 }
 window.saveTermsContent = saveTermsContent
 
+function savePrivacyContent() {
+  const ta = document.getElementById('privacy-md-input')
+  const value = ta ? ta.value : ''
+
+  clinicInfo.privacyContent = value
+  window._privacyContentMd  = value
+
+  fetch('api/clinic/settings.php', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ privacyContent: value })
+  }).catch(() => {})
+
+  addActivityLog({ id: 'L' + Date.now(), user: state.user.name, role: state.role,
+    action: 'Updated the registration Data Privacy Act Notice',
+    timestamp: nowTimestamp(), type: 'settings' })
+
+  toast('Data Privacy Act Notice updated successfully.', 'success')
+}
+window.savePrivacyContent = savePrivacyContent
+
+// ════════════════════════════════════════════════════════════════
+//  SECURITY & SIGN-IN (Active Sessions) — Settings > Security & Sign-in,
+//  every role, reached via its own sidebar dropdown entry (router.js
+//  SIDEBAR_CONFIG) same as My Profile — not just a card buried inside it.
+//  Multi-device sign-in is NOT restricted (the same account can stay
+//  signed in on a phone and a laptop at once, same as Facebook/Google) —
+//  this is visibility and control on top of that: a user sees every
+//  device currently signed in to their own account and can revoke any
+//  one individually. Settings' My Profile page still shows a compact
+//  summary card (device count + a "Manage Sessions" link) as a shortcut —
+//  the actual list lives on its own page (pageActiveSessions, pages.js),
+//  grouped by device the way Google's own "Your devices" page groups
+//  sessions, rather than a long flat list embedded in an already-busy
+//  profile page.
+// ════════════════════════════════════════════════════════════════
+function activeSessionsCardHtml() {
+  return `
+  <div class="card" style="padding:24px;margin-top:20px">
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">
+      <div>
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">
+          <div style="color:#E8760A">${icon('monitor','icon-sm')}</div>
+          <div style="font-size:1.05rem;font-weight:700;color:#1C1C1C">Security &amp; Sign-in</div>
+        </div>
+        <div id="active-sessions-summary" style="font-size:.82rem;color:#9CA3AF">Checking your signed-in devices…</div>
+      </div>
+      <button class="btn-secondary" style="font-size:.8rem;padding:8px 16px;flex-shrink:0;display:flex;align-items:center;gap:4px" onclick="window.navigate('active-sessions')">
+        Manage Sessions ${icon('chevron-right','icon-sm')}
+      </button>
+    </div>
+  </div>`
+}
+window.activeSessionsCardHtml = activeSessionsCardHtml
+
+// Relative "X min/hours/days ago" from a 'Y-m-d H:i:s' server timestamp —
+// same convention as the admin activity feed's own _relTime() (pages.js).
+function _sessionTimeAgo(ts) {
+  const diff = Date.now() - new Date(ts.replace(' ', 'T')).getTime()
+  const mins = Math.floor(diff / 60000)
+  if (mins < 1) return 'Active now'
+  if (mins < 60) return `${mins} min ago`
+  const hrs = Math.floor(mins / 60)
+  if (hrs < 24) return `${hrs} hour${hrs > 1 ? 's' : ''} ago`
+  const days = Math.floor(hrs / 24)
+  return `${days} day${days > 1 ? 's' : ''} ago`
+}
+
+// Just the device count, for the compact Settings summary card above.
+async function loadActiveSessionsSummary() {
+  const el = document.getElementById('active-sessions-summary')
+  if (!el) return
+  try {
+    const r = await fetch('api/auth/sessions.php')
+    const d = await r.json()
+    if (!d.success) { el.textContent = 'Could not load active sessions.'; return }
+    const n = (d.sessions || []).length
+    el.textContent = n ? `${n} device${n > 1 ? 's' : ''} currently signed in.` : 'No active sessions found.'
+  } catch (_) {
+    el.textContent = 'Could not load active sessions.'
+  }
+}
+window.loadActiveSessionsSummary = loadActiveSessionsSummary
+
+// The full list, grouped by device — same "N sessions on <OS>" grouping
+// as Google's own Your Devices page. Renders into pageActiveSessions()'s
+// own container (pages.js), not the Settings summary card above.
+async function loadActiveSessionsPage() {
+  const wrap = document.getElementById('active-sessions-groups')
+  if (!wrap) return
+  try {
+    const r = await fetch('api/auth/sessions.php')
+    const d = await r.json()
+    if (!d.success) { wrap.innerHTML = `<div class="card" style="padding:40px 24px;text-align:center;color:#9CA3AF;font-size:.85rem">Could not load active sessions.</div>`; return }
+    const sessions = d.sessions || []
+    if (!sessions.length) { wrap.innerHTML = `<div class="card" style="padding:40px 24px;text-align:center;color:#9CA3AF;font-size:.85rem">No active sessions found.</div>`; return }
+
+    // Group by OS + device type together, preserving first-seen order —
+    // sessions already arrive newest-first from listSessions()
+    // (api/helpers.php). Type, not just OS, because an iPad and an
+    // iPhone share the "iOS" OS but are different physical device
+    // classes — same reasoning Google's own grouping applies.
+    const groups = []
+    const byKey  = {}
+    sessions.forEach(s => {
+      const key = `${s.os}|${s.type}`
+      if (!byKey[key]) { byKey[key] = { os: s.os, type: s.type || 'desktop', sessions: [] }; groups.push(byKey[key]) }
+      byKey[key].sessions.push(s)
+    })
+
+    const groupIcon = type => type === 'tablet' ? 'tablet' : type === 'phone' ? 'smartphone' : 'monitor'
+    const osLabel = g => {
+      if (g.type === 'tablet') return g.os === 'iOS' ? 'iPad(s)' : `${g.os} tablet(s)`
+      if (g.type === 'phone')  return `${g.os} phone(s)`
+      return `${g.os} computer(s)`
+    }
+
+    wrap.innerHTML = groups.map(g => `
+      <div class="card" style="padding:0;overflow:hidden;margin-bottom:16px">
+        <div style="display:flex;align-items:center;gap:14px;padding:20px 24px;border-bottom:1px solid #F3F4F6">
+          <div style="width:44px;height:44px;border-radius:50%;background:#F3F4F6;display:flex;align-items:center;justify-content:center;color:#6B7280;flex-shrink:0">
+            ${icon(groupIcon(g.type), 'icon')}
+          </div>
+          <div>
+            <div style="font-size:.95rem;font-weight:700;color:#1C1C1C">${g.sessions.length} session${g.sessions.length > 1 ? 's' : ''} on ${osLabel(g)}</div>
+            <div style="font-size:.78rem;color:#9CA3AF;margin-top:2px">${g.os}</div>
+          </div>
+        </div>
+        ${g.sessions.map((s, i) => `
+        <div style="display:flex;align-items:center;gap:12px;padding:16px 24px;${i < g.sessions.length - 1 ? 'border-bottom:1px solid #F3F4F6' : ''}">
+          <div style="flex:1;min-width:0">
+            <div style="font-size:.87rem;font-weight:600;color:#1C1C1C">${s.browser || s.device}</div>
+            <div style="font-size:.78rem;color:#9CA3AF;margin-top:2px">${s.ip ? s.ip + ' &bull; ' : ''}${s.lastActive ? _sessionTimeAgo(s.lastActive) : ''}</div>
+            ${s.isCurrent ? `<div style="display:flex;align-items:center;gap:5px;font-size:.78rem;color:#059669;font-weight:600;margin-top:6px">${icon('check-circle','icon-sm')} Your current session</div>` : ''}
+          </div>
+          ${!s.isCurrent ? `<button class="btn-secondary" style="font-size:.78rem;padding:6px 14px;flex-shrink:0;align-self:center;color:#DC2626;border-color:#FECACA" onmouseover="this.style.background='#FEF2F2'" onmouseout="this.style.background=''" onclick="window.revokeSession('${s.id}', this)">Sign Out</button>` : ''}
+        </div>`).join('')}
+      </div>`).join('')
+  } catch (_) {
+    wrap.innerHTML = `<div class="card" style="padding:40px 24px;text-align:center;color:#9CA3AF;font-size:.85rem">Could not load active sessions.</div>`
+  }
+}
+window.loadActiveSessionsPage = loadActiveSessionsPage
+
+async function revokeSession(id, btnEl) {
+  if (btnEl) { btnEl.disabled = true; btnEl.textContent = 'Signing out…' }
+  try {
+    const r = await fetch('api/auth/sessions-revoke.php', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id })
+    })
+    const d = await r.json()
+    if (!d.success) {
+      toast(d.message || 'Could not sign out that device.', 'error')
+      if (btnEl) { btnEl.disabled = false; btnEl.textContent = 'Sign Out' }
+      return
+    }
+    toast('That device has been signed out.', 'success')
+    loadActiveSessionsPage()
+  } catch (_) {
+    toast('Network error. Please try again.', 'error')
+    if (btnEl) { btnEl.disabled = false; btnEl.textContent = 'Sign Out' }
+  }
+}
+window.revokeSession = revokeSession
+
 function saveAppointmentPolicyContent() {
   const ta = document.getElementById('policy-md-input')
   const value = ta ? ta.value : ''
@@ -6883,6 +7486,7 @@ function saveSchedulingRules() {
   consultationSettings.maxAdvanceBooking        = gv('cs-adv-max')   || consultationSettings.maxAdvanceBooking
   consultationSettings.minAdvanceBooking        = gv('cs-adv-min')   || consultationSettings.minAdvanceBooking
   consultationSettings.maxApptsPerDoctorPerDay  = parseInt(gv('cs-max-appt')) || consultationSettings.maxApptsPerDoctorPerDay
+  consultationSettings.maxApptsPerPatientPerDay = parseInt(gv('cs-max-appt-patient')) || consultationSettings.maxApptsPerPatientPerDay
   consultationSettings.reminderTime             = gv('cs-reminder-time')    || consultationSettings.reminderTime
   consultationSettings.confirmDeadlineTime      = gv('cs-confirm-deadline') || consultationSettings.confirmDeadlineTime
   consultationSettings.waitlistOfferHours       = parseInt(gv('cs-waitlist-hours')) || consultationSettings.waitlistOfferHours
@@ -6894,6 +7498,7 @@ function saveSchedulingRules() {
       maxAdvanceBooking: consultationSettings.maxAdvanceBooking,
       minAdvanceBooking: consultationSettings.minAdvanceBooking,
       maxApptsPerDoctorPerDay: consultationSettings.maxApptsPerDoctorPerDay,
+      maxApptsPerPatientPerDay: consultationSettings.maxApptsPerPatientPerDay,
       reminderTime: consultationSettings.reminderTime,
       confirmDeadlineTime: consultationSettings.confirmDeadlineTime,
       waitlistOfferHours: consultationSettings.waitlistOfferHours
@@ -7630,6 +8235,22 @@ async function saveNewExam(patientId) {
   const date = gv('ne-date') || localDateStr()
   const doctorName = (window._examApptDoctor && state.role === 'admin') ? window._examApptDoctor : state.user.name
   const issuePrescription = !!document.getElementById('r-issue-yes')?.checked
+  const examId = state.params?.examId || null
+
+  // Appointment Type and Status used to be re-entered here by hand, but
+  // they're already captured earlier in the visit's lifecycle — Type at
+  // booking (by the patient or staff on their behalf) and Status by
+  // admin/staff working the appointment queue — so asking the doctor to
+  // pick them again was pure duplicate (and occasionally contradictory —
+  // e.g. a "No-show" status on a visit that clearly happened, since an
+  // exam record is only ever created for a visit that did happen). Derive
+  // both instead: from the linked appointment when starting a fresh exam
+  // from one, from the exam's own already-saved consultation when editing,
+  // or a sane default for a standalone new exam with neither.
+  const linkedAppt = window._examApptId ? appointments.find(a => a.id === window._examApptId) : null
+  const existingCon = (!linkedAppt && examId) ? (p.consultations || []).find(c => c.examId === examId) : null
+  const appointmentType   = linkedAppt?.type || existingCon?.type || 'Eye Examination'
+  const consultationStatus = existingCon?.status || 'completed'
 
   // One visit, three payloads — matches the field boundaries in
   // api/examinations/create.php (consultation narrative / exam
@@ -7641,13 +8262,13 @@ async function saveNewExam(patientId) {
 
   const payload = {
     date,
-    appointmentType:        gv('ne-con-type') || 'Eye Examination',
+    appointmentType,
     chiefComplaint:         gv('ne-con-complaint'),
     historyPresentIllness:  gv('ne-con-history'),
     assessment:              gv('ne-con-assessment'),
     recommendation:          gv('ne-con-recommendation'),
-    followUpDate:            gv('ne-con-followup'),
-    consultationStatus:      gv('ne-con-status') || 'completed',
+    followUpDate:            document.getElementById('r-followup-yes')?.checked ? gv('ne-con-followup') : '',
+    consultationStatus,
     od, os, iop, pd,
     externalFindings:        gv('ne-ext-findings'),
     diagnosis,
@@ -7658,12 +8279,16 @@ async function saveNewExam(patientId) {
     lensMaterial:            gv('ne-lens-material'),
     lensCoating:             coatings,
     frameSelection:          gv('ne-frame'),
+    // Dispensing — only meaningful (and only sent/saved server-side)
+    // alongside an actually-issued prescription; see api/examinations/
+    // create.php and update.php.
+    totalAmount:             gv('ne-total'),
+    dispensedDate:           gv('ne-dispensed-date'),
+    receivedBy:              gv('ne-received-by'),
   }
 
   const saveBtn = document.getElementById('wiz-btn-save')
   if (saveBtn) { saveBtn.disabled = true; saveBtn.textContent = 'Saving…' }
-
-  const examId = state.params?.examId || null
 
   try {
     if (examId) {
@@ -7737,7 +8362,9 @@ async function saveNewExam(patientId) {
         od: { sph: od.sph, cyl: od.cyl, axis: od.axis, add: od.add },
         os: { sph: os.sph, cyl: os.cyl, axis: os.axis, add: os.add },
         pd, lensType: payload.lensType, lensMaterial: payload.lensMaterial,
-        frameSelection: payload.frameSelection, lensCoating: coatings
+        frameSelection: payload.frameSelection, lensCoating: coatings,
+        totalAmount: payload.totalAmount || null,
+        dispensedDate: payload.dispensedDate, receivedBy: payload.receivedBy
       })
     }
     p.lastVisit = date
@@ -7751,7 +8378,7 @@ async function saveNewExam(patientId) {
     toast('Examination record saved successfully.', 'success')
     navigate('patient-view', { patientId, patientName: p.name })
   } catch (_) {
-    toast('Network error — please try again.', 'error')
+    toast('Network error. Please try again.', 'error')
   } finally {
     if (saveBtn) { saveBtn.disabled = false; saveBtn.innerHTML = window.icon('check','icon-sm') + ' ' + (examId ? 'Save Changes' : 'Save Examination') }
   }
@@ -8213,66 +8840,73 @@ function printExamRecord(examId) {
 window.printExamRecord = printExamRecord
 
 // ════════════════════════════════════════════════════════════════
-//  OPTICAL EXAMINATION — DELETE (exam + its linked consultation/Rx)
+//  OPTICAL EXAMINATION — ARCHIVE
 // ════════════════════════════════════════════════════════════════
-// Same "type DELETE to confirm" pattern as confirmPermDelete() above, for
-// the same reason: this is permanent and cascades to the linked
-// consultation/prescription (see api/examinations/delete.php), not just
-// this one row — worth a harder confirmation than a plain "Are you sure?".
+// Archives the exam rather than deleting it outright — same two-step
+// pattern as patients/accounts/services (see confirmArchivePatient):
+// archive first (reversible, shows up under Settings > Archives), then
+// permanently delete later from there if it's really no longer needed
+// (that permanent path cascades to the linked consultation/prescription —
+// see api/archive/delete.php's Examination branch).
 function confirmDeleteExam(examId, patientId, patientName) {
   showModal(`
     <div class="modal-header">
       <div class="modal-title" style="display:flex;align-items:center;gap:10px">
-        <div style="width:32px;height:32px;border-radius:50%;background:#fee2e2;display:flex;align-items:center;justify-content:center;flex-shrink:0;color:#dc2626">
-          ${icon('alert-triangle','icon-sm')}
+        <div style="width:32px;height:32px;border-radius:50%;background:#fef3c7;display:flex;align-items:center;justify-content:center;flex-shrink:0;color:#d97706">
+          ${icon('archive','icon-sm')}
         </div>
-        Delete Examination Record
+        Archive Examination Record
       </div>
       <button class="modal-close" onclick="window.closeModal()">&times;</button>
     </div>
     <div class="modal-body">
-      <div style="background:#fef2f2;border:1px solid #fecaca;color:#991b1b;border-radius:8px;padding:12px;font-size:.85rem;margin-bottom:16px">
-        This action cannot be undone. Examination <strong>${examId}</strong> for <strong>${patientName}</strong>, along with its linked consultation and prescription (if any), will be permanently removed.
-      </div>
+      <p style="font-size:.88rem;color:#6b7280;margin-bottom:16px">Are you sure you want to archive examination <strong>${examId}</strong> for <strong>${patientName}</strong>? It will be removed from active records but can be restored, or permanently deleted, from Settings &gt; Archives.</p>
       <div class="form-group" style="margin:0">
-        <label class="form-label">Type <strong>DELETE</strong> to confirm</label>
-        <input id="exam-delete-confirm" class="form-input" placeholder="DELETE"
-               oninput="var ok=this.value==='DELETE';var btn=document.getElementById('exam-delete-btn');btn.disabled=!ok;btn.style.opacity=ok?'1':'.45';btn.style.pointerEvents=ok?'auto':'none'">
+        <label class="form-label">Reason for Archiving <span class="req">*</span></label>
+        <textarea id="exam-archive-reason" class="form-textarea" style="border-radius:8px;min-height:80px"
+                  placeholder="Please provide a reason for archiving…"
+                  oninput="document.getElementById('exam-archive-btn').disabled=!this.value.trim()"></textarea>
       </div>
     </div>
     <div class="modal-footer">
       <button class="btn-secondary" onclick="window.closeModal()">Cancel</button>
-      <button id="exam-delete-btn"
-              style="background:#DC2626;color:white;border:none;border-radius:8px;padding:9px 20px;font-family:'Poppins',sans-serif;font-size:.85rem;font-weight:600;cursor:pointer;opacity:.45;pointer-events:none;display:inline-flex;align-items:center;gap:6px"
-              disabled
-              onclick="window.doDeleteExam('${examId}','${patientId}')">
-        ${icon('trash','icon-sm')} Delete Forever
+      <button id="exam-archive-btn" class="btn-primary" disabled
+              onclick="window.doDeleteExam('${examId}','${patientId}','${patientName.replace(/'/g,"\\'")}')">
+        ${icon('archive','icon-sm')}<span>Archive</span>
       </button>
     </div>`)
+  setTimeout(() => {
+    const ta = document.getElementById('exam-archive-reason')
+    const btn = document.getElementById('exam-archive-btn')
+    if (ta && btn) ta.addEventListener('input', () => { btn.disabled = !ta.value.trim() })
+  }, 50)
 }
 window.confirmDeleteExam = confirmDeleteExam
 
-async function doDeleteExam(examId, patientId) {
-  const btn = document.getElementById('exam-delete-btn')
-  if (btn) { btn.disabled = true; btn.textContent = 'Deleting…' }
+async function doDeleteExam(examId, patientId, patientName) {
+  const btn = document.getElementById('exam-archive-btn')
+  const reason = (document.getElementById('exam-archive-reason') || {}).value?.trim() || 'No reason provided'
+  if (btn) { btn.disabled = true; btn.textContent = 'Archiving…' }
   try {
-    const r = await fetch('api/examinations/delete.php', {
+    const r = await fetch('api/archive/create.php', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ examId, patientId })
+      body: JSON.stringify({ profileId: examId, type: 'Examination', name: patientName, reason, archivedBy: state.user.name })
     })
     const d = await r.json()
-    if (!d.success) { toast(d.message || 'Failed to delete examination.', 'error'); return }
+    if (!d.success) { toast(d.message || 'Failed to archive examination.', 'error'); return }
+    archivedRecords.push(d.record)
   } catch (_) {
-    toast('Network error. Examination not deleted.', 'error')
+    toast('Network error. Examination not archived.', 'error')
     return
   } finally {
-    if (btn) { btn.disabled = false; btn.innerHTML = icon('trash','icon-sm') + ' Delete Forever' }
+    if (btn) { btn.disabled = false; btn.innerHTML = icon('archive','icon-sm') + '<span>Archive</span>' }
   }
 
-  // Keep local state consistent — drop the exam and anything that linked
-  // to it (the consultation via exam_id backfill, the prescription via
-  // exam_id) rather than waiting on a full reload.
+  // Keep local state consistent with the backend's cascade — drop the exam
+  // AND the same visit's consultation/prescription from the active lists,
+  // so the whole visit disappears from every tab together instead of
+  // leaving stale consultation/prescription rows behind until a reload.
   const p = patients.find(pt => pt.id === patientId)
   if (p) {
     p.examinations  = (p.examinations  || []).filter(e => e.id !== examId)
@@ -8280,8 +8914,12 @@ async function doDeleteExam(examId, patientId) {
     p.prescriptions = (p.prescriptions || []).filter(rx => rx.examId !== examId)
   }
 
+  addActivityLog({ id:'L'+Date.now(), user: state.user.name, role: state.role,
+    action: `Archived examination ${examId} for ${patientName} — Reason: ${reason}`,
+    timestamp: nowTimestamp(), type:'examination' })
+
   closeModal()
-  toast('Examination record deleted.', 'success')
+  toast('Examination record archived. It can be restored from Settings > Archives.', 'success')
   renderPage()
 }
 window.doDeleteExam = doDeleteExam
@@ -8310,27 +8948,21 @@ function generateClearance(patientId, examId) {
   const e = p?.examinations?.find(ex => ex.id === examId)
   if (!p || !e) { toast('Examination record not found.', 'error'); return }
 
-  // Doctor credential lookup — name/title formatting only; the PRC license
-  // itself is never hardcoded here (this prints on an official document,
-  // so it must always come from the doctor's real profile or say so).
-  const DOCTOR_INFO = {
-    'Dr. Lalaine Cana':         { name: 'DR. MARIA LALAINE A. CANA, OD', title: 'CEO - PRESIDENT' },
-    'Dr. Ruziel Palaje':        { name: 'DR. RUZIEL PALAJE, OD',         title: 'OPTOMETRIST' },
-    'Dr. Christian Garabiles':  { name: 'DR. CHRISTIAN GARABILES, OD',   title: 'OPTOMETRIST' },
-    'Dr. Carmen Sumaya':        { name: 'DR. CARMEN SUMAYA, OD',         title: 'OPTOMETRIST' },
-    'Dr. Julianne Rosche Cana': { name: 'DR. JULIANNE ROSCHE CANA, OD',  title: 'OPTOMETRIST' },
+  // Doctor credentials — fully sourced from the real doctor profile, never
+  // hardcoded per-name. This prints on an official document, so the name,
+  // title, and every license number must always reflect whatever's
+  // actually on file (Settings > User Management), or say so plainly
+  // rather than guess.
+  const realDoc = doctors.find(d => d.name === e.doctor)
+  const doc = {
+    name:  (realDoc?.name || e.doctor || 'DOCTOR').toUpperCase(),
+    title: (realDoc?.specialization || 'Optometrist').toUpperCase(),
+    prc:   realDoc?.prcLicense ? `PRC LIC. ${realDoc.prcLicense}` : 'PRC LIC. — NOT ON FILE',
+    // Second, optional credential (e.g. Ocular Pharmacologist + its own
+    // PRC accreditation number) — only rendered when both are on file.
+    secondaryCredential: realDoc?.secondaryCredential || '',
+    secondaryPrc:        realDoc?.secondaryPrc ? `PRC NO. ${realDoc.secondaryPrc}` : '',
   }
-  // realDoc is matched by the full display name (which may include a middle
-  // initial), but DOCTOR_INFO's keys are plain "Dr. First Last" — so the
-  // lookup key is rebuilt from realDoc's first/last name to stay correct
-  // whether or not that doctor has a middle name on file.
-  const realDoc   = doctors.find(d => d.name === e.doctor)
-  const doctorKey = realDoc ? `Dr. ${realDoc.firstName} ${realDoc.lastName}` : e.doctor
-  const doc = DOCTOR_INFO[doctorKey] || {
-    name:  (e.doctor || 'DOCTOR').toUpperCase() + ', OD',
-    title: 'OPTOMETRIST'
-  }
-  doc.prc = realDoc?.prcLicense ? `PRC LICENSE NO. ${realDoc.prcLicense}` : 'PRC LICENSE NO. — NOT ON FILE'
   const qrDataUrl = _makeQRDataUrl(p.qrData, 70)
 
   // Date formatter: "2025-12-10" → "December 10, 2025"
@@ -8365,7 +8997,7 @@ function generateClearance(patientId, examId) {
   const rxOS   = rxStr(e.os)
 
   // Default editable text blocks
-  const remarks1 = `Such condition requires the patient to wear eyeglasses for correctional purposes. A recheck up after 6 months is highly recommended to monitor ${poss} vision.`
+  const remarks1 = `Such condition requires the patient to wear eyeglasses for correctional purposes so as to eliminate symptoms like blurring of vision at far, headaches or nausea which are usually associated with Errors of Refraction.`
   const remarks2 = `This certificate is being issued upon the request of the said patient for whatever purpose it would serve ${poss}.`
 
   // Remove any existing overlay
@@ -8395,15 +9027,21 @@ function generateClearance(patientId, examId) {
       <div class="clearance-document" style="padding:48px 56px;background:#fff;flex:1;font-family:Georgia,'Times New Roman',serif;color:#111;font-size:.95rem;line-height:1.7;">
 
         <!-- LETTERHEAD -->
-        <div style="border:1.5px solid #222;padding:18px 24px;margin-bottom:16px;text-align:center;">
-          <div style="display:flex;align-items:center;justify-content:center;gap:16px;margin-bottom:10px;">
-            <img src="${window._clinicLogoUrl || 'assets/images/logo/clinic-logo.png'}" alt="Cana Optical" style="height:64px;flex-shrink:0;">
-            <div style="text-align:left;line-height:1;">
-              <div style="font-family:Arial,sans-serif;font-size:2rem;font-weight:900;letter-spacing:.05em;color:#111;">CANA OPTICAL</div>
+        <div style="border:1.5px solid #222;margin-bottom:16px;text-align:center;overflow:hidden;">
+          <div style="padding:16px 24px 10px;">
+            <div style="display:flex;align-items:center;justify-content:center;gap:16px;margin-bottom:10px;">
+              <img src="${window._clinicLogoUrl || 'assets/images/logo/clinic-logo.png'}" alt="Cana Optical" style="height:64px;flex-shrink:0;">
+              <div style="text-align:left;line-height:1;">
+                <div style="font-family:Arial,sans-serif;font-size:2rem;font-weight:900;letter-spacing:.05em;color:#111;">CANA OPTICAL</div>
+              </div>
+            </div>
+            <div style="font-family:Arial,sans-serif;font-size:.68rem;text-transform:uppercase;letter-spacing:.03em;color:#222;line-height:1.5;">
+              <div>MAIN: UNIT 3, PASEO DE CARMONA, CARMONA, CAVITE</div>
+              <div>BRANCH 1: 46 STA. ANASTACIA, STO. TOMAS, BATANGAS</div>
+              <div>BRANCH 2: DOÑA SOLEDAD AVE., BETTER LIVING SUBD., PARAÑAQUE</div>
             </div>
           </div>
-          <div style="font-family:Arial,sans-serif;font-size:.73rem;text-transform:uppercase;letter-spacing:.05em;color:#222;margin-bottom:3px;">UNIT 3, PASEO DE CARMONA, CARMONA, CAVITE</div>
-          <div style="font-family:Arial,sans-serif;font-size:.73rem;font-weight:700;color:#222;">MOBILE NUMBER: 09952376617 / 09296636080</div>
+          <div class="clearance-mobile-bar" style="background:#E8760A;color:#fff;font-family:Arial,sans-serif;font-size:.73rem;font-weight:700;padding:6px 12px;">MOBILE NUMBER: 09952376617 / 09296636080</div>
         </div>
 
         <!-- PATIENT IDENTIFICATION — QR paired with the patient's own ID
@@ -8434,7 +9072,7 @@ function generateClearance(patientId, examId) {
             <span>NVA</span>
             <span>NNVA</span>
             <span>RX</span>
-            <span>FVA</span>
+            <span>FINAL V.A.</span>
           </div>
           <div style="height:2px;background:#222;margin-bottom:8px;"></div>
           <!-- OD row -->
@@ -8479,8 +9117,11 @@ function generateClearance(patientId, examId) {
           <div style="display:inline-block;text-align:center;min-width:260px;">
             <div style="border-bottom:1px solid #111;margin-bottom:8px;"></div>
             <div style="font-family:Arial,sans-serif;font-size:.85rem;font-weight:700;text-transform:uppercase;color:#111;">${doc.name}</div>
-            <div style="font-family:Arial,sans-serif;font-size:.78rem;color:#111;margin-top:2px;">${doc.prc}</div>
-            <div style="font-family:Arial,sans-serif;font-size:.78rem;color:#111;">${doc.title}</div>
+            <div style="font-family:Arial,sans-serif;font-size:.78rem;color:#111;margin-top:2px;">${doc.title}</div>
+            <div style="font-family:Arial,sans-serif;font-size:.78rem;color:#111;">${doc.prc}</div>
+            ${doc.secondaryCredential && doc.secondaryPrc ? `
+            <div style="font-family:Arial,sans-serif;font-size:.78rem;color:#111;margin-top:6px;">${doc.secondaryCredential.toUpperCase()}</div>
+            <div style="font-family:Arial,sans-serif;font-size:.78rem;color:#111;">${doc.secondaryPrc}</div>` : ''}
           </div>
         </div>
 
@@ -8610,6 +9251,7 @@ function _openExamPrintWindow(p, e) {
   // to resolve against the app's own origin.
   const logoAbsUrl = new URL(window._clinicLogoUrl || 'assets/images/logo/clinic-logo.png', document.baseURI).href
   const qrDataUrl = _makeQRDataUrl(p.qrData, 90)
+  const preparedByLabel = { admin:'Administrator', staff:'Staff', doctor:'Doctor' }[state.role] || state.role || ''
 
   const html = `<!DOCTYPE html>
 <html lang="en">
@@ -8623,12 +9265,14 @@ function _openExamPrintWindow(p, e) {
     @page { size: A4; margin: 0; }
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body { font-family: Arial, Helvetica, sans-serif; color: #111; font-size: 14px; line-height: 1.65; background: #fff; }
-    /* Table/table-cell centering is far more reliably honored by Chrome's
+    /* Table/table-cell layout is far more reliably honored by Chrome's
        print engine than flexbox height resolution, which tends to collapse
-       to content-size during pagination and strands content at the top
-       with empty space below instead of centering it on the page. */
+       to content-size during pagination — vertical-align:top here just
+       starts the content flush with the page's top margin instead of the
+       centered layout this used to have (which floated a short record
+       mid-page and looked worse the longer it got). */
     .pg       { display: table; width: 100%; height: 297mm; }
-    .pg-inner { display: table-cell; vertical-align: middle; padding: 16mm 20mm; }
+    .pg-inner { display: table-cell; vertical-align: top; padding: 16mm 20mm; }
     table { width: 100%; border-collapse: collapse; }
     .clinic-hdr  { display: flex; align-items: center; gap: 14px; border-bottom: 3px solid #E8760A; padding-bottom: 14px; margin-bottom: 20px; }
     .clinic-hdr-text { text-align: left; }
@@ -8665,6 +9309,10 @@ function _openExamPrintWindow(p, e) {
     .sig-grid  { display: grid; grid-template-columns: 1fr 1fr; gap: 50px; margin-top: 26px; padding-top: 16px; border-top: 1px dashed #ccc; page-break-before: avoid; }
     .sig-line  { border-top: 1px solid #111; padding-top: 7px; text-align: center; font-size: 11px; font-weight: 700; text-transform: uppercase; }
     .sig-sub   { font-size: 10px; color: #888; margin-top: 3px; text-align: center; }
+    /* Credits whichever admin/staff/doctor actually clicked Print — this
+       page is never reachable by a patient (both call sites gate the
+       Print button to non-patient roles), so no role check needed here. */
+    .prep-by   { font-size: 10px; color: #888; text-align: right; margin-top: 12px; }
     .stamp     { font-size: 10px; color: #ccc; text-align: right; font-family: monospace; margin-top: 16px; }
   </style>
 </head>
@@ -8775,6 +9423,7 @@ function _openExamPrintWindow(p, e) {
     </div>
   </div>
 
+  <div class="prep-by">Prepared by: ${state.user?.name || '—'} &bull; ${preparedByLabel}</div>
   <div class="stamp">Exam ID: ${e.id} &bull; Printed: ${generated}</div>
 
 </div></div>
@@ -8808,6 +9457,7 @@ function _openRxPrintWindow(p, rx) {
   const generated = new Date().toLocaleDateString('en-PH',{year:'numeric',month:'long',day:'numeric',hour:'2-digit',minute:'2-digit'})
   const logoAbsUrl = new URL(window._clinicLogoUrl || 'assets/images/logo/clinic-logo.png', document.baseURI).href
   const qrDataUrl = _makeQRDataUrl(p.qrData, 90)
+  const preparedByLabel = { admin:'Administrator', staff:'Staff', doctor:'Doctor' }[state.role] || state.role || ''
 
   const html = `<!DOCTYPE html>
 <html lang="en">
@@ -8821,12 +9471,14 @@ function _openRxPrintWindow(p, rx) {
     @page { size: A4; margin: 0; }
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body { font-family: Arial, Helvetica, sans-serif; color: #111; font-size: 14px; line-height: 1.65; background: #fff; }
-    /* Table/table-cell centering is far more reliably honored by Chrome's
+    /* Table/table-cell layout is far more reliably honored by Chrome's
        print engine than flexbox height resolution, which tends to collapse
-       to content-size during pagination and strands content at the top
-       with empty space below instead of centering it on the page. */
+       to content-size during pagination — vertical-align:top here just
+       starts the content flush with the page's top margin instead of the
+       centered layout this used to have (which floated a short record
+       mid-page and looked worse the longer it got). */
     .pg       { display: table; width: 100%; height: 297mm; }
-    .pg-inner { display: table-cell; vertical-align: middle; padding: 16mm 20mm; }
+    .pg-inner { display: table-cell; vertical-align: top; padding: 16mm 20mm; }
     table { width: 100%; border-collapse: collapse; }
     .clinic-hdr  { display: flex; align-items: center; gap: 14px; border-bottom: 3px solid #E8760A; padding-bottom: 14px; margin-bottom: 20px; }
     .clinic-hdr-text { text-align: left; }
@@ -8860,6 +9512,10 @@ function _openRxPrintWindow(p, rx) {
     .sig-grid  { display: grid; grid-template-columns: 1fr 1fr; gap: 50px; margin-top: 26px; padding-top: 16px; border-top: 1px dashed #ccc; page-break-before: avoid; }
     .sig-line  { border-top: 1px solid #111; padding-top: 7px; text-align: center; font-size: 11px; font-weight: 700; text-transform: uppercase; }
     .sig-sub   { font-size: 10px; color: #888; margin-top: 3px; text-align: center; }
+    /* Credits whichever admin/staff/doctor actually clicked Print — this
+       page is never reachable by a patient (both call sites gate the
+       Print button to non-patient roles), so no role check needed here. */
+    .prep-by   { font-size: 10px; color: #888; text-align: right; margin-top: 12px; }
     .stamp     { font-size: 10px; color: #ccc; text-align: right; font-family: monospace; margin-top: 16px; }
     .valid-pill { display: inline-block; font-size: 10px; font-weight: 700; padding: 3px 10px; border-radius: 20px; margin-top: 5px; }
   </style>
@@ -8911,7 +9567,10 @@ function _openRxPrintWindow(p, rx) {
   </div>
 
   <!-- REFRACTION -->
-  ${secLbl('Final Refraction')}
+  <div style="display:flex;align-items:center;justify-content:space-between">
+    ${secLbl('Final Refraction')}
+    <span style="font-size:10px;font-weight:700;padding:2px 10px;border-radius:20px;background:#fff7ed;color:#c2410c;border:1px solid #fde68a;margin:6px 0 4px">${CONTACT_LENS_TYPES.includes(rx.lensType) ? 'Contact Lens' : 'Eyeglass'}</span>
+  </div>
   <div class="tbl-border">
     <table>
       <thead class="tbl-hdr">
@@ -8948,6 +9607,14 @@ function _openRxPrintWindow(p, rx) {
     <div>${rx.lensCoating.map(c=>`<span style="display:inline-block;background:#FFF7ED;color:#C2410C;font-size:10px;font-weight:700;padding:2px 9px;border-radius:20px;margin:2px 4px 0 0;border:1px solid #fde68a">${c}</span>`).join('')}</div>
   </div>` : ''}
 
+  ${(rx.totalAmount || rx.dispensedDate || rx.receivedBy) ? `
+  ${secLbl('Dispensing Information')}
+  <div class="info-grid" style="grid-template-columns:repeat(${[rx.totalAmount,rx.dispensedDate,rx.receivedBy].filter(Boolean).length || 1},1fr)">
+    ${rx.totalAmount ? `<div class="info-box"><div class="ib-lbl">Total Amount</div><div class="ib-val">&#8369;${Number(rx.totalAmount).toLocaleString('en-PH',{minimumFractionDigits:2,maximumFractionDigits:2})}</div></div>` : ''}
+    ${rx.dispensedDate ? `<div class="info-box"><div class="ib-lbl">Dispensed Date</div><div class="db-val" style="font-size:14px">${_fmtDt(rx.dispensedDate)}</div></div>` : ''}
+    ${rx.receivedBy ? `<div class="info-box"><div class="ib-lbl">Received By</div><div class="db-val" style="font-size:14px">${rx.receivedBy}</div></div>` : ''}
+  </div>` : ''}
+
   <!-- SIGNATURES -->
   <div class="sig-grid">
     <div>
@@ -8962,6 +9629,7 @@ function _openRxPrintWindow(p, rx) {
     </div>
   </div>
 
+  <div class="prep-by">Prepared by: ${state.user?.name || '—'} &bull; ${preparedByLabel}</div>
   <div class="stamp">Rx valid for 1 year from date of issue &bull; Printed: ${generated}</div>
 
 </div></div>
@@ -9071,7 +9739,10 @@ function viewPrescriptionDetail(patientId, rxId) {
 
         <!-- OD/OS Rx values -->
         <div>
-          <div style="font-size:.63rem;font-weight:700;text-transform:uppercase;letter-spacing:.1em;color:#9CA3AF;margin-bottom:8px">Final Refraction</div>
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+            <div style="font-size:.63rem;font-weight:700;text-transform:uppercase;letter-spacing:.1em;color:#9CA3AF">Final Refraction</div>
+            <span style="font-size:.65rem;font-weight:700;padding:2px 10px;border-radius:20px;background:#FFF7ED;color:#C2410C;border:1px solid #FDE68A">${CONTACT_LENS_TYPES.includes(rx.lensType) ? 'Contact Lens' : 'Eyeglass'}</span>
+          </div>
           <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
             <div style="border:1.5px solid #86EFAC;border-radius:10px;overflow:hidden">
               <div style="background:#F0FDF4;padding:8px 12px;border-bottom:1px solid #86EFAC;display:flex;align-items:center;gap:6px">
@@ -9131,6 +9802,30 @@ function viewPrescriptionDetail(patientId, rxId) {
           <div style="font-size:.63rem;font-weight:700;color:#9CA3AF;text-transform:uppercase;letter-spacing:.08em;margin-bottom:5px">Lens Coating</div>
           <div style="display:flex;gap:6px;flex-wrap:wrap">
             ${rx.lensCoating.map(c=>`<span style="background:#FFF7ED;color:#C2410C;font-size:.72rem;font-weight:600;padding:3px 10px;border-radius:20px;border:1px solid #FDE68A">${c}</span>`).join('')}
+          </div>
+        </div>` : ''}
+
+        <!-- Dispensing — payment/release details, kept visually separate
+             from the clinical Rx data above it via the top border. -->
+        ${(rx.totalAmount || rx.dispensedDate || rx.receivedBy) ? `
+        <div style="border-top:1px solid #F3F4F6;padding-top:14px">
+          <div style="font-size:.63rem;font-weight:700;color:#9CA3AF;text-transform:uppercase;letter-spacing:.08em;margin-bottom:8px">Dispensing Information</div>
+          <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:8px">
+            ${rx.totalAmount ? `
+            <div style="background:#F9FAFB;border:1px solid #F3F4F6;border-radius:8px;padding:9px 12px">
+              <div style="font-size:.58rem;color:#9CA3AF;text-transform:uppercase;letter-spacing:.06em;margin-bottom:3px">Total Amount</div>
+              <div style="font-size:.85rem;font-weight:700;color:#1C1C1C">&#8369;${Number(rx.totalAmount).toLocaleString('en-PH',{minimumFractionDigits:2,maximumFractionDigits:2})}</div>
+            </div>` : ''}
+            ${rx.dispensedDate ? `
+            <div style="background:#F9FAFB;border:1px solid #F3F4F6;border-radius:8px;padding:9px 12px">
+              <div style="font-size:.58rem;color:#9CA3AF;text-transform:uppercase;letter-spacing:.06em;margin-bottom:3px">Dispensed Date</div>
+              <div style="font-size:.82rem;font-weight:700;color:#1C1C1C">${new Date(rx.dispensedDate.includes('T') ? rx.dispensedDate : rx.dispensedDate+'T00:00:00').toLocaleDateString('en-PH',{year:'numeric',month:'short',day:'numeric'})}</div>
+            </div>` : ''}
+            ${rx.receivedBy ? `
+            <div style="background:#F9FAFB;border:1px solid #F3F4F6;border-radius:8px;padding:9px 12px">
+              <div style="font-size:.58rem;color:#9CA3AF;text-transform:uppercase;letter-spacing:.06em;margin-bottom:3px">Received By</div>
+              <div style="font-size:.82rem;font-weight:700;color:#1C1C1C">${rx.receivedBy}</div>
+            </div>` : ''}
           </div>
         </div>` : ''}
 
@@ -9286,48 +9981,13 @@ function updateAdminDashboard() {
 window.updateAdminDashboard = updateAdminDashboard
 
 function updateStaffDashboard() {
-  const pending  = appointments.filter(a => a.status === 'pending')
-  const approved = appointments.filter(a => a.status === 'approved')
-
-  const el = id => document.getElementById(id)
-  if (el('staff-stat-pending'))  el('staff-stat-pending').textContent  = pending.length
-  if (el('staff-stat-approved')) el('staff-stat-approved').textContent = approved.length
-  if (el('staff-stat-patients')) el('staff-stat-patients').textContent = patients.length
-
-  // ── Weekly chart — always (re)init with real data ─────────────
-  if (window._charts?.initStaffOverviewChart) {
-    const now      = new Date()
-    const weekDay  = now.getDay()
-    const monday   = new Date(now)
-    monday.setDate(now.getDate() - (weekDay === 0 ? 6 : weekDay - 1))
-    monday.setHours(0, 0, 0, 0)
-    // Only chart days the clinic is actually configured to be open
-    // (Consultation Settings → Clinic Days) instead of a hardcoded Mon–Sat.
-    const DAY_OFFSET   = { Monday:0, Tuesday:1, Wednesday:2, Thursday:3, Friday:4, Saturday:5, Sunday:6 }
-    const openDays     = (consultationSettings.clinicDays && consultationSettings.clinicDays.length)
-      ? consultationSettings.clinicDays : ['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday']
-    const dayLabels    = openDays.map(d => d.slice(0, 3))
-    const weeklyCounts = openDays.map(d => {
-      const day = new Date(monday)
-      day.setDate(monday.getDate() + (DAY_OFFSET[d] ?? 0))
-      const dateStr = localDateStr(day)
-      return appointments.filter(a => a.date === dateStr && !['cancelled', 'disapproved'].includes(a.status)).length
-    })
-    window._charts.initStaffOverviewChart('chart-staff-overview', weeklyCounts, dayLabels)
-  }
-
-  // ── Update pending approvals table ────────────────────────────
-  const tbody = el('staff-appts-tbody')
-  if (tbody && pending.length > 0) {
-    tbody.innerHTML = pending.slice(0, 5).map(a => `<tr>
-      <td data-label="Patient" style="font-size:.82rem;font-weight:600">${a.patientName || '—'}</td>
-      <td data-label="Doctor" style="font-size:.78rem;color:#6B7280">${a.doctorName ? a.doctorName.replace('Dr. ', '') : '<span style="font-style:italic;color:#9CA3AF">Not yet assigned</span>'}</td>
-      <td data-label="Date" style="font-size:.78rem">${fmtDate(a.date)}</td>
-      <td data-label="Action">${a.doctorId
-        ? `<button class="btn-success" onclick="window.approveAppt('${a.id}')">Approve</button>`
-        : `<button class="btn-secondary" onclick="window.openAssignDoctorModal('${a.id}')">Assign Optometrist</button>`}</td>
-    </tr>`).join('')
-  }
+  // Staff Dashboard now renders the exact same shared body as Admin
+  // Dashboard (see _dashboardOverviewBody in pages.js) — identical stat
+  // card ids, chart canvases, and Doctor Availability / Recent
+  // Appointments table — so the same refresh logic applies to both.
+  // Kept as its own named function (rather than aliasing window.updateAdminDashboard
+  // directly) so auth.js's per-page polling hooks don't need to change.
+  updateAdminDashboard()
 }
 window.updateStaffDashboard = updateStaffDashboard
 
@@ -11722,10 +12382,14 @@ function resetReport() {
   const hdr = document.getElementById('rpt-table-header')
   if (hdr) { hdr.style.display = 'none'; hdr.innerHTML = '' }
 
+  // Byte-identical to the page's own initial empty state (pages.js) —
+  // this used to render at font-size:.88rem instead of .92rem, a small
+  // but real mismatch that made the card visibly shrink by a few pixels
+  // every time Reset was clicked, even from an already-empty state.
   const area = document.getElementById('rpt-table-area')
   if (area) area.innerHTML = `
-    <div style="text-align:center;padding:56px 24px;color:#9CA3AF">
-      <div style="font-size:.88rem;font-weight:600;color:#374151;margin-bottom:6px">No report generated yet.</div>
+    <div style="text-align:center;padding:56px 24px">
+      <div style="font-size:.92rem;font-weight:600;color:#374151;margin-bottom:6px">No report generated yet.</div>
       <div style="font-size:.8rem;color:#9ca3af;max-width:280px;margin:0 auto;line-height:1.6">
         Choose a report type and date range above, then click <strong style="color:#6b7280">Generate</strong>.
       </div>

@@ -66,6 +66,20 @@ try {
         }
     } catch (PDOException) { /* columns not yet migrated — skip */ }
 
+    // Secondary credential (e.g. "Ocular Pharmacologist" + its own PRC
+    // accreditation number) — its own try/catch, same reasoning as above,
+    // so a database that has prc_license/degree but hasn't yet run this
+    // newer migration still gets everything else instead of a 500.
+    $secCredMap = [];
+    $secPrcMap  = [];
+    try {
+        $sRows = $pdo->query('SELECT id, secondary_credential, secondary_prc FROM doctors')->fetchAll();
+        foreach ($sRows as $sr) {
+            $secCredMap[$sr['id']] = $sr['secondary_credential'] ?? '';
+            $secPrcMap[$sr['id']]  = $sr['secondary_prc'] ?? '';
+        }
+    } catch (PDOException) { /* columns not yet migrated — skip */ }
+
     // Blocked dates — one-off unavailability, separate from the weekly pattern.
     // Only future/today dates are useful to the frontend calendars.
     $blockedMap = [];
@@ -88,6 +102,8 @@ try {
         'specialization' => $r['specialization'] ?: 'Optometrist',
         'degree'         => $degreeMap[$r['id']]  ?? 'OD',
         'prcLicense'     => $licenseMap[$r['id']] ?? '',
+        'secondaryCredential' => $secCredMap[$r['id']] ?? '',
+        'secondaryPrc'        => $secPrcMap[$r['id']]  ?? '',
         'sortOrder'      => $orderMap[$r['id']]   ?? 0,
         'workHours'      => $r['work_hours'] ?: '',
         'hours'          => $r['work_hours'] ?: '',

@@ -46,6 +46,11 @@ try {
     $pdo->prepare('UPDATE users SET password_hash = ? WHERE id = ?')
         ->execute([password_hash($newPw, PASSWORD_DEFAULT), $userId]);
 
+    // Self-service change — revoke every OTHER session on the account,
+    // but keep the device making this change signed in, same as
+    // Facebook/Google.
+    revokeOtherSessions($pdo, $userId, session_id());
+
     jsonResponse(['success' => true]);
 
 } catch (PDOException $e) {

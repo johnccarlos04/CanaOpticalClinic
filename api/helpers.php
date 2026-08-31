@@ -14,7 +14,7 @@ require_once __DIR__ . '/../config/smtp.php';
 // end up 8 hours behind the actual local time.
 date_default_timezone_set('Asia/Manila');
 
-// ── Default registration Terms & Conditions / Data Privacy Notice ──
+// ── Default registration Terms & Conditions ────────────────────────
 // Served whenever clinic_settings.terms_content is NULL (fresh install,
 // not yet migrated, or admin hasn't customized it) so the registration
 // page never shows blank legal text. Convention parsed by the shared
@@ -23,7 +23,7 @@ date_default_timezone_set('Asia/Manila');
 // content an admin would see pre-filled in Settings > Terms & Conditions.
 const DEFAULT_TERMS_MD = <<<'TERMS'
 ## 1. Acceptance of Terms
-By creating a patient account with Cana Optical Clinic ("the Clinic"), you agree to be bound by these Terms & Conditions and the Data Privacy Notice below. If you do not agree, please do not proceed with registration.
+By creating a patient account with Cana Optical Clinic ("the Clinic"), you agree to be bound by these Terms & Conditions. If you do not agree, please do not proceed with registration.
 
 ## 2. Account Registration
 You must provide accurate, current, and complete information during registration. You are responsible for keeping your password confidential and for all activity under your account. Notify the Clinic immediately if you suspect unauthorized use.
@@ -37,8 +37,23 @@ Appointment requests submitted through this system are subject to confirmation b
 ## 5. Use of the Platform
 You agree to use this system only for legitimate healthcare purposes related to your own care. Misuse — including attempting to access another patient's records or interfering with the system's normal operation — may result in account suspension.
 
-## 6. Data Privacy Act Notice (Republic Act No. 10173)
-In compliance with the Data Privacy Act of 2012 (RA 10173) and its Implementing Rules and Regulations, the Clinic collects the personal and sensitive personal information you provide during registration (e.g. name, date of birth, address, contact details) and through your subsequent care (e.g. examination results, diagnoses, prescriptions). This information is collected and processed solely for:
+## 6. Changes to these Terms
+The Clinic may update these Terms & Conditions from time to time. Continued use of your account after changes are posted constitutes acceptance of the revised terms.
+TERMS;
+
+// ── Default registration Data Privacy Act Notice ───────────────────
+// Served whenever clinic_settings.privacy_content is NULL. Split out of
+// DEFAULT_TERMS_MD into its own document/checkbox — a Data Privacy Act
+// consent bundled inside a generic "I agree to the Terms" checkbox didn't
+// read as the patient having actually consented to it specifically, which
+// is the whole point of calling it out under RA 10173. Keep in sync with
+// auth.js's DEFAULT_PRIVACY_MD.
+const DEFAULT_PRIVACY_MD = <<<'PRIVACY'
+## 1. Overview
+This Data Privacy Act Notice explains how Cana Optical Clinic ("the Clinic") collects, uses, stores, and protects your personal and sensitive personal information, in compliance with the Data Privacy Act of 2012 (Republic Act No. 10173) and its Implementing Rules and Regulations.
+
+## 2. Information We Collect and Why
+The Clinic collects the personal and sensitive personal information you provide during registration (e.g. name, date of birth, address, contact details) and through your subsequent care (e.g. examination results, diagnoses, prescriptions). This information is collected and processed solely for:
 - Creating and maintaining your patient record
 - Scheduling and managing appointments
 - Providing optical examination, diagnosis, and treatment
@@ -46,16 +61,16 @@ In compliance with the Data Privacy Act of 2012 (RA 10173) and its Implementing 
 - Communicating with you regarding your account, appointments, or care
 - Complying with legal and regulatory requirements
 
-## 7. Storage and Security
+## 3. Storage and Security
 Your data is stored on secured servers with access restricted to authorized clinic personnel (admin, staff, and your attending doctor) who need it to perform their duties. We apply reasonable organizational, physical, and technical safeguards to protect your information against unauthorized access, alteration, disclosure, or destruction.
 
-## 8. Data Sharing
+## 4. Data Sharing
 The Clinic does not sell or rent your personal information. Your data may only be shared with third parties when required by law, when necessary to provide your care (e.g. referrals), or with your explicit consent.
 
-## 9. Data Retention
+## 5. Data Retention
 Your personal and health records are retained for as long as your account is active, and for the period required by applicable healthcare record-keeping regulations afterward, after which they are securely disposed of.
 
-## 10. Your Rights as a Data Subject
+## 6. Your Rights as a Data Subject
 Under the Data Privacy Act, you have the right to:
 - Be informed of how your data is collected and processed
 - Access the personal data the Clinic holds about you
@@ -66,12 +81,9 @@ Under the Data Privacy Act, you have the right to:
 
 To exercise any of these rights, please contact the clinic directly using the contact details on our website.
 
-## 11. Consent
-By checking "I agree" and completing registration, you acknowledge that you have read and understood this notice, and you consent to the collection, use, storage, and processing of your personal and sensitive personal information as described above, for the purpose of receiving care from Cana Optical Clinic — and you are entrusting your credentials and personal information to the Clinic on that basis.
-
-## 12. Changes to this Notice
-The Clinic may update these Terms & Conditions and this Data Privacy Notice from time to time. Continued use of your account after changes are posted constitutes acceptance of the revised terms.
-TERMS;
+## 7. Consent and Changes to this Notice
+By checking "I agree" and completing registration, you acknowledge that you have read and understood this notice, and you consent to the collection, use, storage, and processing of your personal and sensitive personal information as described above, for the purpose of receiving care from Cana Optical Clinic — and you are entrusting your credentials and personal information to the Clinic on that basis. The Clinic may update this notice from time to time; continued use of your account after changes are posted constitutes acceptance of the revised notice.
+PRIVACY;
 
 // ── Default booking-wizard Appointment Policy ──────────────────────
 // Served whenever clinic_settings.appointment_policy_content is NULL.
@@ -307,6 +319,176 @@ function startSession(int $days = 1): void {
 
         session_start();
     }
+}
+
+// ── Active Sessions (multi-device sign-in, not one-device-at-a-time) ──
+// Every login is tracked, not restricted — the same account can stay
+// signed in on several devices/browsers at once, same as Facebook/Google.
+// What's new is visibility and control: a user can see every device
+// currently signed in to their account (Settings > Active Sessions) and
+// revoke any one of them individually; a password change auto-revokes
+// every OTHER session on the account as a security measure.
+
+// A rough, human-readable device description parsed from the browser's
+// User-Agent string — not meant to be precise, just enough for someone to
+// recognize "that's my phone" vs "that's not me" at a glance. Split into
+// os/browser/type (not just the combined label) so listSessions() can
+// group sessions by device the way Google's "Your devices" page does ("2
+// sessions on Windows computer(s)"), not just list them flat.
+function parseDeviceParts(string $ua): array {
+    $ua = trim($ua);
+    if ($ua === '') return ['os' => 'Unknown device', 'browser' => '', 'type' => 'desktop', 'label' => 'Unknown device'];
+
+    $os   = 'Unknown OS';
+    $type = 'desktop';
+    if (stripos($ua, 'Windows') !== false) {
+        $os = 'Windows';
+    } elseif (preg_match('/iPad/i', $ua)) {
+        // iPad — checked before the generic iPhone/iPod branch so it isn't
+        // swallowed by that pattern and mislabeled as a phone.
+        $os = 'iOS'; $type = 'tablet';
+    } elseif (preg_match('/iPhone|iPod/i', $ua)) {
+        $os = 'iOS'; $type = 'phone';
+    } elseif (stripos($ua, 'Android') !== false) {
+        $os = 'Android';
+        // Google's own UA convention: an Android phone's UA includes the
+        // "Mobile" token, a tablet's doesn't — there's no separate
+        // "Tablet" marker to check for instead.
+        $type = (stripos($ua, 'Mobile') !== false) ? 'phone' : 'tablet';
+    } elseif (stripos($ua, 'Mac OS X') !== false) {
+        $os = 'macOS';
+    } elseif (stripos($ua, 'Linux') !== false) {
+        $os = 'Linux';
+    }
+
+    $browser = 'Unknown Browser';
+    // Order matters — Edge/Opera/Chrome all include "Chrome" in their own
+    // UA string (chained-engine spoofing for site compatibility), and
+    // Chrome itself includes "Safari"; check the more specific tokens first.
+    if (stripos($ua, 'Edg/') !== false || stripos($ua, 'EdgA/') !== false || stripos($ua, 'EdgiOS/') !== false) $browser = 'Edge';
+    elseif (stripos($ua, 'OPR/') !== false || stripos($ua, 'Opera') !== false)  $browser = 'Opera';
+    elseif (stripos($ua, 'Firefox') !== false || stripos($ua, 'FxiOS') !== false) $browser = 'Firefox';
+    elseif (stripos($ua, 'CriOS') !== false || stripos($ua, 'Chrome') !== false)  $browser = 'Chrome';
+    elseif (stripos($ua, 'Safari') !== false)                       $browser = 'Safari';
+
+    return ['os' => $os, 'browser' => $browser, 'type' => $type, 'label' => "{$browser} on {$os}"];
+}
+
+// Thin wrapper kept for any caller that just wants the combined label.
+function parseDeviceLabel(string $ua): string {
+    return parseDeviceParts($ua)['label'];
+}
+
+// Called right after a successful login (password or the auto-login
+// right after verifying a registration OTP) — tags the *current* PHP
+// session's row with who it belongs to, plus a device description/IP for
+// display. INSERT ... ON DUPLICATE KEY UPDATE rather than a plain UPDATE:
+// DbSessionHandler::write() only actually persists the session row at
+// request shutdown, so at this point in the request the row may not exist
+// in the DB yet — this creates it if needed (an empty `data` placeholder,
+// immediately overwritten by the real write() at request end) or just
+// updates the ownership columns if it's already there.
+function tagSessionOwner(PDO $pdo, int $userId): void {
+    $sid = session_id();
+    if (!$sid) return;
+    $ua = substr($_SERVER['HTTP_USER_AGENT'] ?? '', 0, 255);
+    $ip = clientIp();
+    $stmt = $pdo->prepare(
+        'INSERT INTO sessions (id, data, last_access, user_id, user_agent, ip_address, created_at)
+         VALUES (?, \'\', ?, ?, ?, ?, NOW())
+         ON DUPLICATE KEY UPDATE user_id = VALUES(user_id), user_agent = VALUES(user_agent),
+                                  ip_address = VALUES(ip_address), created_at = VALUES(created_at)'
+    );
+    $stmt->execute([$sid, time(), $userId, $ua, $ip]);
+
+    // Every call here is a genuine new sign-in (password login, or the
+    // auto-login right after verifying a registration OTP) — surface it
+    // as a notification so the account owner notices a sign-in they
+    // didn't make and can review/revoke it from Active Sessions, same
+    // spirit as Google/Facebook's own "new sign-in" alerts. No relatedId:
+    // there's no specific record to jump to, just the Active Sessions
+    // page itself (see the 'new_login' branch in _notifNavTarget(),
+    // router.js).
+    $deviceLabel = parseDeviceLabel($ua);
+    createNotification($pdo, $userId, 'new_login', 'New Sign-in Detected',
+        "A new sign-in to your account was detected on {$deviceLabel} (IP: {$ip}). If this wasn't you, review your Active Sessions and change your password."
+    );
+}
+
+// A short, opaque, non-sensitive handle for a session row — returned to
+// the client instead of the real PHP session id. The session id itself is
+// a live bearer credential (whoever holds it IS that session, cookie or
+// not); listSessions()'s JSON response is exactly the kind of place a
+// leak (XSS, a logged response, etc.) would be most damaging, so the raw
+// id never leaves the server. revokeSessionByShortId() below re-derives
+// this same hash per-row rather than reversing it, which is why lookup is
+// a short scan over one user's own (always small) session list, not a
+// hash-to-id table.
+function _sessionShortId(string $sid): string {
+    return substr(hash('sha256', $sid), 0, 16);
+}
+
+// Every active session for one account, newest first — the current
+// request's own session marked isCurrent so the UI can label it
+// "This device" and skip offering it a Log Out button.
+function listSessions(PDO $pdo, int $userId): array {
+    $stmt = $pdo->prepare(
+        'SELECT id, user_agent, ip_address, created_at, last_access FROM sessions
+         WHERE user_id = ? ORDER BY last_access DESC'
+    );
+    $stmt->execute([$userId]);
+    $rows = $stmt->fetchAll();
+    $currentSid = session_id();
+
+    return array_map(function (array $r) use ($currentSid): array {
+        $parts = parseDeviceParts($r['user_agent'] ?? '');
+        return [
+            'id'         => _sessionShortId($r['id']),
+            'os'         => $parts['os'],
+            'type'       => $parts['type'],
+            'browser'    => $parts['browser'],
+            'device'     => $parts['label'],
+            'ip'         => $r['ip_address'] ?? null,
+            'createdAt'  => $r['created_at'],
+            'lastActive' => $r['last_access'] ? date('Y-m-d H:i:s', (int)$r['last_access']) : null,
+            'isCurrent'  => $r['id'] === $currentSid,
+        ];
+    }, $rows);
+}
+
+// Revokes exactly one of $userId's own sessions, identified by the short
+// id listSessions() handed the client — scoped to `WHERE user_id = ?`
+// throughout, so there is no way to list or revoke a different account's
+// session even by guessing/brute-forcing a short id. Returns true if a
+// session was actually found and removed.
+function revokeSessionByShortId(PDO $pdo, int $userId, string $shortId): bool {
+    $stmt = $pdo->prepare('SELECT id FROM sessions WHERE user_id = ?');
+    $stmt->execute([$userId]);
+    foreach ($stmt->fetchAll(PDO::FETCH_COLUMN) as $sid) {
+        if (_sessionShortId($sid) === $shortId) {
+            $pdo->prepare('DELETE FROM sessions WHERE id = ? AND user_id = ?')->execute([$sid, $userId]);
+            return true;
+        }
+    }
+    return false;
+}
+
+// Revokes every session on the account EXCEPT $exceptSessionId — used by
+// a self-service password change, where the device making the change
+// stays signed in (same convention as Facebook/Google), but every other
+// open session is signed out as a security measure.
+function revokeOtherSessions(PDO $pdo, int $userId, string $exceptSessionId): void {
+    $pdo->prepare('DELETE FROM sessions WHERE user_id = ? AND id != ?')->execute([$userId, $exceptSessionId]);
+}
+
+// Revokes every session on the account, no exceptions — used by the
+// forgot-password reset flow (the requester wasn't authenticated as this
+// user anywhere during that flow, so there's no "current device" to
+// spare) and by an admin resetting another user's password (the admin
+// isn't the account owner, so none of that account's sessions are theirs
+// to keep).
+function revokeAllSessions(PDO $pdo, int $userId): void {
+    $pdo->prepare('DELETE FROM sessions WHERE user_id = ?')->execute([$userId]);
 }
 
 // Parses clinic_settings.min_advance_booking ('Same day','1 day','2 days','3 days')
@@ -605,13 +787,20 @@ function createAppointmentRecord(PDO $pdo, array $data): string {
         $newId = 'A' . str_pad($next, 3, '0', STR_PAD_LEFT);
     }
 
+    // 'online' unless the caller explicitly says otherwise — every existing
+    // caller before this field existed effectively meant 'online' anyway
+    // (a patient booking themselves, or claiming their own waitlist offer),
+    // so this default keeps every call site that hasn't been updated working
+    // exactly as before instead of silently mislabeling walk-ins.
+    $source = ($data['source'] ?? 'online') === 'walk-in' ? 'walk-in' : 'online';
+
     $pdo->prepare(
         'INSERT INTO appointments
-           (id, patient_id, patient_name, doctor_id, doctor_name, date, time, type, status, notes, terms_agreed)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+           (id, patient_id, patient_name, doctor_id, doctor_name, date, time, type, status, source, notes, terms_agreed)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
     )->execute([
         $newId, $data['patientId'], $data['patientName'], $data['doctorId'], $data['doctorName'],
-        $data['date'], $data['time'], $data['type'], $data['status'], $data['notes'] ?? '',
+        $data['date'], $data['time'], $data['type'], $data['status'], $source, $data['notes'] ?? '',
         !empty($data['termsAgreed']) ? 1 : 0,
     ]);
 

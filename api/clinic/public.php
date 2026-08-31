@@ -51,7 +51,7 @@ try {
     $pdo = getDB();
     $r = $pdo->query(
         'SELECT name, tagline, address, phone, email, hours, logo_url, hero_url, map_lat, map_lng, map_embed_url, video_url,
-                clinic_days, morning_start, morning_end, afternoon_start, afternoon_end, founded_year, terms_content
+                clinic_days, morning_start, morning_end, afternoon_start, afternoon_end, founded_year, terms_content, privacy_content
          FROM clinic_settings WHERE id = 1 LIMIT 1'
     )->fetch();
 
@@ -92,6 +92,7 @@ try {
         'videoUrl'    => $r['video_url'] ?? null,
         'foundedYear' => $r['founded_year'] ? (int)$r['founded_year'] : null,
         'termsContent' => $r['terms_content'] ?: DEFAULT_TERMS_MD,
+        'privacyContent' => $r['privacy_content'] ?: DEFAULT_PRIVACY_MD,
     ]]);
 
 } catch (PDOException $e) {

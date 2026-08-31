@@ -43,6 +43,25 @@ try {
         jsonResponse(['success' => true, 'role' => 'Service']);
     }
 
+    // Examinations aren't a user account/role row either — unset the
+    // archived flag on the exam and cascade to its linked consultation/
+    // prescription too, mirroring the cascade archive/create.php applied.
+    if ($rec['type'] === 'Examination') {
+        $ex = $pdo->prepare('SELECT id, consultation_id FROM examinations WHERE id = ? LIMIT 1');
+        $ex->execute([$rec['ref_id']]);
+        $exam = $ex->fetch();
+        if (!$exam) {
+            jsonResponse(['success' => false, 'message' => 'The original examination no longer exists.']);
+        }
+        $pdo->prepare('UPDATE examinations SET archived_at = NULL WHERE id = ?')->execute([$rec['ref_id']]);
+        if ($exam['consultation_id']) {
+            $pdo->prepare('UPDATE consultations SET archived_at = NULL WHERE id = ?')->execute([$exam['consultation_id']]);
+        }
+        $pdo->prepare('UPDATE prescriptions SET archived_at = NULL WHERE exam_id = ?')->execute([$rec['ref_id']]);
+        $pdo->prepare('DELETE FROM archived_records WHERE id = ?')->execute([$id]);
+        jsonResponse(['success' => true, 'role' => 'Examination']);
+    }
+
     $data  = $rec['data_json'] ? json_decode($rec['data_json'], true) : [];
     $role  = $data['role'] ?? ($rec['type'] === 'Patient' ? 'Patient' : null);
     $tableMap = ['Admin' => 'admins', 'Staff' => 'staff', 'Doctor' => 'doctors', 'Patient' => 'patients'];

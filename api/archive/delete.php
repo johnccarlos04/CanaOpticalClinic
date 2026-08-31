@@ -46,6 +46,33 @@ try {
         jsonResponse(['success' => true]);
     }
 
+    // Examinations — same cascade api/examinations/delete.php used to do in
+    // one step (that hard-delete path now only runs via this Archives-page
+    // "Delete Forever" action, after the exam has already been archived).
+    if ($rec['type'] === 'Examination') {
+        $ex = $pdo->prepare('SELECT id, consultation_id FROM examinations WHERE id = ? LIMIT 1');
+        $ex->execute([$rec['ref_id']]);
+        $exam = $ex->fetch();
+
+        if ($exam) {
+            $pdo->beginTransaction();
+            // Prescription links back via exam_id.
+            $pdo->prepare('DELETE FROM prescriptions WHERE exam_id = ?')->execute([$rec['ref_id']]);
+            // Consultation links via examinations.consultation_id — delete it
+            // explicitly before the exam row itself (there's no ON DELETE
+            // CASCADE from examinations to consultations, only the reverse FK).
+            if ($exam['consultation_id']) {
+                $pdo->prepare('DELETE FROM consultations WHERE id = ?')->execute([$exam['consultation_id']]);
+            }
+            $pdo->prepare('DELETE FROM examinations WHERE id = ?')->execute([$rec['ref_id']]);
+            $pdo->commit();
+        }
+        // Exam may already be gone (e.g. deleted some other way) — still
+        // clean up the archive entry either way.
+        $pdo->prepare('DELETE FROM archived_records WHERE id = ?')->execute([$id]);
+        jsonResponse(['success' => true]);
+    }
+
     $data  = $rec['data_json'] ? json_decode($rec['data_json'], true) : [];
     $role  = $data['role'] ?? ($rec['type'] === 'Patient' ? 'Patient' : null);
     $tableMap = ['Admin' => 'admins', 'Staff' => 'staff', 'Doctor' => 'doctors', 'Patient' => 'patients'];

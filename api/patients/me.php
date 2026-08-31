@@ -38,7 +38,7 @@ try {
                 d.first_name AS doctor_first, d.middle_name AS doctor_middle, d.last_name AS doctor_last
          FROM examinations e
          LEFT JOIN doctors d ON d.id = e.doctor_id
-         WHERE e.patient_id = ?
+         WHERE e.patient_id = ? AND e.archived_at IS NULL
          ORDER BY e.date DESC'
     );
     $examStmt->execute([$profileId]);
@@ -66,7 +66,7 @@ try {
                 d.first_name AS doctor_first, d.middle_name AS doctor_middle, d.last_name AS doctor_last
          FROM prescriptions rx
          LEFT JOIN doctors d ON d.id = rx.doctor_id
-         WHERE rx.patient_id = ?
+         WHERE rx.patient_id = ? AND rx.archived_at IS NULL
          ORDER BY rx.date DESC'
     );
     $rxStmt->execute([$profileId]);
@@ -87,6 +87,9 @@ try {
         'lensMaterial'    => $rx['lens_material'] ?? '',
         'frameSelection'  => $rx['frame_selection'] ?? '',
         'lensCoating'     => $rx['lens_coating'] ? (json_decode($rx['lens_coating'], true) ?? []) : [],
+        'totalAmount'     => $rx['total_amount'] ?? null,
+        'dispensedDate'   => $rx['dispensed_date'] ?? '',
+        'receivedBy'      => $rx['received_by'] ?? '',
     ], $rxRows);
 
     // ── Consultations ─────────────────────────────────────────────
@@ -95,7 +98,7 @@ try {
                 d.first_name AS doctor_first, d.middle_name AS doctor_middle, d.last_name AS doctor_last
          FROM consultations c
          LEFT JOIN doctors d ON d.id = c.doctor_id
-         WHERE c.patient_id = ?
+         WHERE c.patient_id = ? AND c.archived_at IS NULL
          ORDER BY c.date DESC'
     );
     $conStmt->execute([$profileId]);

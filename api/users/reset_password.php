@@ -67,6 +67,11 @@ try {
     $pdo->prepare('UPDATE users SET password_hash = ? WHERE id = ?')
         ->execute([$hash, $targetUserId]);
 
+    // Admin resetting someone else's password — revoke every session on
+    // the TARGET account, no exceptions. The admin isn't the account
+    // owner, so none of that account's sessions are theirs to keep.
+    revokeAllSessions($pdo, $targetUserId);
+
     jsonResponse(['success' => true]);
 
 } catch (PDOException $e) {

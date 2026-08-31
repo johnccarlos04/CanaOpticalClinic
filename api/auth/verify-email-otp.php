@@ -163,6 +163,11 @@ try {
     $_SESSION['profile_id'] = $pid;
     $_SESSION['role']       = 'patient';
 
+    // Same session tagging as a normal password login (login.php) — this
+    // is an auto-login right after registration, so it needs to show up
+    // in the new patient's own Active Sessions list too.
+    tagSessionOwner($pdo, $uid);
+
     jsonResponse(['success' => true, 'role' => 'patient', 'user' => $userObj]);
 
 } catch (PDOException $e) {
