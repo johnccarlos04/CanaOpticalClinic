@@ -220,10 +220,34 @@
     if (fHours && clinic.hours)   fHours.textContent = clinic.hours
   }
 
+  // Mirrors logout() in auth.js (the sidebar's Sign Out, app.html) so
+  // signing out from these public pages is exactly as reliable: the same
+  // up-to-3-attempt retry (a single fire-and-forget request used to mean a
+  // transient network blip left the session row never actually deleted
+  // server-side, even though the page moved on as if it had signed out),
+  // and clearing the SAME '_canaopticalclinic_hadSession' localStorage flag
+  // (HAD_SESSION_KEY, auth.js) that flag must stay in sync with. Without
+  // clearing it here, the next time app.html loads on this browser it'd
+  // find that flag still set from the earlier login, find no valid
+  // session (correctly, since this really did sign out), and wrongly show
+  // "You were signed out because this session ended" — the message meant
+  // for a session dying unexpectedly, not this deliberate one.
   function signOut(logoutHref, indexHref) {
-    fetch(logoutHref, { method: 'POST' })
-      .catch(function () {})
-      .then(function () { window.location.href = indexHref })
+    var attempt = 0
+    function tryOnce() {
+      attempt++
+      return fetch(logoutHref, { method: 'POST' })
+        .then(function (r) { return r.ok })
+        .catch(function () { return false })
+        .then(function (ok) {
+          if (ok || attempt >= 3) return
+          return new Promise(function (resolve) { setTimeout(resolve, 400 * attempt) }).then(tryOnce)
+        })
+    }
+    tryOnce().then(function () {
+      try { localStorage.removeItem('_canaopticalclinic_hadSession') } catch (e) {}
+      window.location.href = indexHref
+    })
   }
 
   function prefillContactForm(user) {
