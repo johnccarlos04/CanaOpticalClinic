@@ -6031,7 +6031,7 @@ async function doAddUser() {
     const middle = gv('nu-middle')
 
     if (role === 'Patient') {
-      endpoint = '/canaopticalclinic/api/patients/create.php'
+      endpoint = 'api/patients/create.php'
       body = {
         firstName: first, middleName: middle, lastName: last, email, contact,
         dob: gv('nu-dob'), gender: gv('nu-gender'),
@@ -6039,7 +6039,7 @@ async function doAddUser() {
         occupation: gv('nu-occupation'),
       }
     } else {
-      endpoint = '/canaopticalclinic/api/users/create.php'
+      endpoint = 'api/users/create.php'
       body = { role, firstName: first, middleName: middle, lastName: last, email, password: pass, contact }
       if (role === 'Doctor') {
         body.specialization = gv('nu-specialization') || 'Optometrist'
