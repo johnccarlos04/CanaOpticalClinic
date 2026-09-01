@@ -1901,15 +1901,25 @@ async function _syncMyRecords() {
     const exams = d.examinations  || []
     const rxs   = d.prescriptions || []
     const cons  = d.consultations || []
+    const delAt  = d.deletionRequestedAt   || null
+    const delRsn = d.deletionRequestReason || ''
     const changed = _pollDataChanged(
-      { examinations: window.state.user?.examinations, prescriptions: window.state.user?.prescriptions, consultations: window.state.user?.consultations },
-      { examinations: exams, prescriptions: rxs, consultations: cons }
+      { examinations: window.state.user?.examinations, prescriptions: window.state.user?.prescriptions, consultations: window.state.user?.consultations,
+        deletionRequestedAt: window.state.user?.deletionRequestedAt, deletionRequestReason: window.state.user?.deletionRequestReason },
+      { examinations: exams, prescriptions: rxs, consultations: cons, deletionRequestedAt: delAt, deletionRequestReason: delRsn }
     )
     // Update state.user so the exam-history/prescriptions/consultations pages (which read user.examinations etc. directly) work
     if (window.state.user) {
       window.state.user.examinations  = exams
       window.state.user.prescriptions = rxs
       window.state.user.consultations = cons
+      // Picks up admin/staff archiving or dismissing this patient's own
+      // deletion request (api/archive/create.php, api/patients/dismiss-
+      // deletion-request.php) — see the patient-settings re-render below,
+      // which swaps the Settings > My Profile card back to "Request
+      // Account Deletion" once this clears.
+      window.state.user.deletionRequestedAt   = delAt
+      window.state.user.deletionRequestReason = delRsn
     }
     // Insert/update patient in patients[] so dashboard, exam-history, prescriptions pages work
     const uid = window.state.user?.id
@@ -1924,7 +1934,7 @@ async function _syncMyRecords() {
       }
     }
     const page = window.state?.page
-    const dataPages = new Set(['patient-dashboard','patient-prescriptions','patient-exam-history','patient-consultations'])
+    const dataPages = new Set(['patient-dashboard','patient-prescriptions','patient-exam-history','patient-consultations','patient-settings'])
     if (changed && dataPages.has(page)) window.renderPage({ silent: true })
   } catch (_) {}
 }

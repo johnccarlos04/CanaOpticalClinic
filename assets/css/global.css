@@ -3429,8 +3429,8 @@ input[type="date"].form-input::-webkit-datetime-edit-year-field {
   color: #fff !important;
   font-weight: 700;
 }
-.cal-day.blocked { background: #F3F4F6; color: #9CA3AF; cursor: default; }
-.cal-day.cal-holiday { background: #FFF1F2; color: #f43f5e; cursor: default; font-weight: 600; }
+.cal-day.blocked { background: #F3F4F6; color: #9CA3AF; cursor: not-allowed; }
+.cal-day.cal-holiday { background: #FFF1F2; color: #f43f5e; cursor: not-allowed; font-weight: 600; }
 .cal-holiday-lbl { position: absolute; left: 2px; right: 2px; top: calc(50% + 8px); font-size: .58rem; line-height: 1.1; text-align: center; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; font-weight: 500; padding: 0 1px; }
 /* Short one-word labels ("Too Far", "Too Soon", "Booked") — .cal-holiday-lbl
    above is sized down specifically to fit a 2-line-wrapped holiday name

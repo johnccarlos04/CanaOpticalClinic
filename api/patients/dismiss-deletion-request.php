@@ -47,8 +47,15 @@ try {
     )->execute([$patientId]);
 
     if ($pt['user_id']) {
-        createNotification($pdo, (int)$pt['user_id'], 'info', 'Deletion Request Reviewed',
-            'Clinic staff reviewed your account deletion request and your account will remain active. Contact the clinic directly if you have questions.'
+        // Own type ('deletion_reviewed'), not generic 'info' — gives it its
+        // own icon/color (green check-circle, same "resolved positively"
+        // treatment as an approved appointment) instead of a plain gray
+        // info dot, and lets the click-through jump straight to Settings >
+        // My Profile, where the deletion request lived, instead of just
+        // the dashboard (see _NOTIF_ICON/_NOTIF_COLOR/_notifNavTarget(),
+        // router.js).
+        createNotification($pdo, (int)$pt['user_id'], 'deletion_reviewed', 'Deletion Request Reviewed',
+            'Clinic staff reviewed your account deletion request and decided to keep your account active. If you still wish to proceed, or have questions, please contact the clinic directly.'
         );
     }
 

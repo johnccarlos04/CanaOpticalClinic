@@ -797,7 +797,7 @@ function pagePatientList() {
               ${avatar(p.name, 'patient-avatar', p.photoUrl || null)}
               <div class="patient-name-info">
                 <strong>${p.name}</strong>
-                ${p.deletionRequestedAt ? `<span title="Account deletion requested ${fmtDate(p.deletionRequestedAt?.replace(' ','T'))}" style="display:inline-flex;align-items:center;gap:3px;background:#FEE2E2;color:#991B1B;font-weight:700;font-size:.62rem;padding:2px 7px;border-radius:999px;margin-left:6px">${ic('user-x','icon-xs')} Deletion Requested</span>` : ''}
+                ${p.deletionRequestedAt ? `<span title="Account deletion requested ${fmtDate(p.deletionRequestedAt?.replace(' ','T'))}" style="display:inline-flex;align-items:center;gap:3px;background:#FEE2E2;color:#991B1B;font-weight:700;font-size:.62rem;padding:2px 7px;border-radius:999px;margin-top:2px">${ic('user-x','icon-xs')} Deletion Requested</span>` : ''}
                 <span>${p.id}</span>
               </div>
             </div></td>
@@ -966,21 +966,32 @@ function pagePatientView() {
 
     ${p.deletionRequestedAt ? `
     <!-- Pending account-deletion request — see api/patients/request-
-         deletion.php. Archiving this patient (the button already in the
-         Personal Info tab / patient list) fulfills it; Dismiss here
-         clears it without archiving. -->
+         deletion.php. Archiving is admin-only (same rule as everywhere
+         else archiving happens — see canArchive in the shared Patient
+         List section above, and the same check enforced server-side in
+         api/archive/create.php) so the Archive button and its wording
+         only show for role === 'admin'; staff can still Dismiss, but see
+         wording that points to an admin for the archive step instead of
+         an action they don't actually have. -->
     <div class="card" style="margin-bottom:20px;padding:16px 20px;border:1px solid #FECACA;background:#FEF2F2;display:flex;align-items:center;gap:12px;flex-wrap:wrap">
       <div style="color:#DC2626;flex-shrink:0">${ic('user-x','icon')}</div>
       <div style="flex:1;min-width:200px">
         <div style="font-size:.88rem;font-weight:700;color:#991B1B">Account Deletion Requested</div>
         <div style="font-size:.78rem;color:#7F1D1D;margin-top:2px">
-          Requested ${fmtDate(p.deletionRequestedAt?.replace(' ','T'))}${p.deletionRequestReason ? ` — "${p.deletionRequestReason}"` : ''}.
-          Archive this patient to fulfill it, or dismiss to keep the account as-is.
+          Requested <strong>${new Date(p.deletionRequestedAt.replace(' ','T')).toLocaleDateString('en-PH',{month:'long',day:'numeric',year:'numeric'})}</strong>${p.deletionRequestReason ? `, reason given: "${p.deletionRequestReason}"` : ''}.
+          ${role === 'admin'
+            ? 'Archive this patient to fulfill it, or dismiss to keep the account unchanged.'
+            : 'An admin can archive this patient to fulfill it, or dismiss to keep the account unchanged.'}
         </div>
       </div>
-      ${canEdit ? `<button class="btn-secondary" style="flex-shrink:0" onclick="window.dismissDeletionRequest('${p.id}', this)">
-        ${ic('x','icon-sm')} Dismiss Request
-      </button>` : ''}
+      ${canEdit ? `<div style="display:flex;gap:8px;flex-shrink:0">
+        <button class="btn-secondary" onclick="window.dismissDeletionRequest('${p.id}', this)">
+          ${ic('x','icon-sm')} Dismiss Request
+        </button>
+        ${role === 'admin' ? `<button class="btn-primary" onclick="window.confirmArchivePatient('${p.id}')">
+          ${ic('archive','icon-sm')} Archive Patient
+        </button>` : ''}
+      </div>` : ''}
     </div>` : ''}
 
     <!-- ── Profile Header Card ─────────────────────────────── -->
@@ -2193,8 +2204,6 @@ function pageAdminSettings() {
 
       </div>
 
-      ${window.activeSessionsCardHtml()}
-
     </div>`
   }
 
@@ -2729,7 +2738,6 @@ function pageAdminSettings() {
   }
 
   if (sec === 'archives') window.state.afterRender = () => { window.initPagination('archives-tbody'); window.initSortable('archives-tbody', { key: 'date', type: 'date', dir: -1 }) }
-  if (sec === 'profile') window.state.afterRender = () => window.loadActiveSessionsSummary()
   // services section uses a card grid — no table pagination needed
 
   const sections = { profile: sectionProfile, clinic: sectionClinic, services: sectionServices, consultation: sectionConsultation, terms: sectionTerms, archives: sectionArchives }
@@ -3294,8 +3302,6 @@ function pageDoctorSettings() {
 
   const docName = doc.name || `${doc.firstName || ''} ${doc.lastName || ''}`.trim() || 'Doctor'
 
-  window.state.afterRender = () => window.loadActiveSessionsSummary()
-
   const pwField = (id, placeholder, extra='') => `
     <div style="position:relative">
       <input type="password" class="form-input" id="${id}" placeholder="${placeholder}" style="padding-right:40px" autocomplete="off" readonly onfocus="this.removeAttribute('readonly')" ${extra}>
@@ -3444,8 +3450,6 @@ function pageDoctorSettings() {
           </div>
         </div>
       </div>
-
-      ${window.activeSessionsCardHtml()}
 
     </div>
   </div>`
@@ -4901,19 +4905,19 @@ function appointmentWizardHtml(mode) {
         transition:background-color .15s, color .15s; }
       .amc-day:hover:not(.amc-past):not(.amc-empty):not(.amc-far) { background:#FFF0DC; }
       .amc-day.amc-avail { background:#ECFDF5; color:#065F46; font-weight:600; }
-      .amc-day.amc-unavailable { background:#F3F4F6; color:#9CA3AF; cursor:default; }
+      .amc-day.amc-unavailable { background:#F3F4F6; color:#9CA3AF; cursor:not-allowed; }
       .amc-day.amc-today { outline:2px solid #E8760A; font-weight:700; }
       .amc-day.amc-selected { background:#E8760A !important; color:#fff !important; font-weight:700; }
       /* Solid, legible muted colors instead of opacity — opacity fades the
          day NUMBER along with the background, and stacked with the already-
          muted unavailable/holiday colors it made whole months (e.g. every
          date past the Maximum Advance Booking window) nearly unreadable. */
-      .amc-day.amc-past { color:#C1C7D0; cursor:default; }
-      .amc-day.amc-far { color:#C1C7D0; cursor:default; background:#f9fafb; }
+      .amc-day.amc-past { color:#C1C7D0; cursor:not-allowed; }
+      .amc-day.amc-far { color:#C1C7D0; cursor:not-allowed; background:#f9fafb; }
       .amc-day.amc-empty { cursor:default; }
-      .amc-day.amc-holiday { background:#FFF1F2; color:#f43f5e; cursor:default; font-weight:600; }
+      .amc-day.amc-holiday { background:#FFF1F2; color:#f43f5e; cursor:not-allowed; font-weight:600; }
       .amc-holiday-lbl { position:absolute; left:2px; right:2px; top:calc(50% + 8px); font-size:.7rem; line-height:1.15; text-align:center; overflow:hidden; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; font-weight:600; padding:0 1px; }
-      .amc-day.amc-blocked { background:#FEE2E2; color:#B91C1C; cursor:default; font-weight:700; text-decoration:line-through; text-decoration-color:rgba(185,28,28,0.5); }
+      .amc-day.amc-blocked { background:#FEE2E2; color:#B91C1C; cursor:not-allowed; font-weight:700; text-decoration:line-through; text-decoration-color:rgba(185,28,28,0.5); }
       .amc-nodoc-lbl { position:absolute; left:2px; right:2px; top:calc(50% + 8px); font-size:.7rem; line-height:1.15; text-align:center; overflow:hidden; white-space:nowrap; font-weight:600; color:#6B7280; }
       @media (max-width:480px) {
         .amc-day.amc-holiday { font-size:.7rem; }
@@ -5636,8 +5640,6 @@ function pageStaffSettings() {
   const staffMember = staff.find(s => s.id === user?.id) || user || {}
   const staffName = staffMember.name || `${staffMember.firstName || ''} ${staffMember.lastName || ''}`.trim() || 'Staff'
 
-  window.state.afterRender = () => window.loadActiveSessionsSummary()
-
   const pwField = (id, placeholder, extra='') => `
     <div style="position:relative">
       <input type="password" class="form-input" id="${id}" placeholder="${placeholder}" style="padding-right:40px" autocomplete="off" readonly onfocus="this.removeAttribute('readonly')" ${extra}>
@@ -5768,8 +5770,6 @@ function pageStaffSettings() {
           </div>
         </div>
       </div>
-
-      ${window.activeSessionsCardHtml()}
 
     </div>
   </div>`
@@ -6013,10 +6013,17 @@ function pagePatientPrescriptions() {
 function pagePatientNotifications() {
   const notifs = window._notifications || []
 
-  const typeIcon  = { approved:'check-circle', cancelled:'x-circle', disapproved:'x-circle', rescheduled:'calendar', new_appointment:'calendar', reschedule_request:'alert-circle', welcome:'home', reminder:'clock', waitlist_offer:'alert-circle', waitlist_removed:'x-circle', waitlist_join:'clock', waitlist_left:'x-circle', no_show:'alert-circle', record:'eye', prescription:'file-text', info:'info', appointment_confirmed:'check-circle', follow_up_needed:'calendar', new_login:'monitor', deletion_request:'user-x' }
-  const typeColor = { approved:'#059669', cancelled:'#EF4444', disapproved:'#EF4444', rescheduled:'#3B82F6', new_appointment:'#E8760A', reschedule_request:'#D97706', welcome:'#E8760A', reminder:'#D97706', waitlist_offer:'#E8760A', waitlist_removed:'#EF4444', waitlist_join:'#E8760A', waitlist_left:'#6B7280', no_show:'#EF4444', record:'#E8760A', prescription:'#3B82F6', info:'#6B7280', appointment_confirmed:'#059669', follow_up_needed:'#E8760A', new_login:'#E8760A', deletion_request:'#EF4444' }
-  const typeBg    = { approved:'#ECFDF5', cancelled:'#FEF2F2', disapproved:'#FEF2F2', rescheduled:'#EFF6FF', new_appointment:'#FFF0DC', reschedule_request:'#FFF3CD', welcome:'#FFF0DC', reminder:'#FFF3CD', waitlist_offer:'#FFF0DC', waitlist_removed:'#FEF2F2', waitlist_join:'#FFF0DC', waitlist_left:'#F3F4F6', no_show:'#FEF2F2', record:'#FFF0DC', prescription:'#EFF6FF', info:'#F3F4F6', appointment_confirmed:'#ECFDF5', follow_up_needed:'#FFF0DC', new_login:'#FFF0DC', deletion_request:'#FEF2F2' }
-  const resolveType = n => (n.type === 'info' && n.title?.toLowerCase().startsWith('welcome')) ? 'welcome' : n.type
+  const typeIcon  = { approved:'check-circle', cancelled:'x-circle', disapproved:'x-circle', rescheduled:'calendar', new_appointment:'calendar', reschedule_request:'alert-circle', welcome:'home', reminder:'clock', waitlist_offer:'alert-circle', waitlist_removed:'x-circle', waitlist_join:'clock', waitlist_left:'x-circle', no_show:'alert-circle', record:'eye', prescription:'file-text', info:'info', appointment_confirmed:'check-circle', follow_up_needed:'calendar', new_login:'monitor', deletion_request:'user-x', deletion_reviewed:'check-circle' }
+  const typeColor = { approved:'#059669', cancelled:'#EF4444', disapproved:'#EF4444', rescheduled:'#3B82F6', new_appointment:'#E8760A', reschedule_request:'#D97706', welcome:'#E8760A', reminder:'#D97706', waitlist_offer:'#E8760A', waitlist_removed:'#EF4444', waitlist_join:'#E8760A', waitlist_left:'#6B7280', no_show:'#EF4444', record:'#E8760A', prescription:'#3B82F6', info:'#6B7280', appointment_confirmed:'#059669', follow_up_needed:'#E8760A', new_login:'#E8760A', deletion_request:'#EF4444', deletion_reviewed:'#059669' }
+  const typeBg    = { approved:'#ECFDF5', cancelled:'#FEF2F2', disapproved:'#FEF2F2', rescheduled:'#EFF6FF', new_appointment:'#FFF0DC', reschedule_request:'#FFF3CD', welcome:'#FFF0DC', reminder:'#FFF3CD', waitlist_offer:'#FFF0DC', waitlist_removed:'#FEF2F2', waitlist_join:'#FFF0DC', waitlist_left:'#F3F4F6', no_show:'#FEF2F2', record:'#FFF0DC', prescription:'#EFF6FF', info:'#F3F4F6', appointment_confirmed:'#ECFDF5', follow_up_needed:'#FFF0DC', new_login:'#FFF0DC', deletion_request:'#FEF2F2', deletion_reviewed:'#ECFDF5' }
+  // 'welcome' precedent (info-typed but title-matched to a more specific
+  // display type) reused here for notifications created before
+  // 'deletion_reviewed' became its own type (api/patients/dismiss-
+  // deletion-request.php) — those rows are stuck as plain 'info' in the
+  // DB forever, so this is the only way they ever pick up the right icon.
+  const resolveType = n => (n.type === 'info' && n.title?.toLowerCase().startsWith('welcome')) ? 'welcome'
+    : (n.type === 'info' && n.title === 'Deletion Request Reviewed') ? 'deletion_reviewed'
+    : n.type
 
   const unreadCount = notifs.filter(n => !n.isRead).length
 
@@ -6086,8 +6093,6 @@ function pagePatientSettings() {
     ? new Date(patient.registeredDate).toLocaleDateString('en-PH', { month: 'long', year: 'numeric' })
     : '—'
 
-  window.state.afterRender = () => window.loadActiveSessionsSummary()
-
   const pwField = (id, placeholder, extra='') => `
     <div style="position:relative">
       <input type="password" class="form-input" id="${id}" placeholder="${placeholder}" style="padding-right:40px" autocomplete="off" readonly onfocus="this.removeAttribute('readonly')" ${extra}>
@@ -6156,7 +6161,10 @@ function pagePatientSettings() {
     <!-- Two-column area -->
     <div class="pt-sett-col" style="display:flex;flex-direction:column;gap:20px">
 
-      <!-- LEFT: Personal Information -->
+      <!-- LEFT column -->
+      <div style="display:flex;flex-direction:column;gap:20px">
+
+      <!-- Personal Information -->
       <div class="card" style="padding:28px">
         <div style="display:flex;align-items:center;gap:8px;margin-bottom:20px">
           <div style="color:#E8760A">${ic('user','icon-sm')}</div>
@@ -6218,6 +6226,39 @@ function pagePatientSettings() {
             </button>
           </div>
         </div>
+      </div>
+
+      <!-- Danger Zone — self-service "Request Account Deletion". This only
+           ever sends a request to clinic staff (see api/patients/request-
+           deletion.php) — it never deletes anything itself. Staff review
+           and act on it from Patient Records, same as the rest of this
+           app's archive-before-permanent-delete flow. Stacked right below
+           Personal Information in the LEFT column (not a 3rd grid item)
+           so it sits close to the cards above it instead of dropping
+           below the taller RIGHT column. -->
+      <div class="card" style="padding:24px;border:1px solid #FECACA">
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
+          <div style="color:#DC2626">${ic('user-x','icon-sm')}</div>
+          <div style="font-size:1.05rem;font-weight:700;color:#1C1C1C">Delete My Account</div>
+        </div>
+        ${user.deletionRequestedAt ? `
+        <div style="font-size:.82rem;color:#6B7280;line-height:1.6;margin-bottom:14px">
+          You requested account deletion on <strong>${new Date(user.deletionRequestedAt.replace(' ','T')).toLocaleDateString('en-PH',{month:'long',day:'numeric',year:'numeric'})}</strong>.
+          Clinic staff will review it${user.deletionRequestReason ? `, reason given: "${user.deletionRequestReason}"` : ''}.
+          You can cancel this request any time before it's acted on.
+        </div>
+        <button class="btn-secondary" id="pt-cancel-del-btn" onclick="window.cancelDeletionRequest(this)">
+          ${ic('x','icon-sm')} Cancel Request
+        </button>` : `
+        <div style="font-size:.82rem;color:#6B7280;line-height:1.6;margin-bottom:14px">
+          Requesting deletion does not remove anything immediately, it notifies clinic staff, who will review it.
+          Your account and records stay exactly as they are until staff acts on the request, and you can cancel it any time before then.
+        </div>
+        <button class="btn-secondary" style="color:#DC2626;border-color:#FECACA" onmouseover="this.style.background='#FEF2F2'" onmouseout="this.style.background=''" onclick="window.openRequestDeletionModal()">
+          ${ic('user-x','icon-sm')} Request Account Deletion
+        </button>`}
+      </div>
+
       </div>
 
       <!-- RIGHT column -->
@@ -6308,45 +6349,14 @@ function pagePatientSettings() {
 
       </div>
 
-      ${window.activeSessionsCardHtml()}
-
-      <!-- Danger Zone — self-service "Request Account Deletion". This only
-           ever sends a request to clinic staff (see api/patients/request-
-           deletion.php) — it never deletes anything itself. Staff review
-           and act on it from Patient Records, same as the rest of this
-           app's archive-before-permanent-delete flow. -->
-      <div class="card" style="padding:24px;margin-top:20px;border:1px solid #FECACA">
-        <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
-          <div style="color:#DC2626">${ic('user-x','icon-sm')}</div>
-          <div style="font-size:1.05rem;font-weight:700;color:#1C1C1C">Delete My Account</div>
-        </div>
-        ${user.deletionRequestedAt ? `
-        <div style="font-size:.82rem;color:#6B7280;line-height:1.6;margin-bottom:14px">
-          You requested account deletion on <strong>${new Date(user.deletionRequestedAt.replace(' ','T')).toLocaleDateString('en-PH',{month:'long',day:'numeric',year:'numeric'})}</strong>.
-          Clinic staff will review it${user.deletionRequestReason ? ` — reason given: "${user.deletionRequestReason}"` : ''}.
-          You can cancel this request any time before it's acted on.
-        </div>
-        <button class="btn-secondary" id="pt-cancel-del-btn" onclick="window.cancelDeletionRequest(this)">
-          ${ic('x','icon-sm')} Cancel Request
-        </button>` : `
-        <div style="font-size:.82rem;color:#6B7280;line-height:1.6;margin-bottom:14px">
-          Requesting deletion does not remove anything immediately — it notifies clinic staff, who will review it.
-          Your account and records stay exactly as they are until staff acts on the request, and you can cancel it any time before then.
-        </div>
-        <button class="btn-secondary" style="color:#DC2626;border-color:#FECACA" onmouseover="this.style.background='#FEF2F2'" onmouseout="this.style.background=''" onclick="window.openRequestDeletionModal()">
-          ${ic('user-x','icon-sm')} Request Account Deletion
-        </button>`}
-      </div>
-
     </div>
   </div>`
 }
 
 // ════════════════════════════════════════════════════════════════
-//  ACTIVE SESSIONS — every role. Reached via the compact summary card
-//  on each role's own Settings page (activeSessionsCardHtml(), main.js)
-//  — same "summary card here, full list on its own page" split as
-//  Google's Security & Sign-in > Your devices.
+//  ACTIVE SESSIONS — every role, reached via its own dedicated
+//  "Security & Sign-in" sidebar entry (router.js SIDEBAR_CONFIG),
+//  not a summary card buried inside the Settings/Profile page.
 // ════════════════════════════════════════════════════════════════
 function pageActiveSessions() {
   window.state.afterRender = () => window.loadActiveSessionsPage()

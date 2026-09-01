@@ -28,6 +28,13 @@ if (!$profileId) {
     jsonResponse(['success' => false, 'message' => 'Not authenticated.'], 401);
 }
 
+// Each successful call here (and its counterpart in cancel-deletion-
+// request.php) notifies every admin/staff account — without a limit, a
+// patient could request/cancel in a fast loop and flood their inboxes with
+// nothing to actually act on. Per-user, not per-IP alone, so one account's
+// retries can't eat another account's budget on a shared network.
+rateLimit('request-deletion:' . $_SESSION['user_id'], 5, 3600); // 5 per user per hour
+
 $b      = getBody();
 $reason = trim($b['reason'] ?? '');
 // A hard cap, not a soft one — matches the field being TEXT, and keeps a
@@ -52,9 +59,14 @@ try {
     )->execute([$reason ?: null, $profileId]);
 
     $patientName = trim($pt['first_name'] . _mi($pt['middle_name'] ?? '') . ' ' . $pt['last_name']);
+    // Sent to admin AND staff alike (notifyAdminStaff() below), but only an
+    // admin can actually archive (api/archive/create.php enforces this
+    // server-side, same rule the Patient Profile page's own banner UI
+    // follows) — worded so it never tells staff they can do something they
+    // can't.
     $msg = "{$patientName} has requested that their account be deleted."
-         . ($reason ? " Reason given: \"{$reason}\"" : '')
-         . ' Review it from Patient Records — Archive to proceed, or dismiss if it should stay.';
+         . ($reason ? " Reason given: \"{$reason}\"." : '')
+         . ' An admin can archive to proceed, or dismiss if the account should stay.';
     notifyAdminStaff($pdo, 'deletion_request', 'Account Deletion Requested', $msg, $profileId);
 
     jsonResponse(['success' => true]);

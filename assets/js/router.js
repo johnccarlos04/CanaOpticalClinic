@@ -698,9 +698,15 @@ function _notifTimeAgo(dateStr) {
 }
 window._notifTimeAgo = _notifTimeAgo
 
-const _NOTIF_ICON  = { approved:'check-circle', cancelled:'x-circle', disapproved:'x-circle', rescheduled:'calendar', new_appointment:'calendar', reschedule_request:'alert-circle', no_show:'alert-circle', reminder:'clock', waitlist_offer:'alert-circle', waitlist_removed:'x-circle', waitlist_join:'clock', waitlist_left:'x-circle', welcome:'home', info:'info', contact_message:'mail', follow_up_needed:'calendar', new_login:'monitor', appointment_confirmed:'check-circle', deletion_request:'user-x' }
-const _NOTIF_COLOR = { approved:'green', cancelled:'red', disapproved:'red', rescheduled:'blue', new_appointment:'orange', reschedule_request:'orange', no_show:'red', reminder:'orange', waitlist_offer:'orange', waitlist_removed:'red', waitlist_join:'orange', waitlist_left:'gray', welcome:'orange', info:'gray', contact_message:'orange', follow_up_needed:'orange', new_login:'orange', appointment_confirmed:'green', deletion_request:'red' }
-const _resolveNotifType = n => (n.type === 'info' && n.title?.toLowerCase().startsWith('welcome')) ? 'welcome' : n.type
+const _NOTIF_ICON  = { approved:'check-circle', cancelled:'x-circle', disapproved:'x-circle', rescheduled:'calendar', new_appointment:'calendar', reschedule_request:'alert-circle', no_show:'alert-circle', reminder:'clock', waitlist_offer:'alert-circle', waitlist_removed:'x-circle', waitlist_join:'clock', waitlist_left:'x-circle', welcome:'home', info:'info', contact_message:'mail', follow_up_needed:'calendar', new_login:'monitor', appointment_confirmed:'check-circle', deletion_request:'user-x', deletion_reviewed:'check-circle' }
+const _NOTIF_COLOR = { approved:'green', cancelled:'red', disapproved:'red', rescheduled:'blue', new_appointment:'orange', reschedule_request:'orange', no_show:'red', reminder:'orange', waitlist_offer:'orange', waitlist_removed:'red', waitlist_join:'orange', waitlist_left:'gray', welcome:'orange', info:'gray', contact_message:'orange', follow_up_needed:'orange', new_login:'orange', appointment_confirmed:'green', deletion_request:'red', deletion_reviewed:'green' }
+// Same 'welcome' precedent extended to catch notifications created before
+// 'deletion_reviewed' existed as its own type (they're stuck as plain
+// 'info' in the DB forever) — the only way those rows ever pick up the
+// right icon here instead of the generic gray info dot.
+const _resolveNotifType = n => (n.type === 'info' && n.title?.toLowerCase().startsWith('welcome')) ? 'welcome'
+  : (n.type === 'info' && n.title === 'Deletion Request Reviewed') ? 'deletion_reviewed'
+  : n.type
 
 // Returns { page, params } so callers always pass an explicit filter,
 // preventing stale state.filter from a previous navigation bleeding in.
@@ -773,9 +779,18 @@ function _notifNavTarget(type, role) {
     record:          role === 'patient' ? 'patient-exam-history'  : 'patient-list',
     prescription:    role === 'patient' ? 'patient-prescriptions' : 'patient-list',
     // "Account Deletion Requested" (api/patients/request-deletion.php) is
-    // admin/staff-only in practice — routes to the Patient Records list,
-    // which now flags any patient with a pending request.
+    // admin/staff-only in practice. The real click-through (straight to
+    // that patient's own profile, where the request banner and its
+    // Archive/Dismiss actions already live) is handled as an early-return
+    // branch in _markNotifDropdown()/markNotifRead() below, using
+    // notif.relatedId — this is just the fallback for the rare case that
+    // relatedId is missing (an old notification from before it was added).
     deletion_request: 'patient-list',
+    // "Deletion Request Reviewed" (api/patients/dismiss-deletion-request.php)
+    // is patient-only — straight to Settings > My Profile, where the
+    // deletion request lived and where they'd go to request it again if
+    // they still want to.
+    deletion_reviewed: 'patient-settings',
     welcome:         dashPage,
     info:            dashPage,
     // Patients are notified of contact replies by email — the in-app
@@ -869,6 +884,14 @@ function _markNotifDropdown(id) {
   // Same again for a brand-new appointment request (admin/staff).
   if (notif.type === 'new_appointment' && notif.relatedId && state.role !== 'patient' && window.openNewApptRequestNotif) {
     window.openNewApptRequestNotif(notif.relatedId)
+    return
+  }
+  // "Account Deletion Requested" (relatedId is the patientId) — straight to
+  // that patient's own profile, where the pending-request banner and its
+  // Archive/Dismiss actions already sit at the top, instead of landing on
+  // the Patient Records list and making admin/staff search for them.
+  if (notif.type === 'deletion_request' && notif.relatedId && state.role !== 'patient') {
+    navigate('patient-view', { patientId: notif.relatedId })
     return
   }
   // Same again for a doctor-flagged follow-up (relatedId is the patientId) —

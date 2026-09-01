@@ -26,6 +26,14 @@ if ($role !== 'patient' || !$profileId) {
 try {
     $pdo = getDB();
 
+    // Own account-deletion-request status — lets the 30s poll (_syncMyRecords(),
+    // auth.js) notice when admin/staff has archived or dismissed a request
+    // and update the Settings > My Profile card without the patient having
+    // to reload the page themselves.
+    $ds = $pdo->prepare('SELECT deletion_requested_at, deletion_request_reason FROM patients WHERE id = ? LIMIT 1');
+    $ds->execute([$profileId]);
+    $delRow = $ds->fetch();
+
     // Doctor names are built in PHP (not SQL CONCAT) so they include the
     // middle initial via _mi() and stay in sync with doctors/index.php's
     // `name` field — the frontend matches doctors by this exact string
@@ -119,10 +127,12 @@ try {
     ], $conRows);
 
     jsonResponse([
-        'success'       => true,
-        'examinations'  => $examinations,
-        'prescriptions' => $prescriptions,
-        'consultations' => $consultations,
+        'success'                => true,
+        'examinations'           => $examinations,
+        'prescriptions'          => $prescriptions,
+        'consultations'          => $consultations,
+        'deletionRequestedAt'    => $delRow['deletion_requested_at']   ?? null,
+        'deletionRequestReason'  => $delRow['deletion_request_reason'] ?? '',
     ]);
 
 } catch (PDOException $e) {

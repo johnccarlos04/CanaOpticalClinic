@@ -170,15 +170,32 @@ try {
         jsonResponse(['success' => false, 'message' => 'Record not found.']);
     }
 
-    $email = '';
-    $userId = $row['user_id'] ?? null;
+    $email    = '';
+    $photoUrl = null;
+    $userId   = $row['user_id'] ?? null;
     if ($userId) {
         $us = $pdo->prepare('SELECT email FROM users WHERE id = ? LIMIT 1');
         $us->execute([$userId]);
         $email = $us->fetchColumn() ?: '';
+
+        // Own try/catch, same as loadUserProfile()'s own photo_url fetch
+        // (helpers.php) — a pre-migration DB missing this column should
+        // never break archiving itself, just leave the snapshot's photo
+        // blank.
+        try {
+            $ps = $pdo->prepare('SELECT photo_url FROM users WHERE id = ? LIMIT 1');
+            $ps->execute([$userId]);
+            $photoUrl = $ps->fetchColumn() ?: null;
+        } catch (PDOException) {
+            $photoUrl = null;
+        }
     }
 
-    // Build a restorable snapshot matching the frontend's object shape
+    // Build a restorable snapshot matching the frontend's object shape.
+    // photoUrl included so the Archived Record modal can show the actual
+    // person instead of just a generic archive-box icon (viewArchivedRecord(),
+    // main.js) — a snapshot taken at archive time, same as every other field
+    // here, so a record archived before this existed simply has none.
     $snapshot = [
         'id'        => $row['id'],
         'firstName' => $row['first_name'],
@@ -188,6 +205,7 @@ try {
         'contact'   => $row['contact'] ?? '',
         'status'    => $row['status']  ?? 'active',
         'role'      => $role,
+        'photoUrl'  => $photoUrl,
     ];
     if ($role === 'Doctor') {
         $snapshot['specialization'] = $row['specialization'] ?? 'Optometrist';

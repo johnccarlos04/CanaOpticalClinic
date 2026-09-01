@@ -422,30 +422,39 @@ function tagSessionOwner(PDO $pdo, int $userId): void {
     $ip = clientIp();
 
     // "Known device" check — before writing this session's own row (which
-    // would otherwise always match itself), look for any OTHER still-live
-    // session on this account with the exact same User-Agent. If one
-    // exists, this is the same browser/device signing in again (a fresh
-    // login after the old session expired or was signed out, "remember me"
-    // renewing, etc.), not a new device — no notification needed for that.
-    // Deliberately NOT auto-revoked: a User-Agent match can't tell "the
-    // same browser logging in again" apart from "a second tab of the same
-    // still-open session," and auto-revoking the latter silently signs a
-    // legitimate, currently-in-use tab out with no warning — Google's own
-    // Your Devices page doesn't do this either; it just lists every
-    // session and lets the account owner sign each one out manually. Not a
-    // perfect device fingerprint (a cleared/GC'd session for that same
-    // device would read as "new" again), but a reasonable one without
-    // adding a separate persistent devices table.
-    $knownDevice = false;
-    if ($ua !== '') {
-        try {
-            $chk = $pdo->prepare('SELECT COUNT(*) FROM sessions WHERE user_id = ? AND user_agent = ? AND id != ?');
-            $chk->execute([$userId, $ua, $sid]);
-            $knownDevice = (int)$chk->fetchColumn() > 0;
-        } catch (PDOException) {
-            // Fail open — worst case this login gets notified as "new"
-            // when it wasn't, not the other way around.
-        }
+    // would otherwise always match itself), look at every OTHER still-live
+    // session on this account. Two separate reasons this login might not
+    // be worth a notification:
+    //   1. Same User-Agent already among them — this is the same browser/
+    //      device signing in again (a fresh login after the old session
+    //      expired or was signed out, "remember me" renewing, etc.), not a
+    //      new device.
+    //   2. No OTHER session exists at all — this is the account's very
+    //      first-ever sign-in. There's nothing yet for it to be "new"
+    //      relative to, and nothing for the owner to have missed or need
+    //      to review — Google/Facebook don't alert on an account's first
+    //      login either, only on an additional device joining one that's
+    //      already established.
+    // Deliberately NOT auto-revoked for case 1: a User-Agent match can't
+    // tell "the same browser logging in again" apart from "a second tab of
+    // the same still-open session," and auto-revoking the latter silently
+    // signs a legitimate, currently-in-use tab out with no warning —
+    // Google's own Your Devices page doesn't do this either; it just lists
+    // every session and lets the account owner sign each one out manually.
+    // Not a perfect device fingerprint (a cleared/GC'd session for that
+    // same device would read as "new" again), but a reasonable one
+    // without adding a separate persistent devices table.
+    $knownDevice        = false;
+    $isFirstEverSession = false;
+    try {
+        $chk = $pdo->prepare('SELECT user_agent FROM sessions WHERE user_id = ? AND id != ?');
+        $chk->execute([$userId, $sid]);
+        $otherAgents        = $chk->fetchAll(PDO::FETCH_COLUMN);
+        $knownDevice        = $ua !== '' && in_array($ua, $otherAgents, true);
+        $isFirstEverSession = count($otherAgents) === 0;
+    } catch (PDOException) {
+        // Fail open — worst case this login gets notified as "new" when it
+        // wasn't, not the other way around.
     }
 
     $stmt = $pdo->prepare(
@@ -456,7 +465,7 @@ function tagSessionOwner(PDO $pdo, int $userId): void {
     );
     $stmt->execute([$sid, time(), $userId, $ua, $ip]);
 
-    if ($knownDevice) return;
+    if ($knownDevice || $isFirstEverSession) return;
 
     // A genuinely new device/browser signing in — surface it as a
     // notification so the account owner notices a sign-in they didn't

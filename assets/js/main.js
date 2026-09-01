@@ -2291,19 +2291,19 @@ function rescheduleAppt(id) {
           transition:background-color .15s, color .15s; }
         .amc-day:hover:not(.amc-past):not(.amc-empty):not(.amc-far) { background:#FFF0DC; }
         .amc-day.amc-avail { background:#ECFDF5; color:#065F46; font-weight:600; }
-        .amc-day.amc-unavailable { background:#F3F4F6; color:#9CA3AF; cursor:default; }
+        .amc-day.amc-unavailable { background:#F3F4F6; color:#9CA3AF; cursor:not-allowed; }
         .amc-day.amc-today { outline:2px solid #E8760A; font-weight:700; }
         .amc-day.amc-selected { background:#E8760A !important; color:#fff !important; font-weight:700; }
         /* Solid, legible muted colors instead of opacity — same fix as the
            booking wizard's own calendar (.amc-day.amc-past, pages.js):
            opacity used to fade the day NUMBER along with the background,
            reading as barely legible instead of a clearly-muted color. */
-        .amc-day.amc-past { color:#C1C7D0; cursor:default; }
-        .amc-day.amc-far { color:#C1C7D0; cursor:default; background:#f9fafb; }
+        .amc-day.amc-past { color:#C1C7D0; cursor:not-allowed; }
+        .amc-day.amc-far { color:#C1C7D0; cursor:not-allowed; background:#f9fafb; }
         .amc-day.amc-empty { cursor:default; }
-        .amc-day.amc-holiday { background:#FFF1F2; color:#f43f5e; cursor:default; font-weight:600; }
+        .amc-day.amc-holiday { background:#FFF1F2; color:#f43f5e; cursor:not-allowed; font-weight:600; }
         .amc-holiday-lbl { position:absolute; left:2px; right:2px; top:calc(50% + 8px); font-size:.7rem; line-height:1.15; text-align:center; overflow:hidden; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; font-weight:600; padding:0 1px; }
-        .amc-day.amc-blocked { background:#FEE2E2; color:#B91C1C; cursor:default; font-weight:700; text-decoration:line-through; text-decoration-color:rgba(185,28,28,0.5); }
+        .amc-day.amc-blocked { background:#FEE2E2; color:#B91C1C; cursor:not-allowed; font-weight:700; text-decoration:line-through; text-decoration-color:rgba(185,28,28,0.5); }
         /* Same responsive shrink as the booking wizard's calendar (pages.js)
            — without this, a holiday name (e.g. "Ninoy Aquino Day") wraps
            past 2 lines and spills out of the cell on narrow/phone widths,
@@ -2596,7 +2596,7 @@ function requestReschedule(id) {
           font-family:'Poppins',sans-serif; font-size:.82rem; cursor:pointer; transition:all .15s; white-space:nowrap; }
         .time-slot:hover:not(.taken) { border-color:#E8760A; }
         .time-slot.selected { background:#E8760A; color:#fff; border-color:#E8760A; }
-        .time-slot.taken { background:#F3F4F6; color:#9CA3AF; cursor:default; text-decoration:line-through; }
+        .time-slot.taken { background:#F3F4F6; color:#9CA3AF; cursor:not-allowed; text-decoration:line-through; }
         .time-slot-legend { display:flex; flex-wrap:wrap; gap:12px; margin-top:10px; font-family:'Poppins',sans-serif; font-size:.72rem; color:#6B7280; }
         .time-slot-legend-item { display:flex; align-items:center; gap:6px; }
         .time-slot-legend-swatch { width:10px; height:10px; border-radius:3px; display:inline-block; flex-shrink:0; }
@@ -2610,19 +2610,19 @@ function requestReschedule(id) {
           transition:background-color .15s, color .15s; }
         .amc-day:hover:not(.amc-past):not(.amc-empty):not(.amc-far) { background:#FFF0DC; }
         .amc-day.amc-avail { background:#ECFDF5; color:#065F46; font-weight:600; }
-        .amc-day.amc-unavailable { background:#F3F4F6; color:#9CA3AF; cursor:default; }
+        .amc-day.amc-unavailable { background:#F3F4F6; color:#9CA3AF; cursor:not-allowed; }
         .amc-day.amc-today { outline:2px solid #E8760A; font-weight:700; }
         .amc-day.amc-selected { background:#E8760A !important; color:#fff !important; font-weight:700; }
         /* Solid, legible muted colors instead of opacity — same fix as the
            booking wizard's own calendar (.amc-day.amc-past, pages.js):
            opacity used to fade the day NUMBER along with the background,
            reading as barely legible instead of a clearly-muted color. */
-        .amc-day.amc-past { color:#C1C7D0; cursor:default; }
-        .amc-day.amc-far { color:#C1C7D0; cursor:default; background:#f9fafb; }
+        .amc-day.amc-past { color:#C1C7D0; cursor:not-allowed; }
+        .amc-day.amc-far { color:#C1C7D0; cursor:not-allowed; background:#f9fafb; }
         .amc-day.amc-empty { cursor:default; }
-        .amc-day.amc-holiday { background:#FFF1F2; color:#f43f5e; cursor:default; font-weight:600; }
+        .amc-day.amc-holiday { background:#FFF1F2; color:#f43f5e; cursor:not-allowed; font-weight:600; }
         .amc-holiday-lbl { position:absolute; left:2px; right:2px; top:calc(50% + 8px); font-size:.7rem; line-height:1.15; text-align:center; overflow:hidden; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; font-weight:600; padding:0 1px; }
-        .amc-day.amc-blocked { background:#FEE2E2; color:#B91C1C; cursor:default; font-weight:700; text-decoration:line-through; text-decoration-color:rgba(185,28,28,0.5); }
+        .amc-day.amc-blocked { background:#FEE2E2; color:#B91C1C; cursor:not-allowed; font-weight:700; text-decoration:line-through; text-decoration-color:rgba(185,28,28,0.5); }
         /* Same responsive shrink as the booking wizard's calendar (pages.js)
            — without this, a holiday name (e.g. "Ninoy Aquino Day") wraps
            past 2 lines and spills out of the cell on narrow/phone widths,
@@ -2892,6 +2892,14 @@ function markNotifRead(id) {
     openNewApptRequestNotif(notif.relatedId)
     return
   }
+  // "Account Deletion Requested" (relatedId is the patientId) — straight to
+  // that patient's own profile, where the pending-request banner and its
+  // Archive/Dismiss actions already sit at the top, instead of landing on
+  // the Patient Records list and making admin/staff search for them.
+  if (notif && notif.type === 'deletion_request' && notif.relatedId && state.role !== 'patient') {
+    navigate('patient-view', { patientId: notif.relatedId })
+    return
+  }
   // A doctor flagged a visit as needing a follow-up (relatedId is the
   // patientId — notifications.related_id is too small a column to carry
   // the doctor/date too) — go straight into a pre-filled New Appointment
@@ -3130,10 +3138,6 @@ async function validateSettingsPassword(newId, confId, errId, curId) {
     if (d.success) {
       toast('Password updated successfully.', 'success')
       ;[curPwId, newId, confId].forEach(id => { const el = document.getElementById(id); if (el) el.value = '' })
-      // The backend just revoked every other session on this account —
-      // refresh the list so it visibly drops to just "This device"
-      // instead of showing stale devices until the next page load.
-      if (window.loadActiveSessionsSummary) window.loadActiveSessionsSummary()
     } else {
       toast(d.message || 'Failed to update password.', 'error')
     }
@@ -6126,7 +6130,7 @@ function editUserModal(id, role) {
           <input id="eu-secondary-prc" class="form-input" placeholder="e.g. 043" value="${(u.secondaryPrc || '').replace(/"/g,'&quot;')}"></div>
       </div>
       <p style="font-size:.71rem;color:#9CA3AF;margin:-8px 0 14px">Only shown on the Ophthalmic Clearance certificate when both secondary fields are filled in.</p>
-      <p style="font-size:.74rem;color:#9CA3AF;margin:-8px 0 14px">Locked on the doctor's own Settings page — only admins can update these.</p>` : ''}
+      <p style="font-size:.74rem;color:#9CA3AF;margin:-8px 0 14px">Locked on the doctor's own Settings page, only admins can update these.</p>` : ''}
       <div class="form-group"><label class="form-label">Status</label>
         ${window.selectFieldHtml('eu-status', { value: u.status, options: [{ value: 'active', label: 'Active' }, { value: 'inactive', label: 'Inactive' }] })}</div>
 
@@ -6478,7 +6482,7 @@ function openEditPatientModal(patientId) {
         <div class="form-group"><label class="form-label">Gender</label>
           ${window.selectFieldHtml('ep-gender', { value: p.gender || '', options: ['Male','Female','Other'] })}</div>
       </div>
-      <p style="font-size:.74rem;color:#9CA3AF;margin:-8px 0 14px">Locked on the patient's own Settings page — only admins can update these.</p>
+      <p style="font-size:.74rem;color:#9CA3AF;margin:-8px 0 14px">Locked on the patient's own Settings page, only admins can update these.</p>
       <div class="form-group"><label class="form-label">Contact</label>
         <input id="ep-contact" class="form-input" inputmode="numeric" oninput="this.value=this.value.replace(/\D/g,'')" value="${p.contact}"></div>
       <div class="form-group"><label class="form-label">Email</label>
@@ -6898,7 +6902,15 @@ async function doArchivePatient(id) {
     timestamp: nowTimestamp(), type:'patient' })
   closeModal()
   toast(`Patient archived successfully. The record can be restored from Settings > Archives.`, 'success')
-  renderPage()
+  // Archiving from the patient's own profile page (e.g. the deletion-request
+  // banner's Archive button) just removed the record renderPage() would try
+  // to redraw that same page from — back out to the list instead of landing
+  // on a "No matching patient record found" error.
+  if (state.page === 'patient-view' && state.params?.patientId === id) {
+    navigate('patient-list')
+  } else {
+    renderPage()
+  }
 }
 
 async function togglePatientStatus(id) {
@@ -6946,7 +6958,7 @@ function openRequestDeletionModal() {
     </div>
     <div class="modal-body">
       <p style="font-size:.88rem;color:#6b7280;margin-bottom:16px">
-        This sends a request to clinic staff — it doesn't delete anything right away. Your account and records stay exactly as they are until staff reviews it, and you can cancel this request any time before then.
+        This sends a request to clinic staff, it doesn't delete anything right away. Your account and records stay exactly as they are until staff reviews it, and you can cancel this request any time before then.
       </p>
       <div class="form-group" style="margin:0">
         <label class="form-label">Reason <span style="color:#9CA3AF;font-weight:400">(optional)</span></label>
@@ -7459,9 +7471,21 @@ function viewArchivedRecord(id) {
     </div>
     <div class="modal-body" style="padding:0 24px 8px">
       <div style="display:flex;align-items:center;gap:12px;padding:16px 0;border-bottom:1px solid #F3F4F6;margin-bottom:4px">
-        <div style="width:44px;height:44px;border-radius:50%;background:${tc.bg};display:flex;align-items:center;justify-content:center;flex-shrink:0">
-          ${icon('archive','icon-sm')}
-        </div>
+        ${(() => {
+          const isPerson = r.type === 'Patient' || r.type === 'Account'
+          // Photo when captured; otherwise the same orange-initials avatar
+          // used everywhere else in the app for a person with no photo set
+          // (e.g. the Staff/Doctor/Patient list rows) — not the purple/blue
+          // type-tint, which stays reserved for the badge pill below and
+          // the non-person Examination/Service icon fallback.
+          const bg  = r.data?.photoUrl ? 'transparent' : isPerson ? '#E8760A' : tc.bg
+          const col = isPerson ? '#fff' : tc.color
+          return `<div style="width:44px;height:44px;border-radius:50%;background:${bg};display:flex;align-items:center;justify-content:center;flex-shrink:0;overflow:hidden;color:${col};font-weight:700;font-size:.9rem">
+            ${r.data?.photoUrl
+              ? `<img src="${r.data.photoUrl}" alt="${r.name}" style="width:100%;height:100%;object-fit:cover;border-radius:50%;display:block" onerror="${window.avatarFallbackAttr(r.name)}">`
+              : isPerson ? initials(r.name) : icon('archive','icon-sm')}
+          </div>`
+        })()}
         <div>
           <div style="font-size:.95rem;font-weight:700;color:#1C1C1C">${r.name}</div>
           <div style="margin-top:4px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
@@ -7598,37 +7622,15 @@ window.savePrivacyContent = savePrivacyContent
 
 // ════════════════════════════════════════════════════════════════
 //  SECURITY & SIGN-IN (Active Sessions) — Settings > Security & Sign-in,
-//  every role, reached via its own sidebar dropdown entry (router.js
-//  SIDEBAR_CONFIG) same as My Profile — not just a card buried inside it.
+//  every role, reached via its own dedicated sidebar entry (router.js
+//  SIDEBAR_CONFIG) — not a card duplicated inside My Profile too.
 //  Multi-device sign-in is NOT restricted (the same account can stay
 //  signed in on a phone and a laptop at once, same as Facebook/Google) —
 //  this is visibility and control on top of that: a user sees every
 //  device currently signed in to their own account and can revoke any
-//  one individually. Settings' My Profile page still shows a compact
-//  summary card (device count + a "Manage Sessions" link) as a shortcut —
-//  the actual list lives on its own page (pageActiveSessions, pages.js),
-//  grouped by device the way Google's own "Your devices" page groups
-//  sessions, rather than a long flat list embedded in an already-busy
-//  profile page.
+//  one individually, grouped by device the way Google's own "Your
+//  devices" page groups sessions.
 // ════════════════════════════════════════════════════════════════
-function activeSessionsCardHtml() {
-  return `
-  <div class="card" style="padding:24px;margin-top:20px">
-    <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">
-      <div>
-        <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">
-          <div style="color:#E8760A">${icon('monitor','icon-sm')}</div>
-          <div style="font-size:1.05rem;font-weight:700;color:#1C1C1C">Security &amp; Sign-in</div>
-        </div>
-        <div id="active-sessions-summary" style="font-size:.82rem;color:#9CA3AF">Checking your signed-in devices…</div>
-      </div>
-      <button class="btn-secondary" style="font-size:.8rem;padding:8px 16px;flex-shrink:0;display:flex;align-items:center;gap:4px" onclick="window.navigate('active-sessions')">
-        Manage Sessions ${icon('chevron-right','icon-sm')}
-      </button>
-    </div>
-  </div>`
-}
-window.activeSessionsCardHtml = activeSessionsCardHtml
 
 // Relative "X min/hours/days ago" from a 'Y-m-d H:i:s' server timestamp —
 // same convention as the admin activity feed's own _relTime() (pages.js).
@@ -7642,22 +7644,6 @@ function _sessionTimeAgo(ts) {
   const days = Math.floor(hrs / 24)
   return `${days} day${days > 1 ? 's' : ''} ago`
 }
-
-// Just the device count, for the compact Settings summary card above.
-async function loadActiveSessionsSummary() {
-  const el = document.getElementById('active-sessions-summary')
-  if (!el) return
-  try {
-    const r = await fetch('api/auth/sessions.php')
-    const d = await r.json()
-    if (!d.success) { el.textContent = 'Could not load active sessions.'; return }
-    const n = (d.sessions || []).length
-    el.textContent = n ? `${n} device${n > 1 ? 's' : ''} currently signed in.` : 'No active sessions found.'
-  } catch (_) {
-    el.textContent = 'Could not load active sessions.'
-  }
-}
-window.loadActiveSessionsSummary = loadActiveSessionsSummary
 
 // The full list, grouped by device — same "N sessions on <OS>" grouping
 // as Google's own Your Devices page. Renders into pageActiveSessions()'s
